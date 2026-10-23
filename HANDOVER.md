@@ -54,7 +54,7 @@ This file covers what isn't already in the repo: where the work stands, how Jack
 - **Check the code:**
   - `pnpm typecheck`, and `pnpm --filter client typecheck` and `build`;
   - `pnpm test` runs 130 tests in about 30 s on Linux;
-  - `@cloudflare/vitest-plugin` 1.4.7 depends on a miniflare beta, so recheck the tests when upgrading it. Keep `wrangler` on the version the plugin uses, so the tests run on the same workerd as dev and deploys.
+  - stay on vitest 4.1.11 with `@cloudflare/vitest-plugin` 1.4.0 and `wrangler` 4.149.0. Under vitest 5, plugin 1.4.0 fails everywhere. Plugin 1.4.7, which needs a miniflare beta, passes locally but crashes `builds.test.ts` and `files.test.ts` in CI, even one file at a time (ticket 16). Try again when the plugin's miniflare leaves beta, and keep `wrangler` on the plugin's version so tests, dev and deploys share one workerd.
   - CI runs the same checks on every pull request (`.github/workflows/ci.yml`).
 - **After changing config or generated inputs:**
   - `pnpm generate` repacks the Templates and the Checker's bundle. Run it after changing `templates/` or `src/checker/worker.ts`, and before deploying.

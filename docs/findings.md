@@ -77,7 +77,7 @@ The isolate ID showed when Cloudflare replaced the probe's isolate:
 
 ### Found along the way
 
-- **The vitest plugin:** `@cloudflare/vitest-plugin` 1.4.0 fails every test under vitest 5.0.4 on Windows ("File path must be a file: URL"), although it declares vitest 5 support. vitest 4.1.11 works. On Linux, 1.4.0 fails under vitest 5.0.5 too ("no such file or directory, readAll" in `node_modules/.vitest-cache`), and 1.4.7 works (ticket 16).
+- **The vitest plugin:** `@cloudflare/vitest-plugin` 1.4.0 fails every test under vitest 5.0.4 on Windows ("File path must be a file: URL"), although it declares vitest 5 support. vitest 4.1.11 works. On Linux, 1.4.0 fails under vitest 5.0.5 too ("no such file or directory, readAll" in `node_modules/.vitest-cache`). 1.4.7 passes locally but, on GitHub's 2-core, 8 GB runner, its workers exit during `builds.test.ts` and `files.test.ts`, even one test file at a time. vitest 4.1.11 passes there (ticket 16).
 - **Old code after a deploy:** a running Durable Object kept the previous version's code for several minutes after a deploy, while the Worker in front of it ran the new code. A call to a method that only the new code had failed with "The RPC receiver does not implement the method".
 - **es-module-lexer 3:** it renamed an import's `n` field to `specifier`. Code written for version 2 silently sees no imports.
 - **worker-bundler:** its build errors name files `virtual:<path>`.
