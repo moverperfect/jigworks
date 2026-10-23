@@ -204,7 +204,7 @@ run_wizard() {
 cd "$(dirname "$0")/.."
 
 # The wizard keeps only public values here; they go into wrangler.jsonc.
-# Secrets go straight from your clipboard to Cloudflare or GitHub.
+# Secrets, and the Developer list, go straight to Cloudflare or GitHub.
 mkdir -p .wrangler
 ENV_FILE=".wrangler/installation.env"
 
@@ -299,12 +299,15 @@ stage "The Developer list"
 say "Who may sign in to the platform: emails, and @domain entries for everyone at a domain."
 say "Access lets them in first and the platform checks the list after, so both need it."
 DEVELOPER_LIST=""
-while [[ -z "$DEVELOPER_LIST" ]]; do
-  ask DEVELOPER_LIST "Developer list (comma-separated, such as you@example.com):"
-  DEVELOPER_LIST="${DEVELOPER_LIST// /}"
-done
-write_env DEVELOPER_LIST "$DEVELOPER_LIST"
-note "It's kept in $ENV_FILE (gitignored) and, at stage 8, as a Worker secret."
+if secret_is_set DEVELOPER_LIST && ! confirm "The Worker already has a Developer list. Replace it?"; then
+  note "Keeping the Developer list the Worker has."
+else
+  while [[ -z "$DEVELOPER_LIST" ]]; do
+    read -r -p "  ${BOLD}Developer list (comma-separated, such as you@example.com):${RESET} " DEVELOPER_LIST
+    DEVELOPER_LIST="${DEVELOPER_LIST// /}"
+  done
+  note "It becomes a Worker secret at stage 8. The wizard doesn't save it anywhere else."
+fi
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
 stage "Access application for the platform"
@@ -312,7 +315,7 @@ open_url "https://one.dash.cloudflare.com/"
 step "Access controls → Applications → Create new application → Self-hosted and private."
 step "Name it \"Jigworks platform\". Add public hostname: subdomain ${PLATFORM_HOST%%.*}, domain $PLATFORM_ZONE."
 step "Access policies: create \"Jigworks Developers\", action Allow, including everyone on the list:"
-note "  Emails → each email in: $DEVELOPER_LIST"
+note "  Emails → each email on the list${DEVELOPER_LIST:+: $DEVELOPER_LIST}"
 note "  Emails ending in → each @domain entry, if there are any."
 step "Create it. Then Configure → Advanced settings → Cookie settings: set SameSite to Lax, and Save."
 note "Lax stops apps sending requests to the platform with your sign-in (ADR 0012)."
@@ -357,7 +360,7 @@ else
   say "Worker to hold the secret, say yes: the first deploy replaces it."
   npx wrangler secret put ANTHROPIC_API_KEY
 fi
-printf '%s' "$DEVELOPER_LIST" | npx wrangler secret put DEVELOPER_LIST
+[[ -z "$DEVELOPER_LIST" ]] || printf '%s' "$DEVELOPER_LIST" | npx wrangler secret put DEVELOPER_LIST
 for name in ANTHROPIC_API_KEY DEVELOPER_LIST; do
   if secret_is_set "$name"; then
     printf '  %s✓%s the Worker has %s\n' "$GREEN" "$RESET" "$name"
