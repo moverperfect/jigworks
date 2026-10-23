@@ -1,0 +1,3 @@
+# Everything runs in Workers isolates, with no containers
+
+Developers today build applications either on their own machine or on a cloud agent with a real filesystem. This experiment exists to find out whether Workers isolates alone can be where an application is developed: editing, type-checking, building, running and hosting. So we don't use Cloudflare Containers or the Sandbox SDK, even though either would give the Agent a real shell with `npm install` and `tsc`. When the Agent needs a shell, it gets an emulated one (just-bash or a Cloudflare equivalent) over the Workspace's files. Falling back to a container counts as a failed experiment, not a workaround.

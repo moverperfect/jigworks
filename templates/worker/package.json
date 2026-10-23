@@ -1,0 +1,9 @@
+{
+  "name": "app",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.12.1",
+  "dependencies": {
+    "hono": "4.13.13"
+  }
+}

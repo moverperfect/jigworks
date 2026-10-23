@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "jigworks",
+  "main": "src/platform/worker.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // Jack's Installation. It's served only at app.jigworks.dev, behind the
+  // platform's Access application. The custom domain makes Cloudflare create
+  // the DNS record and certificate.
+  "routes": [{ "pattern": "app.jigworks.dev", "custom_domain": true }],
+  "workers_dev": false,
+  "preview_urls": false,
+  "limits": { "cpu_ms": 300000 },
+  "observability": { "enabled": true },
+  "assets": {
+    "directory": "client/dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "durable_objects": {
+    "bindings": [
+      { "name": "DEVELOPERS", "class_name": "Developer" },
+      { "name": "WORKSPACES", "class_name": "Workspace" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Developer", "Workspace"] }],
+  // Checks run in Dynamic Workers (ADR 0010).
+  "worker_loaders": [{ "binding": "LOADER" }],
+  "vars": {
+    // The platform's own Access application. While either is empty, every
+    // API request is refused. The Operator's set-up fills them (ticket 17).
+    "ACCESS_TEAM_DOMAIN": "",
+    "ACCESS_AUD": "",
+    // Comma-separated emails, and @domain entries for everyone at a domain.
+    // While it's empty, nobody gets in. (DEVELOPERS is the Durable Object
+    // namespace below.)
+    "DEVELOPER_LIST": "",
+    "PLATFORM_ORIGIN": "https://app.jigworks.dev",
+    // Set only in a local .dev.vars, for wrangler dev. The gate ignores it for
+    // any hostname but localhost.
+    "DEV_SIGNED_IN_AS": "",
+    // The Agent's model, on the Anthropic API.
+    "AGENT_MODEL": "claude-opus-5-5",
+    // Empty for Anthropic's own API. A local .dev.vars can point it at the
+    // scripted model (scripts/fake-anthropic.mjs). Not ANTHROPIC_BASE_URL,
+    // which the Anthropic provider reads itself and refuses when it's empty.
+    "AGENT_BASE_URL": ""
+  },
+  // The Operator sets it with `wrangler secret put ANTHROPIC_API_KEY`.
+  "secrets": { "required": ["ANTHROPIC_API_KEY"] }
+}

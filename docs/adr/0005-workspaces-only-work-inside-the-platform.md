@@ -1,0 +1,3 @@
+# Workspaces only need to work inside the platform
+
+The experiment is about developing entirely in the browser, so a Workspace doesn't have to build or run on a laptop. Supporting laptops would mean two build paths, ours and Vite's, that always have to produce the same result. So Templates contain only what the platform uses: source code, `package.json`, `tsconfig.json`, `wrangler.jsonc` and `worker-configuration.d.ts`. They also contain an `AGENTS.md` that tells the Agent what our Build handles differently from Vite. Our Build reads `wrangler.jsonc` for compatibility settings and bindings. Templates have no Vite config and no wrangler package. The exported zip is a backup, not a way to carry on working locally.

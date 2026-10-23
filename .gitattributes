@@ -1,0 +1,6 @@
+# Shell scripts are copied to Linux hosts as they are, so keep LF endings.
+*.sh text eol=lf
+*.wasm binary
+# Templates are packed into the Worker as they are checked out, so a Windows
+# checkout must not turn their endings into CRLF.
+templates/** text eol=lf
