@@ -16,6 +16,12 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - Plugin 1.4.7 needs a miniflare beta. It passes locally, but crashes `builds.test.ts` and `files.test.ts` on GitHub's 2-core runner, even one file at a time.
   - Try again once the plugin's miniflare leaves beta. Keep `wrangler` on the plugin's version, so tests, dev and deploys share one workerd.
 
+## Deploys
+
+- **From `main`:** every push to `main` runs CI's checks, then `wrangler deploy` (`.github/workflows/ci.yml`). Its token is the `CLOUDFLARE_API_TOKEN` secret, limited to Workers on Jack's account and the `jigworks.dev` and `jigworks.app` zones. The account is the `CLOUDFLARE_ACCOUNT_ID` variable.
+- **Setting up an Installation:** `scripts/set-up-installation.sh` walks the Operator through everything only they can do: Workers Paid, the domains, Zero Trust, both Access applications, the apps domain's wildcard DNS record, the Anthropic key, the Developer list and the deploy token. It writes the public values it collects to `.wrangler/installation.env`, which go into `wrangler.jsonc`. Secrets go straight to Cloudflare or GitHub.
+- **The Developer list** is the `DEVELOPER_LIST` Worker secret, so the addresses stay out of the repo. Change it with `npx wrangler secret put DEVELOPER_LIST`. It takes effect without a deploy.
+
 ## Live checks
 
 - **Capture:** run `npx wrangler tail jigworks --format json > .wrangler/tail.jsonl` in the background, and summarise it with `python3 -I scripts/tail-events.py .wrangler/tail.jsonl`.
