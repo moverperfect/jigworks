@@ -9,19 +9,18 @@ This file covers what isn't already in the repo: where the work stands, how Jack
   - later, a hosted SaaS built from the same repository (ticket 22);
   - the licence is PolyForm Noncommercial plus PolyForm Free Trial, with commercial licences sold to companies;
   - the repo becomes the public `moverperfect/jigworks` in ticket 18.
-- **Tickets:** 01–07 are resolved. The order now is 14, 15, 16, 17, 18, then 08 to 13, then 19 to 22. Each resolved ticket ends with dated comments covering what was built, the review findings fixed and not fixed, and the live check.
+- **Tickets:** GitHub Issues on `moverperfect/jigworks`, where ticket NN is issue #NN and the spec is #23. 01–07, 14 and 15 are resolved. The order now is 16, 17, 18, then 08 to 13, then 19 to 22. Each resolved ticket ends with dated comments covering what was built, the review findings fixed and not fixed, and the live check.
 - **Verdicts** (`docs/findings.md`):
   - stage 1, yes with a caveat;
   - stages 2 and 3, yes;
   - stage 4: Builds are measured and fit; the verdict waits for the Preview.
-- **Code:**
-  - The repo arrived on this Linux machine without its git history. The last commit on the old machine was `ae7a5a0`.
-  - Locally, a `baseline` commit holds the files as they arrived, so that tickets 14 and 15 can be reviewed as a diff. It's never pushed. Ticket 16 starts the history afresh on `main`.
+- **Code:** the private `moverperfect/jigworks` on GitHub. Its history starts with one commit, "Import Jigworks from ae7a5a0", because the repo arrived on this Linux machine without its earlier history.
+  - Renovate is installed on Jack's GitHub account, so it opens a "Configure Renovate" pull request on every new repository. Jack decides whether to merge it.
 - **Deployed:** nothing on Jack's account yet (ticket 17). An earlier copy of the platform runs on another account. Don't touch it; Jack takes it down.
 - **Spend:** about $1 of Anthropic usage so far (Opus 5.5, prompt-cached).
 
 **Where to read:**
-- `.scratch/jigworks/spec.md` and `issues/` (GitHub Issues from ticket 16);
+- the spec (#23) and the tickets, its sub-issues (`gh issue view <n> --comments`);
 - `GLOSSARY.md`;
 - `docs/adr/` (0010 Checks in a Dynamic Worker; 0011 the platform runs each Turn);
 - `docs/findings.md`;
@@ -55,7 +54,8 @@ This file covers what isn't already in the repo: where the work stands, how Jack
 - **Check the code:**
   - `pnpm typecheck`, and `pnpm --filter client typecheck` and `build`;
   - `pnpm test` runs 134 tests in about 40 s on Linux;
-  - stay on vitest 4.1.11 for now, because `@cloudflare/vitest-plugin` broke under vitest 5 on Windows. Ticket 16 tries vitest 5 on Linux.
+  - vitest is 5.0.5 with `@cloudflare/vitest-plugin` 1.4.7. Plugin 1.4.0 failed under vitest 5, on Windows and on Linux. 1.4.7 depends on a miniflare beta, so recheck it when upgrading.
+  - CI runs the same checks on every pull request (`.github/workflows/ci.yml`).
 - **After changing config or generated inputs:**
   - `pnpm generate` repacks the Templates and the Checker's bundle. Run it after changing `templates/` or `src/checker/worker.ts`, and before deploying.
   - `pnpm types` after editing `wrangler.jsonc`.

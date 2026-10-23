@@ -2,7 +2,7 @@
 
 ### Issue tracker
 
-Issues and specs live as local markdown under `.scratch/`. See `docs/agents/issue-tracker.md`.
+Issues and specs live in GitHub Issues on `moverperfect/jigworks`. See `docs/agents/issue-tracker.md`.
 
 ### Triage labels
 

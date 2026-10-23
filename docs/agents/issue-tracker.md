@@ -1,30 +1,36 @@
-# Issue tracker: Local Markdown
+# Issue tracker: GitHub Issues
 
-Issues and specs for this repo live as markdown files in `.scratch/`.
+Issues and specs for this repo live in GitHub Issues on `moverperfect/jigworks`. Use the `gh` CLI.
 
 ## Conventions
 
-- One feature per directory: `.scratch/<feature-slug>/`
-- The spec is `.scratch/<feature-slug>/spec.md`
-- Implementation issues are one file per ticket at `.scratch/<feature-slug>/issues/<NN>-<slug>.md`, numbered from `01`, never a single combined tickets file
-- Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
-- Comments and conversation history append to the bottom of the file under a `## Comments` heading
+- One issue per ticket. A spec is a parent issue, and its tickets are its sub-issues.
+- A ticket's number is its issue's number: "ticket 08" is #8. The spec for tickets 01 to 22 is #23.
+- Triage state is a label (see `triage-labels.md`). A resolved ticket is a closed issue.
+- A ticket's body says what to build, what it's blocked by (`**Blocked by:** #N`), its acceptance criteria and its tasks.
+- Comments and history are issue comments, each starting with its date: `**2026-10-23, agent:**`.
+- A ticket's pull request says `Closes #N`.
 
 ## When a skill says "publish to the issue tracker"
 
-Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).
+Create an issue with `gh issue create -R moverperfect/jigworks`, with the label for its triage state. A spec's tickets are sub-issues of the spec:
+
+```sh
+id=$(gh api repos/moverperfect/jigworks/issues/<ticket> --jq .id)
+gh api -X POST repos/moverperfect/jigworks/issues/<spec>/sub_issues -F sub_issue_id="$id"
+```
 
 ## When a skill says "fetch the relevant ticket"
 
-Read the file at the referenced path. The user will normally pass the path or the issue number directly.
+`gh issue view <number> -R moverperfect/jigworks --comments`. The user will normally pass the number.
 
 ## Wayfinding operations
 
-Used by `/wayfinder`. The **map** is a file with one **child** file per ticket.
+Used by `/wayfinder`.
 
-- **Map**: `.scratch/<effort>/map.md` (the Notes / Decisions-so-far / Fog body).
-- **Child ticket**: `.scratch/<effort>/issues/NN-<slug>.md`, numbered from `01`, with the question in the body. A `Type:` line records the ticket type (`research`/`prototype`/`grilling`/`task`); a `Status:` line records `claimed`/`resolved`.
-- **Blocking**: a `Blocked by: NN, NN` line near the top. A ticket is unblocked when every file it lists is `resolved`.
-- **Frontier**: scan `.scratch/<effort>/issues/` for files that are open, unblocked, and unclaimed; first by number wins.
-- **Claim**: set `Status: claimed` and save before any work.
-- **Resolve**: append the answer under an `## Answer` heading, set `Status: resolved`, then append a context pointer (gist + link) to the map's Decisions-so-far in `map.md`.
+- **Map:** a parent issue whose body holds the Notes, Decisions so far and Fog.
+- **Child ticket:** a sub-issue of the map, with the question in its body and a `Type:` line (`research`, `prototype`, `grilling` or `task`).
+- **Blocking:** a `Blocked by: #N, #N` line near the top of the body. A ticket is unblocked when every issue it lists is closed.
+- **Frontier:** open, unblocked sub-issues without the `claimed` label, lowest number first.
+- **Claim:** add the `claimed` label (create it if it's missing) before any work.
+- **Resolve:** comment the answer under an `## Answer` heading, close the issue, then add a pointer (gist and link) to the map's Decisions so far.
