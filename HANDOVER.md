@@ -15,7 +15,7 @@ This file covers what isn't already in the repo: where the work stands, how Jack
   - stages 2 and 3, yes;
   - stage 4: Builds are measured and fit; the verdict waits for the Preview.
 - **Code:** the private `moverperfect/jigworks` on GitHub. Its history starts with one commit, "Import Jigworks from ae7a5a0", because the repo arrived on this Linux machine without its earlier history.
-  - Renovate is installed on Jack's GitHub account, so it opens a "Configure Renovate" pull request on every new repository. Jack decides whether to merge it.
+- **Bots:** Renovate and Dependabot run on Jack's GitHub account. Renovate opened "Configure Renovate" (#24) and Dependabot a lockfile bump (#25). Renovate's `minimumReleaseAge` could enforce the one-day rule if Jack wants it.
 - **Deployed:** nothing on Jack's account yet (ticket 17). An earlier copy of the platform runs on another account. Don't touch it; Jack takes it down.
 - **Spend:** about $1 of Anthropic usage so far (Opus 5.5, prompt-cached).
 
@@ -53,8 +53,8 @@ This file covers what isn't already in the repo: where the work stands, how Jack
 - **Install:** `pnpm install` (pnpm 9.15.4, Node 24). Dependencies are exact versions published at least a day ago.
 - **Check the code:**
   - `pnpm typecheck`, and `pnpm --filter client typecheck` and `build`;
-  - `pnpm test` runs 134 tests in about 40 s on Linux;
-  - vitest is 5.0.5 with `@cloudflare/vitest-plugin` 1.4.7. Plugin 1.4.0 failed under vitest 5, on Windows and on Linux. 1.4.7 depends on a miniflare beta, so recheck it when upgrading.
+  - `pnpm test` runs 130 tests in about 30 s on Linux;
+  - `@cloudflare/vitest-plugin` 1.4.7 depends on a miniflare beta, so recheck the tests when upgrading it. Keep `wrangler` on the version the plugin uses, so the tests run on the same workerd as dev and deploys.
   - CI runs the same checks on every pull request (`.github/workflows/ci.yml`).
 - **After changing config or generated inputs:**
   - `pnpm generate` repacks the Templates and the Checker's bundle. Run it after changing `templates/` or `src/checker/worker.ts`, and before deploying.
@@ -108,7 +108,7 @@ Most of these are in code comments and ADRs too. They're the first things to rec
 
 ## Next
 
-- **Tickets 14 to 18** move the platform to Jack's own name, account and public repo. Ticket 17's wizard covers what Jack must set up: the domains, Access, DNS, secrets and the deploy token.
+- **Tickets 16 to 18** finish the move to GitHub, Jack's account and a public repo. Ticket 17's wizard covers what Jack must set up: the domains, Access, DNS, secrets and the deploy token.
 - **Follow-ups from 07 that 08 should pick up:**
   - Move the Build after a save to the server, because the Preview must follow every save even when the page closes.
   - Builds are cached only in memory, 4 per isolate; the app host keeps them durably (ADR 0009).

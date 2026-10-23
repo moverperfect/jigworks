@@ -21,6 +21,6 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm generate
       - run: pnpm typecheck
-      - run: pnpm --filter client typecheck
+      # The client's build runs its typecheck first.
       - run: pnpm --filter client build
       - run: pnpm test
