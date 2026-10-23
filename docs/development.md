@@ -18,9 +18,15 @@ What the scripts and config don't say: how to run the platform, check it live, a
 
 ## Deploys
 
-- **From `main`:** every push to `main` runs CI's checks, then `wrangler deploy` (`.github/workflows/ci.yml`). Its token is the `CLOUDFLARE_API_TOKEN` secret, limited to Workers on Jack's account and the `jigworks.dev` and `jigworks.app` zones. The account is the `CLOUDFLARE_ACCOUNT_ID` variable.
-- **Setting up an Installation:** `scripts/set-up-installation.sh` walks the Operator through everything only they can do: Workers Paid, the domains, Zero Trust, both Access applications, the apps domain's wildcard DNS record, the Anthropic key, the Developer list and the deploy token. It writes the public values it collects to `.wrangler/installation.env`, which go into `wrangler.jsonc`. Secrets go straight to Cloudflare or GitHub.
-- **The Developer list** is the `DEVELOPER_LIST` Worker secret, so the addresses stay out of the repo. Change it with `npx wrangler secret put DEVELOPER_LIST`. It takes effect without a deploy.
+- **From `main`:** a push to `main` runs CI's checks, then `wrangler deploy` (`.github/workflows/ci.yml`). Deploys never overlap. Pushes that arrive during a deploy wait, and only the newest of them deploys.
+  - **The token:** the `CLOUDFLARE_API_TOKEN` secret, made from the "Edit Cloudflare Workers" template. It's limited to Jack's account and the `jigworks.dev` and `jigworks.app` zones, with DNS edit so a deploy can create the platform's Custom Domain record.
+  - **The account:** the `CLOUDFLARE_ACCOUNT_ID` variable.
+- **Setting up an Installation:** `scripts/set-up-installation.sh` reads the hostnames from `wrangler.jsonc`. It then walks the Operator through everything only they can do: Workers Paid, the domains, Zero Trust, both Access applications, the apps domain's wildcard DNS record, the Worker's secrets and the deploy token. It keeps the values it collects in `.wrangler/installation.env` (gitignored), and the Access ones go into `wrangler.jsonc`. Secrets go straight to Cloudflare or GitHub. It's safe to re-run.
+- **The Developer list** is the `DEVELOPER_LIST` Worker secret, so the addresses stay out of the repo. Access lets people in first, so a change goes in two places:
+  - the "Jigworks Developers" Access policy;
+  - `npx wrangler secret put DEVELOPER_LIST`, with the whole list, because a secret can't be read back.
+
+  Neither needs a deploy.
 
 ## Live checks
 

@@ -31,8 +31,9 @@
     // API request is refused. scripts/set-up-installation.sh collects them.
     "ACCESS_TEAM_DOMAIN": "",
     "ACCESS_AUD": "",
-    // The apps' Access application on the apps domain (ADR 0012), from
-    // ticket 08 on.
+    // Apps live on a domain of their own, behind their own Access application
+    // (ADR 0012). Both are used from ticket 08 on.
+    "APPS_DOMAIN": "jigworks.app",
     "APPS_ACCESS_AUD": "",
     "PLATFORM_ORIGIN": "https://app.jigworks.dev",
     // Set only in a local .dev.vars, for wrangler dev. The gate ignores it for

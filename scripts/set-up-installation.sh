@@ -203,24 +203,34 @@ run_wizard() {
 # Run from the repo root, so npx finds this repo's wrangler and gh finds the repo.
 cd "$(dirname "$0")/.."
 
-# The wizard keeps only public values here. Ticket 17 copies them into
-# wrangler.jsonc. Secrets go straight from your clipboard to Cloudflare or GitHub.
+# The wizard keeps only public values here; they go into wrangler.jsonc.
+# Secrets go straight from your clipboard to Cloudflare or GitHub.
 mkdir -p .wrangler
 ENV_FILE=".wrangler/installation.env"
 
-PLATFORM_HOST="app.jigworks.dev"
-PLATFORM_ZONE="jigworks.dev"
-APPS_DOMAIN="jigworks.app"
-REPO="moverperfect/jigworks"
+# The Installation's hostnames come from its configuration.
+PLATFORM_HOST=$(sed -n 's/.*"pattern": "\([^"/]*\)".*/\1/p' wrangler.jsonc | head -n1)
+APPS_DOMAIN=$(sed -n 's/.*"APPS_DOMAIN": "\([^"]*\)".*/\1/p' wrangler.jsonc | head -n1)
+PLATFORM_ZONE="${PLATFORM_HOST#*.}"
+if [[ -z "$PLATFORM_HOST" || -z "$APPS_DOMAIN" ]]; then
+  printf 'wrangler.jsonc needs the platform route and APPS_DOMAIN set first.\n' >&2
+  exit 1
+fi
+for tool in npx gh dig curl; do
+  command -v "$tool" >/dev/null || { printf 'This wizard needs %s.\n' "$tool" >&2; exit 1; }
+done
+gh auth status >/dev/null 2>&1 || { printf 'Sign gh in first: gh auth login\n' >&2; exit 1; }
+
+# secret_is_set NAME: whether the Worker already has that secret.
+secret_is_set() { npx wrangler secret list 2>/dev/null | grep -q "\"$1\""; }
 
 TOTAL_STAGES=10
 
-banner "Jigworks: set up Jack's Installation"
+banner "Jigworks: set up the Installation at $PLATFORM_HOST"
 
 # ── 1 ─────────────────────────────────────────────────────────────────────
 stage "Trademark search"
-say "Before buying domains, check nobody holds \"Jigworks\" as a trade mark for software."
-say "Crick Software once sold an educational program called Jigworks, so look for that too."
+say "Before buying domains, check that nobody holds \"Jigworks\" as a trade mark for software."
 open_url "https://trademarks.ipo.gov.uk/ipo-tmtext"
 step "UK IPO: search the text \"Jigworks\". Note any live mark in classes 9 or 42 (software)."
 open_url "https://tmsearch.uspto.gov/search/search-information"
@@ -233,7 +243,7 @@ fi
 # ── 2 ─────────────────────────────────────────────────────────────────────
 stage "Cloudflare: Workers Paid and wrangler"
 open_url "https://dash.cloudflare.com/?to=/:account/workers/plans"
-step "Sign in to (or create) the Cloudflare account Jigworks will live on, with two-factor sign-in on."
+step "Sign in to (or create) the Cloudflare account for Jigworks, with two-factor sign-in on."
 step "On Workers & Pages → Plans, choose Workers Paid (5 USD a month). Dynamic Workers need it."
 pause "Press Enter once Workers Paid is active."
 say "Now sign wrangler in to that account. A browser tab asks you to allow it."
@@ -245,6 +255,8 @@ if [[ ! "$CLOUDFLARE_ACCOUNT_ID" =~ ^[0-9a-f]{32}$ ]]; then
   warn "That doesn't look like an account ID (32 hex characters). Check it before going on."
 fi
 write_env CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
+# Every wrangler command from here on uses this account.
+export CLOUDFLARE_ACCOUNT_ID
 
 # ── 3 ─────────────────────────────────────────────────────────────────────
 stage "Buy $PLATFORM_ZONE and $APPS_DOMAIN"
@@ -283,11 +295,25 @@ write_env ACCESS_TEAM_DOMAIN "$ACCESS_TEAM_DOMAIN"
 pause
 
 # ── 5 ─────────────────────────────────────────────────────────────────────
+stage "The Developer list"
+say "Who may sign in to the platform: emails, and @domain entries for everyone at a domain."
+say "Access lets them in first and the platform checks the list after, so both need it."
+DEVELOPER_LIST=""
+while [[ -z "$DEVELOPER_LIST" ]]; do
+  ask DEVELOPER_LIST "Developer list (comma-separated, such as you@example.com):"
+  DEVELOPER_LIST="${DEVELOPER_LIST// /}"
+done
+write_env DEVELOPER_LIST "$DEVELOPER_LIST"
+note "It's kept in $ENV_FILE (gitignored) and, at stage 8, as a Worker secret."
+
+# ── 6 ─────────────────────────────────────────────────────────────────────
 stage "Access application for the platform"
 open_url "https://one.dash.cloudflare.com/"
 step "Access controls → Applications → Create new application → Self-hosted and private."
-step "Name it \"Jigworks platform\". Add public hostname: subdomain app, domain $PLATFORM_ZONE."
-step "Access policies: create one that Allows, and Includes Emails → your email address."
+step "Name it \"Jigworks platform\". Add public hostname: subdomain ${PLATFORM_HOST%%.*}, domain $PLATFORM_ZONE."
+step "Access policies: create \"Jigworks Developers\", action Allow, including everyone on the list:"
+note "  Emails → each email in: $DEVELOPER_LIST"
+note "  Emails ending in → each @domain entry, if there are any."
 step "Create it. Then Configure → Advanced settings → Cookie settings: set SameSite to Lax, and Save."
 note "Lax stops apps sending requests to the platform with your sign-in (ADR 0012)."
 step "Copy the Application Audience (AUD) Tag (Configure → Additional settings)."
@@ -296,12 +322,12 @@ ask ACCESS_AUD "Paste the platform's AUD tag:"
 write_env ACCESS_AUD "$ACCESS_AUD"
 pause
 
-# ── 6 ─────────────────────────────────────────────────────────────────────
+# ── 7 ─────────────────────────────────────────────────────────────────────
 stage "Access application and DNS for apps"
 say "Previews and Deployments live on *.$APPS_DOMAIN, behind an Access application of their own."
 open_url "https://one.dash.cloudflare.com/"
 step "Create another self-hosted application, \"Jigworks apps\": subdomain *, domain $APPS_DOMAIN."
-step "Give it the same Allow policy (your email) for now. Ticket 10 decides who opens Deployments."
+step "Give it the \"Jigworks Developers\" policy for now. Ticket 10 decides who opens Deployments."
 step "Copy its Application Audience (AUD) Tag."
 ask APPS_ACCESS_AUD "Paste the apps' AUD tag:"
 [[ "$APPS_ACCESS_AUD" =~ ^[0-9a-f]{64}$ ]] || warn "An AUD tag is usually 64 hex characters. Check it."
@@ -319,23 +345,26 @@ else
 fi
 pause
 
-# ── 7 ─────────────────────────────────────────────────────────────────────
-stage "The Agent's Anthropic key"
-open_url "https://console.anthropic.com/settings/keys"
-step "Create a key named \"jigworks\" and copy it."
-step "While you're there, set a monthly spend limit under Settings → Limits."
-say "wrangler now asks for the key, hiding what you paste. If it offers to create the"
-say "\"jigworks\" Worker to hold the secret, say yes: the first deploy replaces it."
-npx wrangler secret put ANTHROPIC_API_KEY --name jigworks
-pause
-
 # ── 8 ─────────────────────────────────────────────────────────────────────
-stage "The Developer list"
-say "Who may sign in to the platform: emails, and @domain entries for a whole domain."
-say "It's a Worker secret, so the addresses stay out of the public repo."
-ask DEVELOPER_LIST "Developer list (comma-separated, such as you@example.com):"
-printf '%s' "$DEVELOPER_LIST" | npx wrangler secret put DEVELOPER_LIST --name jigworks
-note "To change it later: npx wrangler secret put DEVELOPER_LIST --name jigworks"
+stage "The Worker's secrets"
+say "The Worker needs the Agent's Anthropic key and the Developer list before its first deploy."
+if secret_is_set ANTHROPIC_API_KEY && ! confirm "The Worker already has an Anthropic key. Replace it?"; then
+  note "Keeping the Anthropic key it has."
+else
+  open_url "https://console.anthropic.com/settings/keys"
+  step "Create a key named \"jigworks\" and copy it. Set a monthly spend limit under Settings → Limits."
+  say "wrangler now asks for the key, hiding what you paste. If it offers to create the"
+  say "Worker to hold the secret, say yes: the first deploy replaces it."
+  npx wrangler secret put ANTHROPIC_API_KEY
+fi
+printf '%s' "$DEVELOPER_LIST" | npx wrangler secret put DEVELOPER_LIST
+for name in ANTHROPIC_API_KEY DEVELOPER_LIST; do
+  if secret_is_set "$name"; then
+    printf '  %s✓%s the Worker has %s\n' "$GREEN" "$RESET" "$name"
+  else
+    warn "The Worker doesn't list $name. Set it with: npx wrangler secret put $name"
+  fi
+done
 pause
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
@@ -348,19 +377,16 @@ step "Zone resources: Include → Specific zone → $PLATFORM_ZONE, and add $APP
 step "Add one more permission: Zone → DNS → Edit, so a deploy can create $PLATFORM_HOST's record."
 step "Continue to summary → Create Token, and copy it."
 say "gh now asks for the token, hiding what you paste."
-gh secret set CLOUDFLARE_API_TOKEN -R "$REPO"
+gh secret set CLOUDFLARE_API_TOKEN
 WRITTEN_SECRET+=("CLOUDFLARE_API_TOKEN")
-gh variable set CLOUDFLARE_ACCOUNT_ID -R "$REPO" --body "$CLOUDFLARE_ACCOUNT_ID"
-printf '  %s✓ set%s GitHub variable CLOUDFLARE_ACCOUNT_ID\n' "$GREEN" "$RESET"
-gh secret list -R "$REPO" | grep -q '^CLOUDFLARE_API_TOKEN' || warn "GitHub doesn't list CLOUDFLARE_API_TOKEN. Set it with: gh secret set CLOUDFLARE_API_TOKEN -R $REPO"
+set_var CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
 pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
 stage "Hand back to Claude"
-say "Everything Jack has to do is done. The public values are in $ENV_FILE:"
-note "  CLOUDFLARE_ACCOUNT_ID, ACCESS_TEAM_DOMAIN, ACCESS_AUD, APPS_ACCESS_AUD"
-say "Tell Claude the wizard is finished. It copies those into wrangler.jsonc, and the"
-say "merge of ticket 17's pull request then makes the first deploy to https://$PLATFORM_HOST."
+say "Everything only the Operator can do is done. Tell Claude the wizard is finished."
+say "It copies ACCESS_TEAM_DOMAIN, ACCESS_AUD and APPS_ACCESS_AUD from $ENV_FILE into"
+say "wrangler.jsonc. Merging ticket 17's pull request then deploys to https://$PLATFORM_HOST."
 pause "Press Enter for the summary."
 
 finish

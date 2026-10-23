@@ -11,7 +11,7 @@ A browser-based platform where a Developer and the Agent build and host Cloudfla
   2. Get Codex's second opinion, as a tracked background task that takes about 10 minutes: `codex exec -o .wrangler/codex-NN.md review --base main < /dev/null`.
   3. Check every finding against the code. Fix the real ones, giving each fix a test that fails without it, and run Codex again after large fixes.
   4. Comment on the issue with the date: what was built, what was fixed, and what wasn't changed and why.
-- **Deploys:** every merge to `main` deploys once the tests pass. After a deploy, do a live check from Jack's signed-in browser, put the measurements in `docs/findings.md`, and add a dated comment to the issue.
+- **Deploys:** merges to `main` deploy once the tests pass, newest commit first. After a deploy, do a live check from Jack's signed-in browser, put the measurements in `docs/findings.md`, and add a dated comment to the issue.
 - **Before live model runs,** state a usage budget.
 - **Dependencies** are exact versions published at least a day ago.
 - **Words:** use the glossary's words in code, UI text and docs, in British English.

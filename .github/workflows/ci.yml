@@ -8,8 +8,9 @@ on:
 permissions:
   contents: read
 
-# Pushes to main queue up, so deploys never overlap. A new push to a pull
-# request cancels its older run.
+# Deploys never overlap. If several pushes to main arrive while one deploys,
+# only the newest waits, so main's latest commit is always what deploys. A new
+# push to a pull request cancels its older run.
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
