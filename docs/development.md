@@ -16,6 +16,19 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - Plugin 1.4.7 needs a miniflare beta. It passes locally, but crashes `builds.test.ts` and `files.test.ts` on GitHub's 2-core runner, even one file at a time.
   - Try again once the plugin's miniflare leaves beta. Keep `wrangler` on the plugin's version, so tests, dev and deploys share one workerd.
 
+## Deploys
+
+- **From `main`:** a push to `main` runs CI's checks, then `wrangler deploy` (`.github/workflows/ci.yml`). Deploys never overlap. Pushes that arrive during a deploy wait, and only the newest of them deploys.
+  - **The token:** the `CLOUDFLARE_API_TOKEN` secret, made from the "Edit Cloudflare Workers" template. It's limited to Jack's account and the `jigworks.dev` and `jigworks.app` zones, with DNS edit so a deploy can create the platform's Custom Domain record.
+  - **The account:** the `CLOUDFLARE_ACCOUNT_ID` variable.
+- **Setting up an Installation:** `scripts/set-up-installation.sh` walks the Operator through everything only they can do, for the hostnames in `wrangler.jsonc`. It's safe to re-run. It keeps only public values, in `.wrangler/installation.env` (gitignored), and says which Access values `wrangler.jsonc` still needs. Secrets and the Developer list go straight to Cloudflare, Access or GitHub.
+- **By hand,** if CI can't: `pnpm generate && pnpm --filter client build && npx wrangler deploy`.
+- **The Developer list** is the `DEVELOPER_LIST` Worker secret, so the addresses stay out of the repo. Access lets people in first, so a change goes in two places:
+  - the "Jigworks Developers" Access policy;
+  - `npx wrangler secret put DEVELOPER_LIST`, with the whole list, because a secret can't be read back.
+
+  Neither needs a deploy.
+
 ## Live checks
 
 - **Capture:** run `npx wrangler tail jigworks --format json > .wrangler/tail.jsonl` in the background, and summarise it with `python3 -I scripts/tail-events.py .wrangler/tail.jsonl`.
@@ -48,5 +61,5 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
   - The Messages API needs the first message to be the user's, so Start fresh keeps the first message.
   - The settings are in `src/agent/index.ts`: effort `high`, `fallbacks: "default"`, `drop_block` for mismatched thinking blocks, and automatic caching.
 - **Parallel tool calls:** Opus calls `edit`, `bash`, `check` and `build` in the same step. `check` and `build` wait for their siblings, counted with `beforeToolCall` and `afterToolCall`.
-- **worker-bundler:** it runs its own npm installer for any dependency missing from `node_modules/`, which would skip the one-day rule. The Builder strips `dependencies` before handing over `package.json`.
+- **worker-bundler:** it runs its own npm installer for any Package missing from `node_modules/`, which would skip the one-day rule. The Builder strips `dependencies` before handing over `package.json`.
 - **Size:** the Worker is 7.8 MB compressed, against Cloudflare's 10 MB limit. Tickets 09 (Tailwind) and 13 (the test runner) have about 2.2 MB between them.

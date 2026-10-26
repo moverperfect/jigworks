@@ -28,13 +28,13 @@
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {
     // The platform's own Access application. While either is empty, every
-    // API request is refused. The Operator's set-up fills them (ticket 17).
-    "ACCESS_TEAM_DOMAIN": "",
-    "ACCESS_AUD": "",
-    // Comma-separated emails, and @domain entries for everyone at a domain.
-    // While it's empty, nobody gets in. (DEVELOPERS is the Durable Object
-    // namespace below.)
-    "DEVELOPER_LIST": "",
+    // API request is refused. scripts/set-up-installation.sh collects them.
+    "ACCESS_TEAM_DOMAIN": "moverperfect.cloudflareaccess.com",
+    "ACCESS_AUD": "43b91065b96e9ac3ef54698ea8a7bb1b4f07604502f80ed4dba375e610cf359e",
+    // Apps live on a domain of their own, behind their own Access application
+    // (ADR 0012). Both are used from ticket 08 on.
+    "APPS_DOMAIN": "jigworks.app",
+    "APPS_ACCESS_AUD": "50f3610a9815281e06ff9f0918fed58fa2e4f91f38444db6d36171c9dec95332",
     "PLATFORM_ORIGIN": "https://app.jigworks.dev",
     // Set only in a local .dev.vars, for wrangler dev. The gate ignores it for
     // any hostname but localhost.
@@ -46,6 +46,9 @@
     // which the Anthropic provider reads itself and refuses when it's empty.
     "AGENT_BASE_URL": ""
   },
-  // The Operator sets it with `wrangler secret put ANTHROPIC_API_KEY`.
-  "secrets": { "required": ["ANTHROPIC_API_KEY"] }
+  // The Operator sets both with `wrangler secret put`. DEVELOPER_LIST is
+  // comma-separated emails, and @domain entries for everyone at a domain; while
+  // it's empty, nobody gets in. It's a secret so that the addresses stay out of
+  // the repo. (DEVELOPERS is the Durable Object namespace above.)
+  "secrets": { "required": ["ANTHROPIC_API_KEY", "DEVELOPER_LIST"] }
 }
