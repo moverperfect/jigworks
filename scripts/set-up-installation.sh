@@ -246,8 +246,9 @@ open_url "https://dash.cloudflare.com/?to=/:account/workers/plans"
 step "Sign in to (or create) the Cloudflare account for Jigworks, with two-factor sign-in on."
 step "On Workers & Pages → Plans, choose Workers Paid (5 USD a month). Dynamic Workers need it."
 pause "Press Enter once Workers Paid is active."
-say "Now sign wrangler in to that account. A browser tab asks you to allow it."
-npx wrangler login
+say "Now sign wrangler in to that account with a device code: wrangler shows a link and a"
+say "code. Open the link on any device, check the code matches, and allow access."
+npx wrangler login --device
 npx wrangler whoami
 step "Copy the Account ID of the Jigworks account from the table above."
 ask CLOUDFLARE_ACCOUNT_ID "Paste the Account ID:"
