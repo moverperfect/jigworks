@@ -245,39 +245,41 @@ The isolate ID showed when Cloudflare replaced the probe's isolate:
 
 ## A second Installation
 
-**The platform moved without a change in its numbers.** On 2026-10-26 it was deployed from CI to a new Installation on a Workers Paid account (ticket 17), with apps on a domain of their own (ADR 0012). A Workspace, Checks, Builds and a Turn of Opus 5.5 all ran as they did before, and no exceptions were logged.
+**The platform moved and got no slower.** It was deployed from CI to a new Installation on a Workers Paid account (ticket 17), with apps on a domain of their own ([ADR 0012](adr/0012-apps-live-on-a-domain-of-their-own.md)). A Workspace, Checks, Builds and a Turn of Opus 5.5 all ran as fast as before or faster, and no exceptions were logged.
 
 ### How it was measured
 
 - **Platform:** the deployed platform, measured on 2026-10-26 from the Developer's signed-in browser in the UK, on the first deploy from `main`.
-- **Times:** as in stages 2 to 4.
-  - **Browser:** the round trip of each API call, timed in the page.
-  - **Platform Worker:** `check-request` and `build-request` from the platform Worker's log.
-  - **CPU and wall time:** from Cloudflare's trace (`wrangler tail`).
+- **Times:** taken the same way as before.
+  - **Browser:** each API call's round trip, timed in the page.
+  - **Platform Worker:** for Checks, the platform Worker's wall time from Cloudflare's trace, as in stage 2. For Builds, its `build-request` time, as in stage 4.
+  - **CPU:** the Workspace's CPU from the trace. A Check's own work runs in its Dynamic Worker (stage 2).
 - **Workspace:** a fresh one made from the Worker Template, with `hono`.
 
 ### Results
 
-| Step | Browser | Platform Worker | CPU ms | Before |
+| Step | Browser | Platform Worker | Workspace CPU ms | Before |
 | --- | ---: | ---: | ---: | --- |
 | Create the Workspace, `hono` install included | 983 ms | | | 1.7 s |
-| First Check | 503 ms | 448 ms | | 587 ms browser, 556 ms platform |
-| Warm Check (3) | 158–210 ms | 120–151 ms | 3–7 | median 230 ms browser, 202–233 ms platform |
+| First Check | 503 ms | 458 ms | 14 | 587 ms browser, 556 ms platform |
+| Warm Check (3) | 158–210 ms | 130–162 ms | 3–7 | median 230 ms browser, 202–233 ms platform |
 | First Build in the isolate | 440 ms | 404 ms | 373 | 615 ms browser, 437 ms CPU |
 | Build after an edit (3) | 185–219 ms | 143–184 ms | 105–145 (2 in the trace) | 176–225 ms browser, 108–138 ms CPU |
 | Same inputs again (cached) | 75 ms | 24 ms | 10 | 80 ms browser |
 
-**The Turn:** the same ask as stage 3's Turn A, "Add a `GET /api/time` route that returns the current time as JSON".
+**The Turn:** the same ask as stage 3's Turn A, "Add a `GET /api/time` route that returns the current time as JSON", against a budget of $1.
 
 | | Browser | Turn log | Steps | Retries | Input tokens (cache read / written) | Output | Cost |
 | --- | ---: | ---: | ---: | ---: | --- | ---: | ---: |
 | Now | 6.2 s | 5.8 s | 3 | 0 | 13.0K (8.4K / 4.5K) | 0.3K | $0.03 |
 | Stage 3, Turn A | 6.6 s | 5.9 s | 3 | 0 | 12.2K (7.9K / 4.3K) | 0.3K | $0.03 |
 
-- **What the Agent did:** it read `src/index.ts`, added the route, and the Turn ended with a clean Check and a clean Build.
-- **The isolate:** the Workspace's Durable Object kept one isolate throughout, through Checks, Builds and the Turn.
+- **What the Agent did:** it read `src/index.ts` and added the route. The Turn ended with a clean Check and a clean Build.
+- **The isolate:** the Workspace's Durable Object kept one isolate through the Checks, the Builds and the Turn.
 
 ### Found along the way
 
-- **Access's cookie:** on the platform, `CF_Authorization` came back `SameSite=Lax` and `Secure`, as the set-up asked (ADR 0012). It wasn't `HttpOnly`, so the page's own scripts could read the token. Nothing on the platform's pages needs to read it, so the set-up now turns `HttpOnly` on as well. This also answers the research's open question 3 (`docs/research/run-and-host.md`): Access leaves `HttpOnly` off unless the application turns it on.
-- **New hostnames and DNS caches:** a resolver that looked up a hostname before its record existed went on answering "no such name" until its negative cache ran out. For `jigworks.dev` that was up to 30 minutes, the SOA's minimum. One ISP resolver took about 7 minutes to see `app.jigworks.dev` after the first deploy created it.
+- **Access's cookie:** on the platform, `CF_Authorization` came back host-only, `Secure` and `SameSite=Lax`, the last as the set-up asked (ADR 0012).
+  - It wasn't `HttpOnly`, so the page's own scripts could read the token. Nothing on the platform's pages needs to, so the set-up now asks for `HttpOnly` too.
+  - This answers the research's open question 3 (`docs/research/run-and-host.md`). The cookie is host-only, and Access leaves `HttpOnly` off unless the application turns it on.
+- **New hostnames and DNS caches:** a resolver that looked up a hostname before its record existed went on answering "no such name" until its negative cache ran out. For `jigworks.dev`, the SOA's TTL and minimum are both 30 minutes, so that can take up to 30 minutes. One ISP resolver took about 7 minutes to see `app.jigworks.dev` after the first deploy created it.
