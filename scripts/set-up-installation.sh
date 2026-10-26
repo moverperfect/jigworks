@@ -377,7 +377,7 @@ pause
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "The deploy token for GitHub Actions"
 say "Every merge to main deploys the platform from GitHub Actions with this token."
-if gh secret list | grep -q '^CLOUDFLARE_API_TOKEN' && ! confirm "GitHub already has a deploy token. Replace it?"; then
+if gh secret list --json name --jq '.[].name' | grep -qx CLOUDFLARE_API_TOKEN && ! confirm "GitHub already has a deploy token. Replace it?"; then
   note "Keeping the deploy token GitHub has."
 else
   open_url "https://dash.cloudflare.com/profile/api-tokens"
