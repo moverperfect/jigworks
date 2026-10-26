@@ -345,7 +345,7 @@ My reading is to start on Dynamic Workers for both Preview and Deployment. Keep 
 
 1. Do WebSocket upgrades and the Hibernation API work through `facet.fetch()` in production? vibesdk relies on it, and no doc says so.
 2. Can a facet set an alarm? If not, scheduled work in apps has to be driven by the host.
-3. Is `CF_Authorization` host-only, and is it HttpOnly by default? Check both in DevTools.
+3. Is `CF_Authorization` host-only, and is it HttpOnly by default? Check both in DevTools. *Answered:* it's host-only, and it isn't `HttpOnly` unless the application turns it on (`docs/findings.md`, "A second Installation").
 4. Does an Access-protected Preview load inside an iframe on the platform page in Edge and Chrome? If not, use the signed-token pattern, which needs preview hosts outside the Access application. How Access resolves overlapping hostname applications is undocumented.
 5. How does the "1,000 per month" allowance combine with "the count resets daily"? Watch `distinctDynamicWorkerCount` in GraphQL after the first month.
 6. Can the organisation register a separate domain for app content? This is a decision for the organisation. Without one, the fallback is ACM plus the same-site risks.
