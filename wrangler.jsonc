@@ -46,10 +46,9 @@
     // which the Anthropic provider reads itself and refuses when it's empty.
     "AGENT_BASE_URL": ""
   },
-  // The Operator sets both with `wrangler secret put`.
-  // - DEVELOPER_LIST: comma-separated emails, and @domain entries for everyone
-  //   at a domain. While it's empty, nobody gets in. It's a secret so that the
-  //   addresses stay out of the repo. (DEVELOPERS is the Durable Object
-  //   namespace above.)
+  // The Operator sets both with `wrangler secret put`. DEVELOPER_LIST is
+  // comma-separated emails, and @domain entries for everyone at a domain; while
+  // it's empty, nobody gets in. It's a secret so that the addresses stay out of
+  // the repo. (DEVELOPERS is the Durable Object namespace above.)
   "secrets": { "required": ["ANTHROPIC_API_KEY", "DEVELOPER_LIST"] }
 }

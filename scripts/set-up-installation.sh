@@ -216,7 +216,7 @@ if [[ -z "$PLATFORM_HOST" || -z "$APPS_DOMAIN" ]]; then
   printf 'wrangler.jsonc needs the platform route and APPS_DOMAIN set first.\n' >&2
   exit 1
 fi
-for tool in npx gh dig curl; do
+for tool in npx gh curl; do
   command -v "$tool" >/dev/null || { printf 'This wizard needs %s.\n' "$tool" >&2; exit 1; }
 done
 gh auth status >/dev/null 2>&1 || { printf 'Sign gh in first: gh auth login\n' >&2; exit 1; }
@@ -246,9 +246,13 @@ open_url "https://dash.cloudflare.com/?to=/:account/workers/plans"
 step "Sign in to (or create) the Cloudflare account for Jigworks, with two-factor sign-in on."
 step "On Workers & Pages → Plans, choose Workers Paid (5 USD a month). Dynamic Workers need it."
 pause "Press Enter once Workers Paid is active."
-say "Now sign wrangler in to that account with a device code: wrangler shows a link and a"
-say "code. Open the link on any device, check the code matches, and allow access."
-npx wrangler login --device
+if npx wrangler whoami 2>/dev/null | grep -q 'You are logged in'; then
+  note "wrangler is already signed in."
+else
+  say "Now sign wrangler in to that account with a device code: wrangler shows a link and a"
+  say "code. Open the link on any device, check the code matches, and allow access."
+  npx wrangler login --device
+fi
 npx wrangler whoami
 step "Copy the Account ID of the Jigworks account from the table above."
 ask CLOUDFLARE_ACCOUNT_ID "Paste the Account ID:"
@@ -269,7 +273,9 @@ step "Turn on auto-renew, then check out."
 warn "Buying a domain costs money and can't be undone."
 pause "Press Enter once both are bought."
 for zone in "$PLATFORM_ZONE" "$APPS_DOMAIN"; do
-  if dig +short NS "$zone" | grep -q 'ns.cloudflare.com'; then
+  if ! command -v dig >/dev/null; then
+    note "Install dig to check $zone's nameservers; the wizard carries on."
+  elif dig +short NS "$zone" | grep -q 'ns.cloudflare.com'; then
     printf '  %s✓%s %s uses Cloudflare nameservers\n' "$GREEN" "$RESET" "$zone"
   else
     warn "$zone doesn't show Cloudflare nameservers yet. New domains can take a few minutes; the wizard carries on."
@@ -299,16 +305,13 @@ pause
 stage "The Developer list"
 say "Who may sign in to the platform: emails, and @domain entries for everyone at a domain."
 say "Access lets them in first and the platform checks the list after, so both need it."
+note "A secret can't be read back, so give the whole list, even on a re-run."
 DEVELOPER_LIST=""
-if secret_is_set DEVELOPER_LIST && ! confirm "The Worker already has a Developer list. Replace it?"; then
-  note "Keeping the Developer list the Worker has."
-else
-  while [[ -z "$DEVELOPER_LIST" ]]; do
-    read -r -p "  ${BOLD}Developer list (comma-separated, such as you@example.com):${RESET} " DEVELOPER_LIST
-    DEVELOPER_LIST="${DEVELOPER_LIST// /}"
-  done
-  note "It becomes a Worker secret at stage 8. The wizard doesn't save it anywhere else."
-fi
+while [[ -z "$DEVELOPER_LIST" ]]; do
+  read -r -p "  ${BOLD}Developer list (comma-separated, such as you@example.com):${RESET} " DEVELOPER_LIST
+  DEVELOPER_LIST="${DEVELOPER_LIST// /}"
+done
+note "It becomes a Worker secret at stage 8. The wizard doesn't save it anywhere else."
 
 # ── 6 ─────────────────────────────────────────────────────────────────────
 stage "Access application for the platform"
@@ -316,7 +319,7 @@ open_url "https://one.dash.cloudflare.com/"
 step "Access controls → Applications → Create new application → Self-hosted and private."
 step "Name it \"Jigworks platform\". Add public hostname: subdomain ${PLATFORM_HOST%%.*}, domain $PLATFORM_ZONE."
 step "Access policies: create \"Jigworks Developers\", action Allow, including everyone on the list:"
-note "  Emails → each email on the list${DEVELOPER_LIST:+: $DEVELOPER_LIST}"
+note "  Emails → each email on the list: $DEVELOPER_LIST"
 note "  Emails ending in → each @domain entry, if there are any."
 step "Create it. Then Configure → Advanced settings → Cookie settings: set SameSite to Lax, and Save."
 note "Lax stops apps sending requests to the platform with your sign-in (ADR 0012)."
@@ -361,7 +364,7 @@ else
   say "Worker to hold the secret, say yes: the first deploy replaces it."
   npx wrangler secret put ANTHROPIC_API_KEY
 fi
-[[ -z "$DEVELOPER_LIST" ]] || printf '%s' "$DEVELOPER_LIST" | npx wrangler secret put DEVELOPER_LIST
+printf '%s' "$DEVELOPER_LIST" | npx wrangler secret put DEVELOPER_LIST
 for name in ANTHROPIC_API_KEY DEVELOPER_LIST; do
   if secret_is_set "$name"; then
     printf '  %s✓%s the Worker has %s\n' "$GREEN" "$RESET" "$name"
@@ -374,23 +377,35 @@ pause
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "The deploy token for GitHub Actions"
 say "Every merge to main deploys the platform from GitHub Actions with this token."
-open_url "https://dash.cloudflare.com/profile/api-tokens"
-step "Create Token → the \"Edit Cloudflare Workers\" template."
-step "Account resources: Include → the Jigworks account."
-step "Zone resources: Include → Specific zone → $PLATFORM_ZONE, and add $APPS_DOMAIN the same way."
-step "Add one more permission: Zone → DNS → Edit, so a deploy can create $PLATFORM_HOST's record."
-step "Continue to summary → Create Token, and copy it."
-say "gh now asks for the token, hiding what you paste."
-gh secret set CLOUDFLARE_API_TOKEN
-WRITTEN_SECRET+=("CLOUDFLARE_API_TOKEN")
+if gh secret list | grep -q '^CLOUDFLARE_API_TOKEN' && ! confirm "GitHub already has a deploy token. Replace it?"; then
+  note "Keeping the deploy token GitHub has."
+else
+  open_url "https://dash.cloudflare.com/profile/api-tokens"
+  step "Create Token → the \"Edit Cloudflare Workers\" template."
+  step "Account resources: Include → the Jigworks account."
+  step "Zone resources: Include → Specific zone → $PLATFORM_ZONE, and add $APPS_DOMAIN the same way."
+  step "Add one more permission: Zone → DNS → Edit, so a deploy can create $PLATFORM_HOST's record."
+  step "Continue to summary → Create Token, and copy it."
+  say "gh now asks for the token, hiding what you paste."
+  gh secret set CLOUDFLARE_API_TOKEN
+  WRITTEN_SECRET+=("CLOUDFLARE_API_TOKEN")
+fi
 set_var CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
 pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
-stage "Hand back to Claude"
-say "Everything only the Operator can do is done. Tell Claude the wizard is finished."
-say "It copies ACCESS_TEAM_DOMAIN, ACCESS_AUD and APPS_ACCESS_AUD from $ENV_FILE into"
-say "wrangler.jsonc. Merging ticket 17's pull request then deploys to https://$PLATFORM_HOST."
+stage "wrangler.jsonc"
+say "Everything only the Operator can do is done."
+missing=()
+for key in ACCESS_TEAM_DOMAIN ACCESS_AUD APPS_ACCESS_AUD; do
+  grep -q "\"$key\": \"${!key}\"" wrangler.jsonc || missing+=("$key=${!key}")
+done
+if (( ${#missing[@]} )); then
+  say "Copy these into wrangler.jsonc's vars (or ask Claude to), then merge to main to deploy:"
+  for line in "${missing[@]}"; do note "  $line"; done
+else
+  printf '  %s✓%s wrangler.jsonc already has these Access values.\n' "$GREEN" "$RESET"
+fi
 pause "Press Enter for the summary."
 
 finish
