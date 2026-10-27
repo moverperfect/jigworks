@@ -21,7 +21,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
 
 - **From `main`:** a push to `main` runs CI's checks, then `wrangler deploy` (`.github/workflows/ci.yml`). Deploys never overlap. Pushes that arrive during a deploy wait, and only the newest of them deploys.
   - **The token:** the `CLOUDFLARE_API_TOKEN` secret in the `production` environment, which only `main` may use, so only the deploy job can read it. It's made from the "Edit Cloudflare Workers" template. It's limited to Jack's account and the `jigworks.dev` and `jigworks.app` zones, with DNS edit so a deploy can create the platform's Custom Domain record.
-  - **The account:** the `CLOUDFLARE_ACCOUNT_ID` variable.
+  - **The account:** the `CLOUDFLARE_ACCOUNT_ID` secret, in the same environment, so it stays out of the logs.
 - **Setting up an Installation:** `scripts/set-up-installation.sh` walks the Operator through everything only they can do, for the hostnames in `wrangler.jsonc`. It's safe to re-run. It keeps only public values, in `.wrangler/installation.env` (gitignored), and says which Access values `wrangler.jsonc` still needs. Secrets and the Developer list go straight to Cloudflare, Access or GitHub.
 - **By hand,** if CI can't: `pnpm generate && pnpm --filter client build && npx wrangler deploy`.
 - **`NOTICE.md`** lists the third-party code the Worker and the pages ship. After changing dependencies, rewrite it with `pnpm generate && pnpm --filter client build && node scripts/write-notice.mjs`. The client's build copies it into the pages as `/third-party-licences.md`.

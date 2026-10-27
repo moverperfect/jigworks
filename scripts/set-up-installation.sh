@@ -410,7 +410,9 @@ if gh secret list --json name --jq '.[].name' | grep -qx CLOUDFLARE_API_TOKEN; t
   gh secret delete CLOUDFLARE_API_TOKEN
   printf '  %s✓%s removed the repository-wide copy of the token\n' "$GREEN" "$RESET"
 fi
-set_var CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
+# The account ID isn't a credential, but as a secret it stays out of the logs.
+printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | gh secret set CLOUDFLARE_ACCOUNT_ID --env production
+WRITTEN_SECRET+=("CLOUDFLARE_ACCOUNT_ID (production)")
 pause
 
 # ── 10 ────────────────────────────────────────────────────────────────────
