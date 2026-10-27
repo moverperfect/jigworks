@@ -1,25 +1,30 @@
 // Writes NOTICE.md: the third-party code that Jigworks ships, with each
-// package's licence. It lists what the bundles actually contain, read from
+// package's licence text. It lists what the bundles actually contain, read from
 // their source maps, rather than every dependency installed: some installed
 // packages, such as just-bash's native helpers, never reach a bundle.
-// usage: pnpm generate && node scripts/write-notice.mjs
+// usage: pnpm generate && pnpm --filter client build && node scripts/write-notice.mjs
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = new URL("..", import.meta.url).pathname;
+if (!existsSync(join(root, "client/dist")) || !existsSync(join(root, "src/generated"))) {
+  console.error("Run `pnpm generate && pnpm --filter client build` first: the Worker's dry run needs both.");
+  process.exit(1);
+}
 const out = mkdtempSync(join(tmpdir(), "jigworks-notice-"));
+const quiet = { stdio: ["ignore", "ignore", "inherit"] };
 
 // The platform Worker, exactly as `wrangler deploy` would upload it.
-execFileSync("npx", ["wrangler", "deploy", "--dry-run", "--outdir", join(out, "worker")], { cwd: root, stdio: "ignore" });
+execFileSync("npx", ["wrangler", "deploy", "--dry-run", "--outdir", join(out, "worker")], { cwd: root, ...quiet });
 // The pages, built with source maps so that their modules can be named.
 execFileSync("npx", ["vite", "build", "--sourcemap", "--outDir", join(out, "client"), "--emptyOutDir"], {
   cwd: join(root, "client"),
-  stdio: "ignore",
+  ...quiet,
 });
 
-/** Each package a directory's source maps draw on, as `name@version` → its package.json. */
+/** Each package a directory's source maps draw on, as `name@version` → where it's installed. */
 function bundledPackages(dir) {
   const found = new Map();
   for (const file of readdirSync(dir, { recursive: true })) {
@@ -35,34 +40,47 @@ function bundledPackages(dir) {
       if (!spec) continue;
       const name = spec[1].replace("+", "/");
       const key = `${name}@${spec[2]}`;
-      if (found.has(key)) continue;
-      found.set(key, JSON.parse(readFileSync(join(root, "node_modules/.pnpm", pnpmDir, "node_modules", name, "package.json"), "utf8")));
+      if (!found.has(key)) found.set(key, join(root, "node_modules/.pnpm", pnpmDir, "node_modules", name));
     }
   }
   return found;
 }
 
-function table(packages) {
-  const rows = [...packages.values()]
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .map((p) => `| \`${p.name}\` | ${p.version} | ${typeof p.license === "string" ? p.license : "see its package"} |`);
-  return ["| Package | Version | Licence |", "| --- | --- | --- |", ...rows].join("\n");
+/** A package's name, version, licence name and licence text. */
+function describe(dir) {
+  const manifest = JSON.parse(readFileSync(join(dir, "package.json"), "utf8"));
+  const licenceFile = readdirSync(dir).find((file) => /^(licen[cs]e|copying)(\.|$)/i.test(file));
+  const repository = typeof manifest.repository === "string" ? manifest.repository : manifest.repository?.url;
+  const text = licenceFile
+    ? readFileSync(join(dir, licenceFile), "utf8").trim()
+    : `The package doesn't include its licence text. Its licence is ${manifest.license}; see ${repository ?? "its source"}.`;
+  return { name: manifest.name, version: manifest.version, licence: manifest.license ?? "see below", text };
 }
 
-const worker = bundledPackages(join(out, "worker"));
-const client = bundledPackages(join(out, "client"));
+const worker = [...bundledPackages(join(out, "worker")).values()].map(describe);
+const pages = [...bundledPackages(join(out, "client")).values()].map(describe);
 rmSync(out, { recursive: true, force: true });
+
+const byName = (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version);
+const table = (packages) =>
+  ["| Package | Version | Licence |", "| --- | --- | --- |"]
+    .concat(packages.sort(byName).map((p) => `| \`${p.name}\` | ${p.version} | ${p.licence} |`))
+    .join("\n");
+const all = new Map([...worker, ...pages].map((p) => [`${p.name}@${p.version}`, p]));
+const texts = [...all.values()]
+  .sort(byName)
+  .map((p) => `### ${p.name} ${p.version}\n\n\`\`\`text\n${p.text}\n\`\`\``)
+  .join("\n\n");
 
 writeFileSync(
   join(root, "NOTICE.md"),
   `# Notice
 
-Jigworks ships third-party code, and each part keeps its own licence. Jigworks' own licence is in \`LICENSE.md\`. This file is written by \`scripts/write-notice.mjs\`; run it again after changing dependencies.
+Jigworks ships third-party code, and each part keeps its own licence. Jigworks' own licence is in \`LICENSE.md\`. This file is written by \`scripts/write-notice.mjs\`; run it again after changing dependencies. The platform's pages serve it as \`/third-party-licences.md\`.
 
-## WebAssembly modules
+## ts-rust
 
-- **ts-rust**, the Checker's type-checker (\`vendor/ts-rust-wasm\`): MIT, copyright T3 Tools Inc. It includes code from TypeScript (Apache-2.0, with its \`NOTICE\`), Go (BSD-3-Clause), Unicode data and vscode-languageserver-node (MIT). Their licences are in \`vendor/ts-rust-wasm/licenses/\`.
-- **esbuild**, which the Builder runs through \`@cloudflare/worker-bundler\`: MIT.
+The Checker runs ts-rust's WebAssembly module (\`vendor/ts-rust-wasm\`): MIT, copyright T3 Tools Inc. The module includes code from TypeScript (Apache-2.0, with its \`NOTICE\`), Go (BSD-3-Clause), Unicode data (Unicode License v3) and vscode-languageserver-node (MIT). Those licences, and TypeScript's \`NOTICE\`, are in \`vendor/ts-rust-wasm/licenses/\`.
 
 ## Bundled into the platform Worker
 
@@ -70,7 +88,11 @@ ${table(worker)}
 
 ## Bundled into the platform's pages
 
-${table(client)}
+${table(pages)}
+
+## Licence texts
+
+${texts}
 `,
 );
-console.log(`wrote NOTICE.md: ${worker.size} packages in the Worker, ${client.size} in the pages`);
+console.log(`wrote NOTICE.md: ${worker.length} packages in the Worker, ${pages.length} in the pages`);

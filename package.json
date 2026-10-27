@@ -1,7 +1,6 @@
 {
   "name": "jigworks",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE.md",
   "type": "module",
   "packageManager": "pnpm@9.15.4",
   "scripts": {

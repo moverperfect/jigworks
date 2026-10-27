@@ -1,6 +1,6 @@
 # Jigworks
 
-A browser-based platform where a Developer and an AI Agent build Cloudflare Workers apps together, from the first file to a hosted app. Every step runs in Workers isolates: editing, type-checking, building, running and hosting. There are no containers, virtual machines or local tools.
+A browser-based platform where a Developer and an AI Agent build Cloudflare Workers apps together, from the first file to a hosted app. Every step runs in Workers isolates: editing, checking, building, running and hosting. There are no containers, virtual machines or local tools.
 
 An organisation installs Jigworks on its own Cloudflare account, behind its own sign-in. Its people then build internal tools by talking to the Agent, on infrastructure the organisation already runs.
 
@@ -11,8 +11,8 @@ Jigworks began as an experiment: can Workers isolates alone be where an applicat
 | Stage | What | Verdict |
 | --- | --- | --- |
 | 1 | ts-rust Checks and esbuild Builds inside a Durable Object | yes, with a caveat about memory |
-| 2 | Workspaces, the editor, live Checks | yes: a Check takes about 0.2 s |
-| 3 | The Agent, with a Check at the end of every Turn | yes: Turns of 6–40 s, about $0.03–0.11 each |
+| 2 | Workspaces, the editor, live Checks | yes: a Check takes about a quarter of a second |
+| 3 | The Agent, with a Check at the end of every Turn | yes: Turns of 6–41 s, about $0.03–0.11 each |
 | 4 | Builds, and the Preview | Builds fit, at about 0.2 s; the Preview is next |
 | 5–6 | Deployments, app data and secrets; tests in isolates | to come |
 
@@ -28,7 +28,7 @@ flowchart LR
   workspace -->|Turns| anthropic[Anthropic API]
   workspace -->|Packages| npm[npm registry]
   workspace -->|Checks| checker[Checker<br/>Dynamic Worker<br/>ts-rust]
-  workspace -.->|Builds, from ticket 08| apphost[(App host<br/>Durable Object)]
+  workspace -.->|Builds, from #8| apphost[(App host<br/>Durable Object)]
   apphost -.-> apps[Previews and Deployments<br/>Dynamic Workers<br/>on the apps domain]
 ```
 
@@ -48,25 +48,25 @@ An Installation needs:
 - Cloudflare Zero Trust, whose Free plan covers up to 50 people;
 - an Anthropic API key for the Agent.
 
-`scripts/set-up-installation.sh` walks the Operator through setting these up. For now it's written for the first Installation; [#21](https://github.com/moverperfect/jigworks/issues/21) turns it into an install path for any organisation.
+`scripts/set-up-installation.sh` walks the Operator through setting these up. For now it's written for this repository's own Installation at `app.jigworks.dev`; [#21](https://github.com/moverperfect/jigworks/issues/21) turns it into an install path for any organisation.
 
 ## Developing Jigworks
 
 ```sh
 pnpm install
 pnpm generate
+pnpm --filter client build
 pnpm test
-pnpm platform:dev
 ```
 
-[`docs/development.md`](docs/development.md) covers running it locally, deploys, live checks and the lessons learned along the way. Every merge to `main` deploys.
+[`docs/development.md`](docs/development.md) covers running it locally (including the `.dev.vars` that `pnpm platform:dev` needs), deploys, live checks and the lessons learned along the way. Every merge to `main` deploys.
 
 ## Licence
 
 Jigworks is source-available, not open source.
-- **Free:** personal use, research, charities, schools, public research bodies and government ([PolyForm Noncommercial 1.0.0](LICENSE.md)).
-- **Evaluation:** a company may evaluate it for less than 32 consecutive days (PolyForm Free Trial 1.0.0).
-- **Companies:** using it beyond that needs a commercial licence. Email licensing@jigworks.dev.
+- **Free:** any noncommercial purpose, and use by charities, educational institutions, public research, safety, health and environmental organisations, and government ([PolyForm Noncommercial 1.0.0](LICENSE.md)).
+- **Evaluation:** you or your company may evaluate it for less than 32 consecutive calendar days (PolyForm Free Trial 1.0.0).
+- **Commercial:** any other use needs a commercial licence. Email licensing@jigworks.dev.
 
 Third-party code keeps its own licences; see [`NOTICE.md`](NOTICE.md).
 

@@ -2,10 +2,10 @@
 
 Jigworks is source-available, not open source. You may use it under either of the two licences below, whichever fits what you're doing:
 
-- **[PolyForm Noncommercial 1.0.0](#polyform-noncommercial-license-100)** covers personal use, research, hobby projects, and use by charities, schools, public research bodies and government, however they're funded.
-- **[PolyForm Free Trial 1.0.0](#polyform-free-trial-license-100)** lets a company evaluate Jigworks, for less than 32 consecutive days, to decide whether it suits.
+- **[PolyForm Noncommercial 1.0.0](#polyform-noncommercial-license-100)** covers any noncommercial purpose, such as personal study, research or a hobby project. It also covers use by charities, educational institutions, public research organisations, public safety and health organisations, environmental protection organisations and government institutions, however they're funded.
+- **[PolyForm Free Trial 1.0.0](#polyform-free-trial-license-100)** lets you or your company evaluate Jigworks, for less than 32 consecutive calendar days, to decide whether it suits.
 
-Any other use, including a company running Jigworks for its own work, needs a commercial licence. To ask about one, email licensing@jigworks.dev.
+Any use that neither licence permits, such as a company running Jigworks for its own work, needs a commercial licence. To ask about one, email licensing@jigworks.dev.
 
 Neither licence ever turns into an open-source licence.
 

@@ -24,7 +24,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - **The account:** the `CLOUDFLARE_ACCOUNT_ID` variable.
 - **Setting up an Installation:** `scripts/set-up-installation.sh` walks the Operator through everything only they can do, for the hostnames in `wrangler.jsonc`. It's safe to re-run. It keeps only public values, in `.wrangler/installation.env` (gitignored), and says which Access values `wrangler.jsonc` still needs. Secrets and the Developer list go straight to Cloudflare, Access or GitHub.
 - **By hand,** if CI can't: `pnpm generate && pnpm --filter client build && npx wrangler deploy`.
-- **`NOTICE.md`** lists the third-party code the Worker and the pages ship. After changing dependencies, rewrite it with `pnpm generate && node scripts/write-notice.mjs`.
+- **`NOTICE.md`** lists the third-party code the Worker and the pages ship. After changing dependencies, rewrite it with `pnpm generate && pnpm --filter client build && node scripts/write-notice.mjs`. The client's build copies it into the pages as `/third-party-licences.md`.
 - **The Developer list** is the `DEVELOPER_LIST` Worker secret, so the addresses stay out of the repo. Access lets people in first, so a change goes in two places:
   - the "Jigworks Developers" Access policy;
   - `npx wrangler secret put DEVELOPER_LIST`, with the whole list, because a secret can't be read back.

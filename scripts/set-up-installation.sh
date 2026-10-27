@@ -376,10 +376,20 @@ pause
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "The deploy token for GitHub Actions"
-say "Every merge to main deploys the platform from GitHub Actions with this token."
-if gh secret list --env production --json name --jq '.[].name' 2>/dev/null | grep -qx CLOUDFLARE_API_TOKEN \
-  && ! confirm "GitHub already has a deploy token. Replace it?"; then
-  note "Keeping the deploy token GitHub has."
+say "Every merge to main deploys the platform from GitHub Actions with this token. It lives"
+say "in a production environment that only main may use, so only the deploy job can read it."
+note "Environments need a public repository, or a paid GitHub plan for a private one."
+repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
+gh api -X PUT "repos/$repo/environments/production" \
+  -F 'deployment_branch_policy[protected_branches]=false' \
+  -F 'deployment_branch_policy[custom_branch_policies]=true' >/dev/null
+if ! gh api "repos/$repo/environments/production/deployment-branch-policies" --jq '.branch_policies[].name' | grep -qx main; then
+  gh api -X POST "repos/$repo/environments/production/deployment-branch-policies" -f name=main -f type=branch >/dev/null
+fi
+printf '  %s✓%s the production environment accepts deploys from main only\n' "$GREEN" "$RESET"
+if gh secret list --env production --json name --jq '.[].name' | grep -qx CLOUDFLARE_API_TOKEN \
+  && ! confirm "The production environment already has a deploy token. Replace it?"; then
+  note "Keeping the deploy token it has."
 else
   open_url "https://dash.cloudflare.com/profile/api-tokens"
   step "Create Token → the \"Edit Cloudflare Workers\" template."
@@ -387,10 +397,14 @@ else
   step "Zone resources: Include → Specific zone → $PLATFORM_ZONE, and add $APPS_DOMAIN the same way."
   step "Add one more permission: Zone → DNS → Edit, so a deploy can create $PLATFORM_HOST's record."
   step "Continue to summary → Create Token, and copy it."
-  say "gh now asks for the token, hiding what you paste. It goes in the production"
-  say "environment, which only main may use."
+  say "gh now asks for the token, hiding what you paste."
   gh secret set CLOUDFLARE_API_TOKEN --env production
   WRITTEN_SECRET+=("CLOUDFLARE_API_TOKEN (production)")
+fi
+# A copy at the repository level would let any branch's workflow read it.
+if gh secret list --json name --jq '.[].name' | grep -qx CLOUDFLARE_API_TOKEN; then
+  gh secret delete CLOUDFLARE_API_TOKEN
+  printf '  %s✓%s removed the repository-wide copy of the token\n' "$GREEN" "$RESET"
 fi
 set_var CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
 pause
