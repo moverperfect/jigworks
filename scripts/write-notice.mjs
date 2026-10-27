@@ -72,9 +72,7 @@ const texts = [...all.values()]
   .map((p) => `### ${p.name} ${p.version}\n\n\`\`\`text\n${p.text}\n\`\`\``)
   .join("\n\n");
 
-writeFileSync(
-  join(root, "NOTICE.md"),
-  `# Notice
+const notice = `# Notice
 
 Jigworks ships third-party code, and each part keeps its own licence. Jigworks' own licence is in \`LICENSE.md\`. This file is written by \`scripts/write-notice.mjs\`; run it again after changing dependencies. The platform's pages serve it as \`/third-party-licences.md\`.
 
@@ -93,6 +91,8 @@ ${table(pages)}
 ## Licence texts
 
 ${texts}
-`,
-);
+`;
+writeFileSync(join(root, "NOTICE.md"), notice);
+// The copy the pages serve, so a deploy without another client build isn't stale.
+writeFileSync(join(root, "client/dist/third-party-licences.md"), notice);
 console.log(`wrote NOTICE.md: ${worker.length} packages in the Worker, ${pages.length} in the pages`);
