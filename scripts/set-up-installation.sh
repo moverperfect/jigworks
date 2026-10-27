@@ -377,7 +377,8 @@ pause
 # ── 9 ─────────────────────────────────────────────────────────────────────
 stage "The deploy token for GitHub Actions"
 say "Every merge to main deploys the platform from GitHub Actions with this token."
-if gh secret list --json name --jq '.[].name' | grep -qx CLOUDFLARE_API_TOKEN && ! confirm "GitHub already has a deploy token. Replace it?"; then
+if gh secret list --env production --json name --jq '.[].name' 2>/dev/null | grep -qx CLOUDFLARE_API_TOKEN \
+  && ! confirm "GitHub already has a deploy token. Replace it?"; then
   note "Keeping the deploy token GitHub has."
 else
   open_url "https://dash.cloudflare.com/profile/api-tokens"
@@ -386,9 +387,10 @@ else
   step "Zone resources: Include → Specific zone → $PLATFORM_ZONE, and add $APPS_DOMAIN the same way."
   step "Add one more permission: Zone → DNS → Edit, so a deploy can create $PLATFORM_HOST's record."
   step "Continue to summary → Create Token, and copy it."
-  say "gh now asks for the token, hiding what you paste."
-  gh secret set CLOUDFLARE_API_TOKEN
-  WRITTEN_SECRET+=("CLOUDFLARE_API_TOKEN")
+  say "gh now asks for the token, hiding what you paste. It goes in the production"
+  say "environment, which only main may use."
+  gh secret set CLOUDFLARE_API_TOKEN --env production
+  WRITTEN_SECRET+=("CLOUDFLARE_API_TOKEN (production)")
 fi
 set_var CLOUDFLARE_ACCOUNT_ID "$CLOUDFLARE_ACCOUNT_ID"
 pause
