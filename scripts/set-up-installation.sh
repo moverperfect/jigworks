@@ -385,9 +385,9 @@ gh api -X PUT "repos/$repo/environments/production" \
   -F 'deployment_branch_policy[custom_branch_policies]=true' >/dev/null
 # Exactly one rule, main: any other branch a rule allows could read the token.
 policies="repos/$repo/environments/production/deployment-branch-policies"
-gh api "$policies" --jq '.branch_policies[] | select(.name != "main" or .type != "branch") | .id' |
+gh api --paginate "$policies" --jq '.branch_policies[] | select(.name != "main" or .type != "branch") | .id' |
   while read -r id; do gh api -X DELETE "$policies/$id" >/dev/null; done
-if ! gh api "$policies" --jq '.branch_policies[] | select(.type == "branch") | .name' | grep -qx main; then
+if ! gh api --paginate "$policies" --jq '.branch_policies[] | select(.type == "branch") | .name' | grep -qx main; then
   gh api -X POST "$policies" -f name=main -f type=branch >/dev/null
 fi
 printf '  %s✓%s the production environment accepts deploys from main only\n' "$GREEN" "$RESET"
