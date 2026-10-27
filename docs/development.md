@@ -11,10 +11,11 @@ What the scripts and config don't say: how to run the platform, check it live, a
   2. Add `AGENT_BASE_URL=http://127.0.0.1:8788/v1` and `ANTHROPIC_API_KEY=local-fake-key` to `.dev.vars`, and remove them afterwards.
   3. Start the Developer's first message with `[script:<name>]`. The scripts are in `test/fixtures/agent-scripts.ts`.
 - **Stopping servers:** `wrangler` and `workerd` processes outlive the task that started them. From the repo root, `pkill -f "$PWD/node_modules/.*(wrangler|workerd)"`.
-- **vitest stays on 4.1.11,** with `@cloudflare/vitest-plugin` 1.4.0 and `wrangler` 4.149.0:
+- **vitest stays on 4,** at 4.1.12, with `@cloudflare/vitest-plugin` 1.4.0 and `wrangler` 4.149.0:
   - Under vitest 5, plugin 1.4.0 fails everywhere.
   - Plugin 1.4.7 needs a miniflare beta. It passes locally, but crashes `builds.test.ts` and `files.test.ts` on GitHub's 2-core runner, even one file at a time.
   - Try again once the plugin's miniflare leaves beta. Keep `wrangler` on the plugin's version, so tests, dev and deploys share one workerd.
+- **Overrides** (`pnpm.overrides` in `package.json`) lift two packages past exact pins in the test tools: miniflare pins `undici` 7.29.1, and plugin 1.4.0 pins `zod` 4.6.5. Both versions have security alerts (#27). An override applies only below the patched version, so it stops mattering once those tools pin patched versions themselves. Delete both then.
 
 ## Deploys
 
@@ -61,5 +62,6 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
   - The Messages API needs the first message to be the user's, so Start fresh keeps the first message.
   - The settings are in `src/agent/index.ts`: effort `high`, `fallbacks: "default"`, `drop_block` for mismatched thinking blocks, and automatic caching.
 - **Parallel tool calls:** Opus calls `edit`, `bash`, `check` and `build` in the same step. `check` and `build` wait for their siblings, counted with `beforeToolCall` and `afterToolCall`.
+- **Agents SDK upgrades:** `agents` pins its MCP SDK peers (`@modelcontextprotocol/sdk`, `client` and `server`) to exact versions. pnpm keeps the peers it has already installed, so after bumping `agents`, check that `pnpm install` reports no "unmet peer". If it does, add the pinned versions as direct dependencies, install, and then remove them; the lockfile keeps the new versions.
 - **worker-bundler:** it runs its own npm installer for any Package missing from `node_modules/`, which would skip the one-day rule. The Builder strips `dependencies` before handing over `package.json`.
 - **Size:** the Worker is 7.8 MB compressed, against Cloudflare's 10 MB limit. Tickets 09 (Tailwind) and 13 (the test runner) have about 2.2 MB between them.
