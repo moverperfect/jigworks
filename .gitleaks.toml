@@ -1,0 +1,11 @@
+# gitleaks: the default rules, plus one exception. An Access application's
+# AUD tag looks like a key, but it's public: Access puts it in every token it
+# issues and in its sign-in URLs.
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Access application AUD tags in wrangler.jsonc"
+regexTarget = "line"
+regexes = ['''^\s*"(APPS_)?ACCESS_AUD": "[0-9a-f]{64}",?$''']
+paths = ['''^wrangler\.jsonc$''']
