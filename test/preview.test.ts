@@ -182,3 +182,18 @@ describe("the Preview", () => {
     expect(await (await visit(workspace.id)).text()).toBe("Hello from your Worker");
   });
 });
+
+describe("Builds after a save", () => {
+  it("follow the Developer's saves on the server, so the Preview does too", async () => {
+    const workspace = await create("Preview Saves");
+    await save(workspace.id, "src/index.ts", 'export default { fetch: () => new Response("one") };\n');
+    await save(workspace.id, "src/index.ts", 'export default { fetch: () => new Response("two") };\n');
+    // Nothing asks for a Build: the save alone leads to one.
+    const report = await waitFor(
+      async () => (await call(`/api/workspaces/${workspace.id}/build`)).json<BuildReport | null>(),
+      (latest) => latest !== null,
+    );
+    expect(report).toMatchObject({ ok: true });
+    expect(await (await visit(workspace.id)).text()).toBe("two");
+  });
+});

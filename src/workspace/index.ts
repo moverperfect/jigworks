@@ -50,6 +50,9 @@ const buildKey = "build:latest";
 const appLabelKey = "app:label";
 // The hash of the last Build the app host took, so a cached Build isn't sent again.
 const appSentKey = "app:sent";
+// The Build waiting to follow the Developer's last save, so a burst of saves makes one Build.
+const saveBuildKey = "build:after-save";
+const saveBuildDelaySeconds = 1;
 const changedKey = "turn:developer-changes";
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
@@ -71,7 +74,7 @@ const waitingTools = new Set(["check", "build"]);
 trackWasm(() => "esbuild");
 
 /** Who a Check or a Build is for. */
-type RequestedBy = "developer" | "turn" | "agent";
+type RequestedBy = "developer" | "save" | "turn" | "agent";
 
 /**
  * A name for this isolate, chosen when it's first needed, because Workers
@@ -414,7 +417,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * 156 ms for a Build the trace put at 1,036 ms), so it isn't timed here.
    * Work after the call is counted in the Build's trace too.
    */
-  private buildInItsOwnCall(by: "turn" | "agent"): Promise<BuildReport> {
+  private buildInItsOwnCall(by: "save" | "turn" | "agent"): Promise<BuildReport> {
     return this.env.WORKSPACES.get(this.ctx.id).build(by);
   }
 
@@ -429,13 +432,32 @@ export class Workspace extends Think<Env, ConversationState> {
     // In line with Turns starting (see `startTurn`), so a save is checked
     // against the lock when its time comes, and lands either before the Turn,
     // which is told about it, or not at all.
-    return this.exclusive(async () => {
+    const result = await this.exclusive(async (): Promise<DeveloperChange> => {
       if (this.state.turn) return busy;
       await this.files.write(normalised, text);
       this.noteDeveloperChange(normalised);
       if (normalised === "package.json") await this.install();
       return { ok: true };
     });
+    if (result.ok) await this.buildSoon();
+    return result;
+  }
+
+  /**
+   * Builds shortly after the Developer's last save, on the server, so the
+   * Preview follows every save even when the page has closed.
+   */
+  private async buildSoon(): Promise<void> {
+    const waiting = this.ctx.storage.kv.get<string>(saveBuildKey);
+    if (waiting) await this.cancelSchedule(waiting);
+    const { id } = await this.schedule(saveBuildDelaySeconds, "buildAfterSave", undefined, { retry: { maxAttempts: 1 } });
+    this.ctx.storage.kv.put(saveBuildKey, id);
+  }
+
+  /** Runs the Build `buildSoon` scheduled. Only `buildSoon` schedules it. */
+  async buildAfterSave(): Promise<void> {
+    this.ctx.storage.kv.delete(saveBuildKey);
+    await this.buildInItsOwnCall("save");
   }
 
   /** Installs what `package.json` lists, unless that's already installed. */
