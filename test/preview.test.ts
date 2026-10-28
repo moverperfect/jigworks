@@ -1,6 +1,6 @@
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { browserErrorsPath } from "../src/apphost";
+import { browserErrorsPath, type AppLogEntry } from "../src/apphost";
 import type { BuildReport } from "../src/shared/build-report";
 import { testAccess } from "./helpers/access";
 import { call, create } from "./helpers/api";
@@ -33,7 +33,11 @@ const visit = async (id: string, path = "/", init: RequestInit = {}) => {
   return env.APP_HOSTS.getByName(label).fetch(new Request(new URL(path, url), init));
 };
 
-const logs = async (id: string) => env.WORKSPACES.getByName(id).previewLogs();
+const logs = async (id: string) => {
+  const response = await call(`/api/workspaces/${id}/preview/logs`);
+  expect(response.status).toBe(200);
+  return (await response.json<{ logs: AppLogEntry[] }>()).logs;
+};
 
 const waitFor = async <T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> => {
   for (let attempt = 0; attempt < 50; attempt++) {
@@ -151,6 +155,13 @@ describe("the Preview", () => {
     expect(entries).toContainEqual(
       expect.objectContaining({ source: "browser", level: "error", message: "boom is not defined (/app.js:3:7)" }),
     );
+  });
+
+  it("shows a Workspace's Preview and logs only to its own Developer", async () => {
+    const workspace = await create("Preview Private");
+    const theirs = { email: testAccess.secondDeveloper };
+    expect((await call(`/api/workspaces/${workspace.id}/preview`, theirs)).status).toBe(404);
+    expect((await call(`/api/workspaces/${workspace.id}/preview/logs`, theirs)).status).toBe(404);
   });
 
   it("lets the Agent send the Preview requests", async () => {

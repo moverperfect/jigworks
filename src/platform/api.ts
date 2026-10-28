@@ -165,6 +165,11 @@ api.get("/workspaces/:id/preview", async (c) => {
   return record ? c.json(await workspace(c, record.id).preview()) : noSuchWorkspace(c);
 });
 
+api.get("/workspaces/:id/preview/logs", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json({ logs: await workspace(c, record.id).previewLogs() }) : noSuchWorkspace(c);
+});
+
 api.get("/workspaces/:id/check", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json(await workspace(c, record.id).latestCheck()) : noSuchWorkspace(c);
