@@ -22,7 +22,8 @@ import {
   turnProviderOptions,
   withAgentsMd,
 } from "../agent";
-import type { Builder } from "../builder";
+import { newAppLabel, type AppLogEntry, type PreviewExchange } from "../apphost";
+import type { Build, Builder } from "../builder";
 import { takeWasmMemory, trackWasm } from "../builder/wasm-memory";
 import { checkInDynamicWorker } from "../checker/isolated";
 import { isHidden, normalisePath, storeFiles, type Files } from "../files";
@@ -45,6 +46,10 @@ export type PackageAdded = DeveloperChange<{ version: string; status: PackageSta
 
 const checkKey = "check:latest";
 const buildKey = "build:latest";
+// The app's label, which names its app host and its hostnames (ADR 0012).
+const appLabelKey = "app:label";
+// The hash of the last Build the app host took, so a cached Build isn't sent again.
+const appSentKey = "app:sent";
 const changedKey = "turn:developer-changes";
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
@@ -177,6 +182,8 @@ export class Workspace extends Think<Env, ConversationState> {
         return this.buildInItsOwnCall("agent");
       },
       addPackageForAgent: (name, options) => this.addPackageForAgent(name, options),
+      requestPreview: (init) => this.requestPreview(init),
+      previewLogs: (limit) => this.previewLogs(limit),
     });
   }
 
@@ -235,8 +242,9 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /** Fills a new Workspace with its Template's files, and installs their Packages. */
-  async initialise(files: Record<string, string>): Promise<void> {
+  async initialise(files: Record<string, string>, name = ""): Promise<void> {
     if (this.files.list().length > 0) throw new Error(`Workspace ${this.name} already has files`);
+    this.ctx.storage.kv.put(appLabelKey, newAppLabel(name));
     for (const [path, text] of Object.entries(files)) await this.files.write(path, text);
     await this.installPackages();
   }
@@ -320,6 +328,7 @@ export class Workspace extends Think<Env, ConversationState> {
         warnings: result.warnings,
       };
       this.ctx.storage.kv.put(buildKey, report);
+      if (result.ok) await this.sendToAppHost(result);
       console.log(
         JSON.stringify({
           event: "build",
@@ -342,6 +351,60 @@ export class Workspace extends Think<Env, ConversationState> {
   /** The latest Build's report, or null before the first. */
   async latestBuild(): Promise<BuildReport | null> {
     return this.ctx.storage.kv.get<BuildReport>(buildKey) ?? null;
+  }
+
+  /** The app's label, which names its app host and hostnames. Workspaces made before ticket 08 get one now. */
+  appLabel(): string {
+    let label = this.ctx.storage.kv.get<string>(appLabelKey);
+    if (!label) {
+      label = newAppLabel("");
+      this.ctx.storage.kv.put(appLabelKey, label);
+    }
+    return label;
+  }
+
+  /** Where the Preview answers. */
+  async preview(): Promise<{ url: string; ready: boolean }> {
+    const label = this.appLabel();
+    const ready = (await this.env.APP_HOSTS.getByName(label).previewBuild()) !== null;
+    return { url: `https://${label}-preview.${this.env.APPS_DOMAIN}/`, ready };
+  }
+
+  /** Sends the Preview a request for the Agent's `request_preview` tool. */
+  async requestPreview(init: { method: string; path: string; headers?: Record<string, string>; body?: string }): Promise<PreviewExchange> {
+    return this.env.APP_HOSTS.getByName(this.appLabel()).requestPreview(init);
+  }
+
+  /** The Preview's newest server logs and front-end errors, for the Agent's `preview_logs` tool. */
+  async previewLogs(limit?: number): Promise<AppLogEntry[]> {
+    return this.env.APP_HOSTS.getByName(this.appLabel()).logs("preview", limit);
+  }
+
+  /**
+   * Gives the app host a good Build, which the Preview then runs. In the
+   * unlikely case that another Workspace already holds this app's label, the
+   * Workspace picks a new one.
+   */
+  private async sendToAppHost(build: Build): Promise<void> {
+    if (this.ctx.storage.kv.get<string>(appSentKey) === build.hash) return;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const label = this.appLabel();
+      const { hash, mainModule, modules, compatibilityDate, compatibilityFlags, vars } = build;
+      const { accepted } = await this.env.APP_HOSTS.getByName(label).receiveBuild(this.name, label, {
+        hash,
+        mainModule,
+        modules,
+        compatibilityDate,
+        compatibilityFlags,
+        vars,
+      });
+      if (accepted) {
+        this.ctx.storage.kv.put(appSentKey, hash);
+        return;
+      }
+      this.ctx.storage.kv.put(appLabelKey, newAppLabel(label.replace(/-[a-z0-9]{8}$/, "")));
+    }
+    throw new Error("Couldn't find a free label for the Workspace's app.");
   }
 
   /**

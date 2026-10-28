@@ -40,7 +40,7 @@ api.post("/workspaces", async (c) => {
   // still be seen and deleted.
   await developer(c).add(record);
   try {
-    await workspace(c, record.id).initialise(template.files);
+    await workspace(c, record.id).initialise(template.files, record.name);
   } catch (error) {
     await developer(c).remove(record.id);
     throw error;
@@ -158,6 +158,11 @@ api.post("/workspaces/:id/build", async (c) => {
 api.get("/workspaces/:id/build", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json(await workspace(c, record.id).latestBuild()) : noSuchWorkspace(c);
+});
+
+api.get("/workspaces/:id/preview", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).preview()) : noSuchWorkspace(c);
 });
 
 api.get("/workspaces/:id/check", async (c) => {

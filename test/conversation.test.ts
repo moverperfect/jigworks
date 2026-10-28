@@ -47,7 +47,9 @@ describe("a Turn", () => {
     expect(sent.system).toContain("You are the Agent on a development platform");
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
     expect(sent.latest).toContain("the Developer changed /src/notes.md");
-    expect(sent.tools).toEqual(expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "read", "write"]));
+    expect(sent.tools).toEqual(
+      expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "preview_logs", "read", "request_preview", "write"]),
+    );
 
     // The note is for the Turn after the change only.
     await runTurn(workspace.id, conversation, "And now?");

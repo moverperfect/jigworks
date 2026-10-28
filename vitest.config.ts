@@ -32,6 +32,7 @@ export default defineConfig({
                 ACCESS_AUD: testAccess.audience,
                 DEVELOPER_LIST: `${testAccess.developer},${testAccess.secondDeveloper},${testAccess.developerDomain}`,
                 PLATFORM_ORIGIN: testAccess.origin,
+                APPS_DOMAIN: testAccess.appsDomain,
                 // Tests never sign in, or reach a model, through a local .dev.vars.
                 DEV_SIGNED_IN_AS: "",
                 AGENT_BASE_URL: "",
