@@ -3,14 +3,29 @@ import { getMe } from "./api";
 import { ErrorMessage } from "./ErrorMessage";
 import { HomePage } from "./HomePage";
 import { useLoad, useTitle } from "./hooks";
-import { Link, matchRoute, usePath } from "./router";
+import { Link, matchRoute, usePath, type Route } from "./router";
 
 // Loaded when first opened, so the home page doesn't wait for the editor.
 const WorkspacePage = lazy(() => import("./WorkspacePage").then((module) => ({ default: module.WorkspacePage })));
+// PROTOTYPE, throwaway: full-screen, without the platform's header or sign-in.
+const ChatFirstPrototypePage = lazy(() =>
+  import("./prototype/ChatFirstPrototypePage").then((module) => ({ default: module.ChatFirstPrototypePage })),
+);
 
 export function App() {
   const path = usePath();
   const route = matchRoute(path);
+  if (route.page === "prototype") {
+    return (
+      <Suspense fallback={null}>
+        <ChatFirstPrototypePage />
+      </Suspense>
+    );
+  }
+  return <PlatformApp path={path} route={route} />;
+}
+
+function PlatformApp({ path, route }: { path: string; route: Route }) {
   const me = useLoad(getMe);
   const main = useRef<HTMLElement>(null);
   const previousPath = useRef(path);

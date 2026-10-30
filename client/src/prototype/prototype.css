@@ -1,0 +1,294 @@
+/* PROTOTYPE, throwaway: the stage, the floating bar, the fake app and the code stand-in. */
+
+.proto-page {
+  --proto-bar-height: 5.5rem;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.proto-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+/* The floating bar: deliberately not part of any design. */
+.proto-bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem 1rem;
+  margin: 0 auto 0.5rem;
+  padding: 0.45rem 0.9rem;
+  max-width: calc(100vw - 1rem);
+  background: #111;
+  color: #f4f4f4;
+  border-radius: 14px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+  font-size: 0.8rem;
+  z-index: 1000;
+}
+
+.proto-bar-group {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.proto-bar-label {
+  min-width: 13rem;
+  text-align: center;
+}
+
+.proto-bar-arrow,
+.proto-bar-chip {
+  font: inherit;
+  color: inherit;
+  background: #2b2b2b;
+  border: 1px solid #444;
+  border-radius: 999px;
+  padding: 0.15rem 0.6rem;
+  cursor: pointer;
+}
+
+.proto-bar-arrow:hover,
+.proto-bar-chip:hover {
+  background: #3a3a3a;
+}
+
+.proto-bar-dim {
+  color: #aaa;
+}
+
+.proto-bar-check {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
+.proto-bar-state {
+  flex-basis: 100%;
+  text-align: center;
+  color: #9fd39f;
+  font-size: 0.72rem;
+}
+
+/* The code stand-in. */
+.proto-code {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.25rem;
+  height: 100%;
+  overflow: auto;
+  background: var(--surface);
+}
+
+.proto-code-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+}
+
+.proto-code-header .button {
+  margin-left: auto;
+}
+
+.proto-code-files {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--monospace);
+  line-height: 1.9;
+}
+
+/* "Sunday Runs", the app the Agent builds. It has its own look, as a real app would. */
+.fa {
+  --fa-accent: #3559c7;
+  --fa-ink: #1d2433;
+  --fa-paper: #f6f7fb;
+  min-height: 100%;
+  padding: 1.75rem 1.25rem 2.5rem;
+  background: var(--fa-paper);
+  color: var(--fa-ink);
+  font-family: Georgia, "Iowan Old Style", serif;
+  color-scheme: light;
+  position: relative;
+}
+
+.fa > .fa-part {
+  max-width: 34rem;
+  margin: 0 auto 1rem;
+}
+
+.fa-sporty {
+  --fa-accent: #0f8a3c;
+  --fa-paper: #eef8f0;
+  font-family: system-ui, sans-serif;
+}
+
+.fa-kicker {
+  color: var(--fa-accent);
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fa-title {
+  font-size: 2.2rem;
+  margin: 0.15rem 0 0;
+}
+
+.fa-sporty .fa-title {
+  font-weight: 900;
+  font-style: italic;
+  text-transform: uppercase;
+  font-size: 2.6rem;
+  color: var(--fa-accent);
+}
+
+.fa-card {
+  background: #fff;
+  border: 1px solid #dde1ec;
+  border-radius: 10px;
+  padding: 1rem 1.1rem;
+}
+
+.fa-when {
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.fa-label {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 0.35rem;
+}
+
+.fa-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.fa-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #b9bfd0;
+  border-radius: 6px;
+  background: #fff;
+  color: var(--fa-ink);
+}
+
+.fa-button {
+  font: inherit;
+  font-weight: 700;
+  padding: 0.45rem 0.9rem;
+  border: 0;
+  border-radius: 6px;
+  background: var(--fa-accent);
+  color: #fff;
+  cursor: pointer;
+}
+
+.fa-note {
+  margin-top: 0.4rem;
+  font-size: 0.85rem;
+  color: #5a6275;
+}
+
+.fa-subtitle {
+  font-size: 1rem;
+  margin: 0 0 0.4rem;
+}
+
+.fa-names {
+  margin: 0 0 0.75rem;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.fa-names li {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: #e8ebf5;
+}
+
+.fa-sporty .fa-names li {
+  background: #d6efdd;
+}
+
+.fa-waiting li {
+  background: #f3ece0;
+}
+
+.fa-footer {
+  text-align: center;
+  font-size: 0.85rem;
+  color: #5a6275;
+}
+
+.fa-email {
+  position: sticky;
+  bottom: 0.75rem;
+  max-width: 34rem;
+  margin: 1rem auto 0;
+  padding: 0.6rem 2rem 0.6rem 0.8rem;
+  background: #fffbe6;
+  border: 1px solid #e6d58a;
+  border-radius: 8px;
+  font-size: 0.9rem;
+}
+
+.fa-close {
+  position: absolute;
+  top: 0.3rem;
+  right: 0.4rem;
+  border: 0;
+  background: none;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.fa-emphasised {
+  transform: scale(1.04);
+  transform-origin: top center;
+  box-shadow: 0 0 0 3px var(--fa-accent);
+  border-radius: 10px;
+}
+
+.fa-pointable {
+  cursor: crosshair;
+  position: relative;
+  border-radius: 10px;
+}
+
+.fa-pointable:hover {
+  outline: 3px dashed #e8590c;
+  outline-offset: 4px;
+}
+
+.fa-pointable:hover::after {
+  content: "Change " attr(data-label);
+  position: absolute;
+  top: -1.6rem;
+  left: 0;
+  padding: 0.1rem 0.5rem;
+  border-radius: 4px;
+  background: #e8590c;
+  color: #fff;
+  font: 0.75rem system-ui, sans-serif;
+  white-space: nowrap;
+}

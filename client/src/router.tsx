@@ -1,9 +1,11 @@
 import { useSyncExternalStore, type ComponentProps, type MouseEvent } from "react";
 
-export type Route = { page: "home" } | { page: "workspace"; id: string } | { page: "not-found" };
+export type Route = { page: "home" } | { page: "workspace"; id: string } | { page: "prototype" } | { page: "not-found" };
 
 export function matchRoute(path: string): Route {
   if (path === "/") return { page: "home" };
+  // PROTOTYPE, throwaway: the chat-first variants, on the dev server only.
+  if (import.meta.env.DEV && path === "/prototype/chat-first") return { page: "prototype" };
   const match = /^\/workspaces\/([^/]+)\/?$/.exec(path);
   if (match) {
     try {

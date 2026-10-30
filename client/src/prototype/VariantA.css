@@ -1,0 +1,464 @@
+/* PROTOTYPE, throwaway: Variant A, "Just a conversation". */
+
+.va {
+  --va-accent: #c2410c;
+  --va-soft: color-mix(in srgb, var(--va-accent) 10%, var(--surface));
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  position: relative;
+}
+
+.va-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 1.25rem;
+}
+
+.va-logo {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.va-name {
+  flex: 1;
+  text-align: center;
+  font-weight: 600;
+}
+
+.va-top-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.va-pill,
+.va-button,
+.va-chip,
+.va-icon {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0.35rem 0.9rem;
+  cursor: pointer;
+}
+
+.va-pill:hover,
+.va-button:hover,
+.va-chip:hover,
+.va-icon:hover {
+  background: var(--hover);
+}
+
+.va-pill {
+  font-weight: 600;
+}
+
+.va-pill-dot::after {
+  content: "";
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-left: 0.4rem;
+  border-radius: 50%;
+  background: var(--va-accent);
+}
+
+.va-button-primary,
+.va-button-primary:hover {
+  background: var(--va-accent);
+  border-color: var(--va-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.va-icon {
+  padding: 0.35rem 0.7rem;
+}
+
+.va-menu-wrap {
+  position: relative;
+}
+
+.va-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.3rem);
+  z-index: 20;
+  margin: 0;
+  padding: 0.3rem;
+  list-style: none;
+  min-width: 12rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 0.15);
+}
+
+.va-menu button {
+  width: 100%;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.4rem 0.6rem;
+  cursor: pointer;
+}
+
+.va-menu button:hover {
+  background: var(--hover);
+}
+
+.va-danger {
+  color: var(--danger) !important;
+}
+
+.va-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.va-messages {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 1rem 1.25rem 2rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.va-you {
+  align-self: flex-end;
+  max-width: 80%;
+  padding: 0.6rem 0.9rem;
+  border-radius: 18px 18px 4px 18px;
+  background: var(--va-soft);
+  white-space: pre-wrap;
+}
+
+.va-about {
+  display: block;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.va-agent {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  line-height: 1.6;
+}
+
+.va-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.va-step {
+  display: flex;
+  gap: 0.5rem;
+  color: var(--muted);
+}
+
+.va-step-running,
+.va-step-fixing {
+  color: var(--text);
+}
+
+.va-step-running .va-step-icon,
+.va-step-fixing .va-step-icon {
+  display: inline-block;
+  animation: va-spin 1.2s linear infinite;
+}
+
+.va-step-done .va-step-icon {
+  color: #2f7d32;
+}
+
+.va-step-failed {
+  color: var(--danger);
+}
+
+.va-step-result {
+  color: var(--muted);
+}
+
+@keyframes va-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.va-steps-summary > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 0.9rem;
+  width: fit-content;
+}
+
+.va-steps-summary[open] > summary {
+  margin-bottom: 0.4rem;
+}
+
+.va-technical {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.va-technical summary {
+  cursor: pointer;
+}
+
+.va-technical ul {
+  margin: 0.3rem 0 0;
+  font-family: var(--monospace);
+}
+
+.va-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.va-card {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 4px 18px rgb(0 0 0 / 0.08);
+}
+
+.va-card-app {
+  height: 22rem;
+  overflow: auto;
+}
+
+.va-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.8rem;
+  border-top: 1px solid var(--border);
+}
+
+.va-card-label {
+  flex: 1;
+  font-weight: 600;
+}
+
+.va-old-version {
+  font-size: 0.85rem;
+  color: var(--muted);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 0.4rem 0.8rem;
+  width: fit-content;
+}
+
+.va-bottom {
+  flex: none;
+  max-width: 46rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: 0 1.25rem 1rem;
+}
+
+.va-suggestions,
+.va-ideas {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.6rem;
+}
+
+.va-chip {
+  font-size: 0.85rem;
+  padding: 0.25rem 0.75rem;
+}
+
+.va-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+  padding: 0.5rem 0.5rem 0.5rem 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 24px;
+  box-shadow: 0 2px 12px rgb(0 0 0 / 0.06);
+}
+
+.va-composer textarea {
+  flex: 1;
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  resize: none;
+  padding: 0.35rem 0;
+  outline: none;
+}
+
+.va-composer-big {
+  border-radius: 20px;
+  padding: 0.9rem 0.9rem 0.9rem 1.2rem;
+}
+
+.va-composer-big textarea {
+  font-size: 1.1rem;
+}
+
+.va-send {
+  flex: none;
+  width: 2.2rem;
+  height: 2.2rem;
+  border: 0;
+  border-radius: 50%;
+  background: var(--va-accent);
+  color: #fff;
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+
+.va-send:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.va-start-body {
+  flex: 1;
+  overflow: auto;
+  max-width: 44rem;
+  width: 100%;
+  margin: 0 auto;
+  padding: 12vh 1.25rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.va-hero {
+  font-size: clamp(1.8rem, 4vw, 2.6rem);
+  margin: 0;
+  text-align: center;
+}
+
+.va-lede {
+  text-align: center;
+  color: var(--muted);
+  font-size: 1.05rem;
+}
+
+.va-ideas {
+  justify-content: center;
+  align-items: center;
+}
+
+.va-recent {
+  margin-top: 2rem;
+}
+
+.va-recent-heading {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.va-recent ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.va-recent li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 1rem;
+  padding: 0.6rem 0.2rem;
+  border-top: 1px solid var(--border);
+}
+
+.va-live {
+  color: #2f7d32;
+}
+
+.va-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.va-overlay-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.va-overlay-url {
+  flex: 1;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.va-overlay-app {
+  flex: 1;
+  overflow: auto;
+}
+
+.va-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  background: rgb(0 0 0 / 0.35);
+}
+
+.va-dialog {
+  width: min(28rem, calc(100% - 2rem));
+  padding: 1.5rem;
+  border-radius: 16px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.va-dialog h2 {
+  margin: 0;
+}
+
+.va-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.va-link {
+  font-family: var(--monospace);
+  padding: 0.5rem 0.75rem;
+  background: var(--va-soft);
+  border-radius: 8px;
+}

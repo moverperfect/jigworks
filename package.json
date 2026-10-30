@@ -9,7 +9,8 @@
     "test": "vitest run",
     "generate": "node templates/pack.mjs && node scripts/pack-checker.mjs && node scripts/pack-tailwind.mjs",
     "platform:dev": "wrangler dev --ip 127.0.0.1 --port 8787 --local-upstream 127.0.0.1:8787 --upstream-protocol http",
-    "agent:fake": "node scripts/fake-anthropic.mjs"
+    "agent:fake": "node scripts/fake-anthropic.mjs",
+    "prototype": "pnpm --filter client exec vite --port 5199 --strictPort"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.79",
