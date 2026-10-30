@@ -13,32 +13,24 @@ This Workspace runs only inside the platform. There is no local machine and noth
 
 - **Packages:** add one with the `add_package` tool. It installs the Package and writes its exact version into `package.json`. Every version in `package.json` is exact (no `^` or `~`); leave them to `add_package`.
 - **Checks:** a Check (a type-check with TypeScript 7 rules) runs automatically at the end of every Turn. It checks `tsconfig.server.json` (Workers types, no DOM) and `tsconfig.client.json` (the DOM, and JSX through React) separately. Call the `check` tool to see the errors sooner, for example after a large change.
-- **Build:** a Build runs after the Check at the end of every Turn, and type errors don't stop it. Call the `build` tool to see Build errors sooner. The Build uses esbuild (through `@cloudflare/worker-bundler`):
-  - it bundles the Worker from `main` in `wrangler.jsonc`, and reads the compatibility date, flags and `vars` there;
-  - it bundles each `<script type="module" src="/src/...">` that `index.html` links for the browser, with React's automatic JSX runtime, and points `index.html` at the bundle;
-  - it compiles each stylesheet that `index.html` links, and points `index.html` at the result.
+- **Build:** a Build runs after the Check at the end of every Turn, and type errors don't stop it. Call the `build` tool to see Build errors sooner. The Build uses esbuild (through `@cloudflare/worker-bundler`). It builds the Worker from `main` in `wrangler.jsonc`, reading the compatibility date, flags and `vars` there, and the scripts and stylesheets `index.html` links, with React's automatic JSX runtime. `index.html` keeps its `/src/...` links: the Build points them at what it makes.
 
 ## Serving
 
-As on Cloudflare, with the `assets` settings in `wrangler.jsonc`:
-
-- A request for a file the Build makes (`index.html`, a bundle, a stylesheet or a file in `public/`) gets that file, before the Worker sees it.
-- `/api/*` always goes to the Worker (`run_worker_first`).
-- Any other page navigation gets `index.html` (`single-page-application`), so the front end can route it. Other requests go to the Worker.
+The platform serves the front end and `public/` in front of the Worker, as Cloudflare would with the `assets` settings in `wrangler.jsonc`. Only `not_found_handling` and `run_worker_first` apply. There's no `ASSETS` binding, so `c.env.ASSETS` doesn't exist: the Worker never needs to serve the front end itself.
 
 ## Tailwind
 
-- `src/styles.css` imports Tailwind with `@import "tailwindcss";`. The platform compiles it with its own Tailwind (version 4.3.3), so `tailwindcss` isn't a Package: don't add it.
+- `src/styles.css` imports Tailwind with `@import "tailwindcss";`. The platform compiles it with its own Tailwind 4, so `tailwindcss` isn't a Package: don't add it.
 - The CSS has the classes the Workspace's files use. Write each class name whole, such as `bg-sky-600`. A class name pieced together at runtime, such as `` `bg-${colour}-600` ``, isn't found.
 - `@theme`, `@utility`, `@variant`, `@apply` and `@import` of your own stylesheets all work. `@plugin` and `@config` fail the Build: there are no Tailwind plugins, such as typography or forms, and no `tailwind.config.js`.
 - A stylesheet that doesn't import `tailwindcss` is plain CSS. The Build combines it with its `@import`s.
 
 ## Code the Build understands
 
-- Link stylesheets from `index.html`. Don't import CSS from code: the Build drops it.
-- Don't use CSS modules (`*.module.css`): the Build treats them as plain, global CSS.
+- Link stylesheets from `index.html`. Don't import CSS from code, and don't use CSS modules (`*.module.css`): the Build drops CSS imported from code.
 - Import your own files by relative path (`./routes/users`). The Build ignores `paths` in the tsconfig files, so `@/` aliases don't resolve.
-- Don't import images or fonts from code. Put them in `public/` and refer to them by URL, such as `/logo.svg`.
+- Don't import images from code. Put SVG images in `public/` and refer to them by URL, such as `/logo.svg`. Files in `public/` are served as text, so a PNG, a JPEG or a font file there would arrive damaged: use SVG, or a URL on another site.
 - Don't use `import.meta.env`: the Build has none. The Worker reads configuration from `c.env`; the front end asks the Worker for what it needs.
 - `Env`, the type of `c.env`, is declared in `worker-configuration.d.ts`. When you add a var to `wrangler.jsonc` or use a secret, add its name to the `__BaseEnv_Env` interface at the top of that file.
 

@@ -14,8 +14,45 @@ const tailwind = JSON.parse(packedTailwind) as { version: string; stylesheets: R
 /** The platform's Tailwind version, which goes into every Build's hash. */
 export const tailwindVersion = tailwind.version;
 
-/** What index.html asks the Build for. */
-export interface Page {
+/** What the Build makes from `index.html` before the bundler runs, or why it can't. */
+export type FrontEnd =
+  | {
+      ok: true;
+      /** index.html, with its links pointed at what the Build makes. */
+      html: string;
+      /** What the bundler bundles for the browser: the scripts, and the plain stylesheets. */
+      entries: string[];
+      /** Tailwind's CSS, by the path it's served at. */
+      compiled: Record<string, string>;
+      /** How many possible class names the Workspace's files gave Tailwind, if it ran. */
+      tailwindCandidates?: number;
+    }
+  | { ok: false; problems: BuildProblem[]; tailwindFailure?: TailwindFailure };
+
+/** Why Tailwind failed: something the platform's Tailwind doesn't support, or an error in the CSS. */
+export type TailwindFailure = "unsupported" | "error";
+
+/** The scripts and stylesheets `index.html` links, made ready for the bundler. */
+export async function frontEnd(snapshot: Snapshot): Promise<FrontEnd> {
+  const page = await readPage(snapshot);
+  if (page.problems.length > 0) return { ok: false, problems: page.problems };
+  const entries = [...page.scripts];
+  const compiled: Record<string, string> = {};
+  let found: Set<string> | undefined;
+  for (const stylesheet of page.stylesheets) {
+    if (!usesTailwind(stylesheet, snapshot)) {
+      entries.push(stylesheet);
+      continue;
+    }
+    found ??= candidates(snapshot);
+    const result = await compileTailwind(stylesheet, snapshot, found);
+    if ("problems" in result) return { ok: false, problems: result.problems, tailwindFailure: result.failure };
+    compiled[outputPath(stylesheet)] = result.css;
+  }
+  return { ok: true, html: page.html, entries, compiled, tailwindCandidates: found?.size };
+}
+
+interface Page {
   /** index.html, with its links pointed at what the Build makes. */
   html: string;
   /** Workspace paths of the module scripts it links, such as `src/client/main.tsx`. */
@@ -26,17 +63,17 @@ export interface Page {
 }
 
 /** Where the Build serves what it makes from a file: `src/client/main.tsx` at `/client/main.js`, as the bundler names it. */
-export function outputPath(path: string): string {
+function outputPath(path: string): string {
   return `/${path.replace(/^src\//, "").replace(/\.(tsx?|jsx?)$/, ".js")}`;
 }
 
 /** The scripts and stylesheets index.html links, and index.html pointed at their Build output. Files in `public/` are left alone. */
-export async function readPage(snapshot: Snapshot): Promise<Page> {
+async function readPage(snapshot: Snapshot): Promise<Page> {
   const source = snapshot.get("index.html") ?? "";
   const scripts: string[] = [];
   const stylesheets: string[] = [];
   const problems: BuildProblem[] = [];
-  const link = (element: Element, attribute: string, into: string[]) => {
+  const relink = (element: Element, attribute: string, into: string[]) => {
     const url = element.getAttribute(attribute) ?? "";
     // Another site's file, or a data: URL.
     if (/^([a-z][a-z0-9+.-]*:|\/\/)/i.test(url)) return;
@@ -50,38 +87,38 @@ export async function readPage(snapshot: Snapshot): Promise<Page> {
     element.setAttribute(attribute, outputPath(path));
   };
   const html = await new HTMLRewriter()
-    .on('script[type="module"][src]', { element: (element) => link(element, "src", scripts) })
-    .on('link[rel="stylesheet"][href]', { element: (element) => link(element, "href", stylesheets) })
+    .on('script[type="module"][src]', { element: (element) => relink(element, "src", scripts) })
+    .on('link[rel="stylesheet"][href]', { element: (element) => relink(element, "href", stylesheets) })
     .transform(new Response(source))
     .text();
   return { html, scripts, stylesheets, problems };
 }
 
 /** Whether a stylesheet imports Tailwind, itself or through the Workspace's own stylesheets it imports. */
-export function usesTailwind(path: string, snapshot: Snapshot, seen = new Set<string>()): boolean {
-  if (seen.has(path)) return false;
-  seen.add(path);
+function usesTailwind(path: string, snapshot: Snapshot, visited = new Set<string>()): boolean {
+  if (visited.has(path)) return false;
+  visited.add(path);
   const css = withoutComments(snapshot.get(path) ?? "");
-  if (/@tailwind\s/.test(css)) return true;
   for (const [, id] of css.matchAll(/@import\s+(?:url\(\s*)?["']([^"']+)["']/g)) {
-    if (id === "tailwindcss" || id!.startsWith("tailwindcss/")) return true;
+    if (tailwindStylesheet(id!) !== undefined) return true;
     const own = id!.startsWith(".") || id!.startsWith("/");
-    if (own && usesTailwind(join(dirname(path), id!), snapshot, seen)) return true;
+    if (own && usesTailwind(join(dirname(path), id!), snapshot, visited)) return true;
   }
   return false;
 }
 
 /**
- * Compiles a stylesheet with the platform's Tailwind, for the class names
- * the Workspace's files use. `@plugin` and `@config` fail at the line that
- * has them, because there's nothing to load them with (ADR 0007).
+ * Compiles a stylesheet with the platform's Tailwind, for the possible class
+ * names `found` in the Workspace's files. `@plugin` and `@config` fail at the
+ * line that has them, because there's nothing to load them with (ADR 0007).
  */
-export async function compileTailwind(
+async function compileTailwind(
   path: string,
   snapshot: Snapshot,
-): Promise<{ css: string; candidates: number } | { problems: BuildProblem[]; failure: "unsupported" | "error" }> {
+  found: Set<string>,
+): Promise<{ css: string } | { problems: BuildProblem[]; failure: TailwindFailure }> {
   const unsupported: BuildProblem[] = [];
-  const check = (file: string, css: string) => {
+  const findUnsupported = (file: string, css: string) => {
     const code = withoutComments(css);
     for (const match of code.matchAll(/@(plugin|config)\b/g)) {
       unsupported.push({
@@ -91,7 +128,7 @@ export async function compileTailwind(
     }
   };
   const entry = snapshot.get(path) ?? "";
-  check(path, entry);
+  findUnsupported(path, entry);
   try {
     const compiler = await compile(entry, {
       base: dirname(path),
@@ -102,16 +139,12 @@ export async function compileTailwind(
         const file = join(base, id);
         const content = snapshot.get(file);
         if (content === undefined) throw new Error(`"${id}" isn't a Workspace file`);
-        check(file, content);
+        findUnsupported(file, content);
         return { path: file, base: dirname(file), content };
-      },
-      async loadModule(id, _base, kind) {
-        throw new Error(`@${kind} "${id}" isn't supported`);
       },
     });
     if (unsupported.length > 0) return { problems: unsupported, failure: "unsupported" };
-    const found = candidates(snapshot);
-    return { css: compiler.build([...found]), candidates: found.size };
+    return { css: compiler.build([...found]) };
   } catch (error) {
     if (unsupported.length > 0) return { problems: unsupported, failure: "unsupported" };
     const message = error instanceof Error ? error.message : String(error);
@@ -119,16 +152,16 @@ export async function compileTailwind(
   }
 }
 
-// The files Tailwind's own scanner would read: markup and code, but not
-// stylesheets, Packages or type declarations.
-const scanned = /\.(html?|[cm]?[jt]sx?|mdx?|vue|svelte|astro)$/;
+// The files that can hold class names: markup and code, but not
+// stylesheets, Packages, type declarations or docs such as AGENTS.md.
+const scanned = /\.(html?|[cm]?[jt]sx?)$/;
 
 /**
  * Everything in the Workspace's files that might be a class name. Tailwind
  * skips the ones it doesn't know, so collecting too much does no harm. A
  * class name pieced together at runtime isn't found.
  */
-export function candidates(snapshot: Snapshot): Set<string> {
+function candidates(snapshot: Snapshot): Set<string> {
   const found = new Set<string>();
   for (const [path, text] of snapshot) {
     if (path.startsWith("node_modules/") || /\.d\.[cm]?ts$/.test(path) || !scanned.test(path)) continue;

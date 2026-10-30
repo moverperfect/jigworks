@@ -1,6 +1,6 @@
 # Jigworks
 
-A browser-based development environment where a Developer and an AI Agent build Cloudflare Workers and web front-ends together, from writing the code to hosting it, with no local machine involved.
+A browser-based development environment where a Developer and an AI Agent build Cloudflare Workers and web front ends together, from writing the code to hosting it, with no local machine involved.
 
 ## Language
 
@@ -39,6 +39,10 @@ _Avoid_: Typecheck, lint, compile
 **Build**:
 The runnable form of a Workspace's code, made from its files as they were at one moment. A Build can be made while the Check still shows errors.
 _Avoid_: Bundle, artifact, compile
+
+**Front end**:
+The part of a Workspace's app that runs in the browser: `index.html` and the scripts and stylesheets it links (ADR 0014). A Workspace without `index.html` has none.
+_Avoid_: Client, SPA, frontend
 
 **Preview**:
 The Workspace's latest Build, running at a URL that only its Developer can open. Its data is kept separate from the Deployment's.

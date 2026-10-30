@@ -4,7 +4,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
 
 ## Running it
 
-- **Generated files:** `pnpm generate` packs the Templates and the Checker's bundle into `src/generated/`, which the typecheck, the tests and deploys need. Run it after changing `templates/` or `src/checker/worker.ts`. Run `pnpm types` after editing `wrangler.jsonc`.
+- **Generated files:** `pnpm generate` packs the Templates, the Checker's bundle and Tailwind's stylesheets into `src/generated/`, which the typecheck, the tests and deploys need. Run it after changing `templates/`, `src/checker/worker.ts` or the Tailwind version. Run `pnpm types` after editing `wrangler.jsonc`.
 - **Locally:** `pnpm platform:dev` serves http://127.0.0.1:8787. `.dev.vars` (gitignored) needs `DEV_SIGNED_IN_AS` and `DEVELOPER_LIST`, both `developer@example.com`, and `PLATFORM_ORIGIN=http://127.0.0.1:8787`. The gate honours `DEV_SIGNED_IN_AS` only for localhost.
 - **Turns without the real model:**
   1. Start the scripted model with `pnpm agent:fake`, which serves 127.0.0.1:8788.
@@ -51,7 +51,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
 
 ## Learned the hard way
 
-Most of these are in code comments and ADRs too. Recheck them first when upgrading Think, the Agents SDK, the AI SDK or worker-bundler.
+Most of these are in code comments and ADRs too. Recheck them first when upgrading Think, the Agents SDK, the AI SDK, worker-bundler or Tailwind.
 
 - **Think 0.20.2:** `onChatResponse` can't start another turn, so `runDeveloperTurn` drives Turns with `saveMessages` from an alarm (ADR 0011). The Workspace relies on Think and Agents SDK behaviour that a version bump could change:
   - **The socket only watches:** `webSocketMessage` is overridden to drop client frames, then hands the rest to `this.lifecycle.webSocketMessage`. The SDK installs its own handler only if the class has none.
@@ -67,5 +67,5 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
 - **Parallel tool calls:** Opus calls `edit`, `bash`, `check` and `build` in the same step. `check` and `build` wait for their siblings, counted with `beforeToolCall` and `afterToolCall`.
 - **Agents SDK upgrades:** `agents` pins its MCP SDK peers (`@modelcontextprotocol/sdk`, `client` and `server`) to exact versions. pnpm keeps the peers it has already installed, so after bumping `agents`, check that `pnpm install` reports no "unmet peer". If it does, add the pinned versions as direct dependencies, install, and then remove them; the lockfile keeps the new versions.
 - **worker-bundler:** it runs its own npm installer for any Package missing from `node_modules/`, which would skip the one-day rule. The Builder strips `dependencies` before handing over `package.json`.
-- **Tailwind** (ADRs 0007 and 0014): the platform has one version, `tailwindcss` in its own `package.json`. To upgrade, change that exact version, run `pnpm generate`, which packs its stylesheets, and change the version `templates/worker-react/AGENTS.md` names. The version goes into every Build's hash, so each Workspace's next Build uses it.
-- **Size:** with Tailwind and the Worker + React Template, the Worker is 8,053 KiB compressed (`npx wrangler deploy --dry-run`), against Cloudflare's 10 MiB limit. Ticket 13 (the test runner) has about 2.1 MiB.
+- **Tailwind** (ADRs 0007 and 0014): the platform has one version, `tailwindcss` in its own `package.json`. To upgrade, change that exact version and run `pnpm generate`, which packs its stylesheets. The version goes into every Build's hash, so each Workspace's next Build uses it.
+- **Size:** with Tailwind and the Worker + React Template, the Worker is 7,941 KiB compressed (`npx wrangler deploy --dry-run`), against Cloudflare's 10 MiB limit. Ticket 13 (the test runner) has about 2.2 MiB. The Templates' runtime types, 623 KB, are packed once for all of them.

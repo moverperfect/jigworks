@@ -2,19 +2,14 @@ import { createApp, createWorker, type Modules } from "@cloudflare/worker-bundle
 import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
-import { compileTailwind, outputPath, readPage, tailwindVersion, usesTailwind } from "./front-end";
+import { frontEnd, tailwindVersion, type TailwindFailure } from "./front-end";
 
 export type { BuildProblem };
 
 /** A Workspace's files and Packages: path relative to the Workspace root, to text. */
 export type Snapshot = ReadonlyMap<string, string>;
 
-/**
- * How the app host serves a Build's assets, from `assets` in `wrangler.jsonc`,
- * as Cloudflare does: requests that match an asset get it, unless they match
- * `runWorkerFirst`; with `single-page-application`, other page navigations get
- * `/index.html`; everything else goes to the Worker.
- */
+/** The `assets` settings in `wrangler.jsonc` the app host follows (ADR 0014). */
 export interface AssetSettings {
   notFoundHandling: "single-page-application" | "none";
   /** True, or path patterns such as `/api/*`; a pattern starting `!` excludes. */
@@ -48,11 +43,8 @@ export interface BuildFailure {
   warnings: BuildProblem[];
   /** Packages the output still imports, which the bundler leaves in place without a word. Counted for the findings. */
   missingPackages: string[];
-  /**
-   * Why the Tailwind step failed, counted for the findings: something the
-   * platform's Tailwind doesn't support, or an error in the CSS.
-   */
-  tailwindFailure?: "unsupported" | "error";
+  /** Why the Tailwind step failed, if it did, counted for the findings. */
+  tailwindFailure?: TailwindFailure;
 }
 
 export type BuildResult = Build | BuildFailure;
@@ -110,7 +102,7 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     compatibility_date?: string;
     compatibility_flags?: string[];
     vars?: Record<string, unknown>;
-    assets?: { not_found_handling?: unknown; run_worker_first?: unknown };
+    assets?: WranglerAssets;
   };
 
   let mainModule: string;
@@ -122,36 +114,25 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
   let tailwindCandidates: number | undefined;
   try {
     if (snapshot.has("index.html")) {
-      const page = await readPage(snapshot);
-      if (page.problems.length > 0) return { ok: false, hash, errors: page.problems, warnings: [], missingPackages: [] };
-      const compiled: Record<string, string> = {};
-      const plain: string[] = [];
-      for (const stylesheet of page.stylesheets) {
-        if (!usesTailwind(stylesheet, snapshot)) {
-          plain.push(stylesheet);
-          continue;
-        }
-        const result = await compileTailwind(stylesheet, snapshot);
-        if ("problems" in result) {
-          return { ok: false, hash, errors: result.problems, warnings: [], missingPackages: [], tailwindFailure: result.failure };
-        }
-        compiled[outputPath(stylesheet)] = result.css;
-        tailwindCandidates = result.candidates;
+      const front = await frontEnd(snapshot);
+      if (!front.ok) {
+        return { ok: false, hash, errors: front.problems, warnings: [], missingPackages: [], tailwindFailure: front.tailwindFailure };
       }
       const app = await createApp({
         files,
-        client: [...page.scripts, ...plain],
-        assets: { ...publicAssets(snapshot), "/index.html": page.html, ...compiled },
+        client: front.entries,
+        assets: { ...publicAssets(snapshot), "/index.html": front.html, ...front.compiled },
         jsx: "automatic",
         jsxImportSource: "react",
         minify: true,
       });
       ({ mainModule, modules } = app);
-      // Only text goes in: the Workspace's files and the bundles.
+      // Only text goes in: the Workspace's files and the bundler's output.
       assets = app.assets as Record<string, string>;
       assetManifest = Object.fromEntries(app.assetManifest);
       warningTexts = app.warnings ?? [];
       clientBundles = (app.clientBundles ?? []).filter((path) => !path.endsWith(".css"));
+      tailwindCandidates = front.tailwindCandidates;
     } else {
       const worker = await createWorker({ files });
       ({ mainModule, modules } = worker);
@@ -194,10 +175,12 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     assets,
     assetManifest,
     assetSettings: assetSettings(config.assets),
-    ...(tailwindCandidates === undefined ? {} : { tailwindCandidates }),
+    tailwindCandidates,
     warnings,
   };
 }
+
+type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };
 
 /** Each file under `public/`, at its path below it. */
 function publicAssets(snapshot: Snapshot): Record<string, string> {
@@ -207,7 +190,7 @@ function publicAssets(snapshot: Snapshot): Record<string, string> {
 }
 
 /** `assets` from `wrangler.jsonc`, with Cloudflare's defaults. Anything the app host can't do is left at its default. */
-function assetSettings(assets: { not_found_handling?: unknown; run_worker_first?: unknown } = {}): AssetSettings {
+function assetSettings(assets: WranglerAssets = {}): AssetSettings {
   const first = assets.run_worker_first;
   return {
     notFoundHandling: assets.not_found_handling === "single-page-application" ? "single-page-application" : "none",

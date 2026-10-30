@@ -3,23 +3,20 @@ import { describe, expect, it } from "vitest";
 import { build, type Build, type BuildFailure } from "../src/builder";
 import type { BuildReport } from "../src/shared/build-report";
 import type { CheckReport } from "../src/workspace";
+import { registryPackages } from "./fixtures/registry-data";
 import { call, create } from "./helpers/api";
 
 // Builds with a front end: index.html names the scripts and stylesheets the
 // Build bundles, and a stylesheet that imports tailwindcss goes through the
 // platform's Tailwind step (ADR 0007).
 
-// Just enough of React for esbuild's automatic JSX runtime.
-const react = {
-  "node_modules/react/package.json": JSON.stringify({
-    name: "react",
-    version: "19.3.1",
-    exports: { ".": "./index.js", "./jsx-runtime": "./jsx-runtime.js" },
-  }),
-  "node_modules/react/index.js": "export const version = '19.3.1';\n",
-  "node_modules/react/jsx-runtime.js":
-    "export const jsx = (type, props) => ({ type, props });\nexport const jsxs = jsx;\nexport const Fragment = 'fragment';\n",
-};
+// The fake registry's React, laid out as the Workspace's Packages are.
+const react = Object.fromEntries(
+  Object.entries(registryPackages.find((fake) => fake.name === "react")!.versions["19.3.1"]!.files).map(([path, text]) => [
+    `node_modules/react/${path}`,
+    text,
+  ]),
+);
 
 const page = `<!doctype html>
 <html>
@@ -61,12 +58,12 @@ const failed = async (files: Record<string, string>) => {
   return result as BuildFailure;
 };
 
-const css = (result: Build) => result.assets["/styles.css"] as string;
+const css = (result: Build) => result.assets["/styles.css"]!;
 
 describe("a Build with a front end", () => {
   it("bundles the scripts and stylesheets index.html links, and points index.html at them", async () => {
     const result = await built({});
-    const html = result.assets["/index.html"] as string;
+    const html = result.assets["/index.html"]!;
     expect(html).toContain('<script type="module" src="/client/main.js"></script>');
     expect(html).toContain('<link rel="stylesheet" href="/styles.css" />');
     expect(html).toContain('<link rel="icon" href="/favicon.svg" />');
@@ -173,6 +170,9 @@ describe("a Build with a front end", () => {
 describe("the Worker + React Template", () => {
   it("makes a Workspace with a clean Check that builds and shows a styled page in the Preview", async () => {
     const workspace = await create("React Notes", undefined, "worker-react");
+    // Packed once for both Templates, and joined back on.
+    const types = await (await call(`/api/workspaces/${workspace.id}/files/worker-configuration.d.ts`)).text();
+    expect(types).toMatch(/^\/\* eslint-disable \*\/[^]*mainModule: typeof import\("\.\/src\/server\/index"\)[^]*\/\/ Begin runtime types\n/);
     const check = await (await call(`/api/workspaces/${workspace.id}/check`, { method: "POST" })).json<CheckReport>();
     expect(check.problems).toEqual([]);
     expect(check.projects).toEqual(["tsconfig.server.json", "tsconfig.client.json"]);
