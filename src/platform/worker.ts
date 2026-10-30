@@ -4,7 +4,7 @@ import { isAppLabel, labelOf, previewHost, slotOf } from "../apphost";
 import { gate, type GateConfig } from "../gate";
 import { api, type Platform } from "./api";
 
-export { AppHost, AppTail } from "../apphost";
+export { AppData, AppHost, AppTail } from "../apphost";
 export { Developer } from "../developer";
 export { Workspace } from "../workspace";
 

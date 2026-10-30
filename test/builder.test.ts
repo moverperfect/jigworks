@@ -71,6 +71,69 @@ describe("build", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("fails on bindings and triggers the platform doesn't have, saying so", async () => {
+    const files = project('export default { fetch: () => new Response("hi") };');
+    files.set(
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        kv_namespaces: [{ binding: "CACHE", id: "x" }],
+        d1_databases: [{ binding: "DB", database_id: "x" }],
+        r2_buckets: [{ binding: "FILES", bucket_name: "x" }],
+        queues: { producers: [{ binding: "JOBS", queue: "x" }] },
+        triggers: { crons: ["0 * * * *"] },
+      }),
+    );
+    const result = await build(files);
+    expect(result.ok).toBe(false);
+    const messages = (result as { errors: { message: string; file: string | null }[] }).errors;
+    expect(messages.map(({ message }) => message.split(":")[0])).toEqual([
+      "kv_namespaces in wrangler.jsonc",
+      "d1_databases in wrangler.jsonc",
+      "r2_buckets in wrangler.jsonc",
+      "queues in wrangler.jsonc",
+      "triggers.crons in wrangler.jsonc",
+    ]);
+    expect(messages.every(({ message, file }) => message.includes("Durable Objects") && file === "wrangler.jsonc")).toBe(true);
+  });
+
+  it("fails on a Durable Object binding whose class the app doesn't export, or that's in another Worker", async () => {
+    const files = project('export default { fetch: () => new Response("hi") };');
+    files.set(
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        durable_objects: {
+          bindings: [
+            { name: "COUNTER", class_name: "Counter" },
+            { name: "OTHER", class_name: "Other", script_name: "another-worker" },
+          ],
+        },
+      }),
+    );
+    const result = await build(files);
+    expect(result).toMatchObject({
+      ok: false,
+      errors: [
+        { message: expect.stringContaining('OTHER\'s class is in another Worker ("another-worker")'), file: "wrangler.jsonc" },
+        { message: expect.stringContaining('src/index.ts doesn\'t export the class "Counter"'), file: "wrangler.jsonc" },
+      ],
+    });
+  });
+
+  it("records the Durable Object bindings of a Worker that exports their classes", async () => {
+    const files = project('import { DurableObject } from "cloudflare:workers";\nexport class Counter extends DurableObject {}\nexport default { fetch: () => new Response("hi") };');
+    files.set(
+      "wrangler.jsonc",
+      JSON.stringify({ name: "app", main: "src/index.ts", compatibility_date: "2026-10-01", durable_objects: { bindings: [{ name: "COUNTER", class_name: "Counter" }] } }),
+    );
+    expect(await build(files)).toMatchObject({ ok: true, durableObjects: { COUNTER: "Counter" } });
+  });
+
   it("reports a syntax error with its location", async () => {
     const result = await build(project("export default { fetch: () => new Response( };"));
     expect(result).toMatchObject({ ok: false, errors: [{ file: "src/index.ts", line: 1, column: 45 }] });

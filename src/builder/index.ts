@@ -33,6 +33,8 @@ export interface Build {
   assetSettings: AssetSettings;
   /** How many possible class names the Tailwind step was given, if it ran. */
   tailwindCandidates?: number;
+  /** Each Durable Object binding in `wrangler.jsonc`, to the class it binds (ADR 0006). */
+  durableObjects: Record<string, string>;
   warnings: BuildProblem[];
 }
 
@@ -103,7 +105,18 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     compatibility_flags?: string[];
     vars?: Record<string, unknown>;
     assets?: WranglerAssets;
+    main?: string;
   };
+  // The bindings' problems come with any others, so the Agent sees them all at once.
+  const bindings = durableObjectBindings(config);
+  const fail = (errors: BuildProblem[], more: Partial<BuildFailure> = {}): BuildFailure => ({
+    ok: false,
+    hash,
+    warnings: [],
+    missingPackages: [],
+    ...more,
+    errors: [...bindings.problems, ...errors],
+  });
 
   let mainModule: string;
   let modules: Modules;
@@ -116,7 +129,7 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     if (snapshot.has("index.html")) {
       const front = await frontEnd(snapshot);
       if (!front.ok) {
-        return { ok: false, hash, errors: front.problems, warnings: [], missingPackages: [], tailwindFailure: front.tailwindFailure };
+        return fail(front.problems, { tailwindFailure: front.tailwindFailure });
       }
       const app = await createApp({
         files,
@@ -139,7 +152,7 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
       warningTexts = worker.warnings ?? [];
     }
   } catch (error) {
-    return { ok: false, hash, errors: esbuildProblems(error), warnings: [], missingPackages: [] };
+    return fail(esbuildProblems(error));
   }
   const warnings = warningTexts.map(unplaced);
 
@@ -154,13 +167,24 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     }),
   ];
   if (missing.length > 0) {
-    return {
-      ok: false,
-      hash,
-      errors: missing.map(({ name, specifier }) => unplaced(`${name} imports "${specifier}", which isn't in the Workspace's Packages`)),
-      warnings,
-      missingPackages: [...new Set(missing.map(({ specifier }) => specifier))],
-    };
+    return fail(
+      missing.map(({ name, specifier }) => unplaced(`${name} imports "${specifier}", which isn't in the Workspace's Packages`)),
+      { warnings, missingPackages: [...new Set(missing.map(({ specifier }) => specifier))] },
+    );
+  }
+  const main = modules[mainModule];
+  const exported = new Set(parse(typeof main === "string" ? main : (main?.js ?? ""))[1].map((name) => ("name" in name ? name.name : "")));
+  const unexported = Object.entries(bindings.durableObjects).filter(([, className]) => !exported.has(className));
+  if (unexported.length > 0 || bindings.problems.length > 0) {
+    return fail(
+      unexported.map(([binding, className]) => ({
+        message: `${config.main ?? "The Worker"} doesn't export the class "${className}" that ${binding} binds to.`,
+        file: "wrangler.jsonc",
+        line: null,
+        column: null,
+      })),
+      { warnings },
+    );
   }
   return {
     ok: true,
@@ -175,12 +199,68 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     assets,
     assetManifest,
     assetSettings: assetSettings(config.assets),
+    durableObjects: bindings.durableObjects,
     tailwindCandidates,
     warnings,
   };
 }
 
 type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };
+
+// What `wrangler.jsonc` can ask for that the platform doesn't have: apps get
+// Durable Objects and nothing else (ADR 0006).
+const unsupported: { key: string; what: string; present(config: Record<string, unknown>): boolean }[] = [
+  { key: "kv_namespaces", what: "KV", present: (config) => nonEmpty(config.kv_namespaces) },
+  { key: "d1_databases", what: "D1", present: (config) => nonEmpty(config.d1_databases) },
+  { key: "r2_buckets", what: "R2", present: (config) => nonEmpty(config.r2_buckets) },
+  {
+    key: "queues",
+    what: "Queues",
+    present: (config) => {
+      const queues = config.queues as { producers?: unknown; consumers?: unknown } | undefined;
+      return nonEmpty(queues?.producers) || nonEmpty(queues?.consumers);
+    },
+  },
+  {
+    key: "triggers.crons",
+    what: "Cron Triggers",
+    present: (config) => nonEmpty((config.triggers as { crons?: unknown } | undefined)?.crons),
+  },
+];
+
+const nonEmpty = (value: unknown) => Array.isArray(value) && value.length > 0;
+
+/**
+ * The Durable Object bindings `wrangler.jsonc` declares, binding to class,
+ * and the problems with what it declares: anything the platform doesn't
+ * have, and classes it can't run.
+ */
+function durableObjectBindings(config: Record<string, unknown>): { durableObjects: Record<string, string>; problems: BuildProblem[] } {
+  const place = { file: "wrangler.jsonc", line: null, column: null };
+  const problems: BuildProblem[] = unsupported
+    .filter(({ present }) => present(config))
+    .map(({ key, what }) => ({
+      message: `${key} in wrangler.jsonc: ${what} isn't available here. Apps get Durable Objects and nothing else.`,
+      ...place,
+    }));
+  const durableObjects: Record<string, string> = {};
+  const declared = (config.durable_objects as { bindings?: unknown } | undefined)?.bindings;
+  for (const binding of Array.isArray(declared) ? (declared as Record<string, unknown>[]) : []) {
+    const name = String(binding.name ?? "");
+    const className = String(binding.class_name ?? "");
+    if (typeof binding.script_name === "string" && binding.script_name !== "") {
+      problems.push({
+        message: `${name}'s class is in another Worker ("${binding.script_name}"). An app's Durable Objects must be its own classes.`,
+        ...place,
+      });
+    } else if (!/^[A-Za-z_$][\w$]*$/.test(name) || !/^[A-Za-z_$][\w$]*$/.test(className)) {
+      problems.push({ message: `The Durable Object binding "${name}" needs a name and a class_name, each a JavaScript name.`, ...place });
+    } else {
+      durableObjects[name] = className;
+    }
+  }
+  return { durableObjects, problems };
+}
 
 /** Each file under `public/`, at its path below it. */
 function publicAssets(snapshot: Snapshot): Record<string, string> {

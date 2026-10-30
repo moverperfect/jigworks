@@ -361,6 +361,7 @@ describe("the Preview", () => {
       assets: {},
       assetManifest: {},
       assetSettings: { notFoundHandling: "none", runWorkerFirst: false },
+      durableObjects: {},
     });
     expect(someoneElse.accepted).toBe(true);
 
