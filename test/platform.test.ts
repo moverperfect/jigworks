@@ -92,9 +92,12 @@ describe("Requests from elsewhere", () => {
 });
 
 describe("Templates", () => {
-  it("lists the Worker Template", async () => {
+  it("lists the Worker Template, then the Worker + React Template", async () => {
     const { templates } = await (await call("/api/templates")).json<{ templates: { id: string }[] }>();
-    expect(templates).toEqual([expect.objectContaining({ id: "worker", name: "Worker" })]);
+    expect(templates).toEqual([
+      expect.objectContaining({ id: "worker", name: "Worker" }),
+      expect.objectContaining({ id: "worker-react", name: "Worker + React" }),
+    ]);
   });
 });
 
