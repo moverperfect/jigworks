@@ -1,5 +1,7 @@
 import { getToolName, isTextUIPart, isToolUIPart, type DynamicToolUIPart, type ToolUIPart } from "ai";
 import {
+  createElement,
+  memo,
   useEffect,
   useId,
   useLayoutEffect,
@@ -13,6 +15,7 @@ import { isSummary, maxRetries, type LastTurn } from "../../src/shared/conversat
 import { startFresh, startTurn, toApiError, type ApiError } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ErrorMessage } from "./ErrorMessage";
+import { renderMarkdown, type MarkdownNode } from "./markdown";
 import type { Conversation, ConversationMessage } from "./useConversation";
 
 type ToolPart = ToolUIPart | DynamicToolUIPart;
@@ -200,13 +203,15 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
     return (
       <li className="conversation-item conversation-summary">
         <p className="conversation-summary-heading">Summary of the Conversation so far</p>
-        <p className="conversation-text">{texts.map((part) => part.text).join("\n\n")}</p>
+        <Markdown text={texts.map((part) => part.text).join("\n\n")} />
       </li>
     );
   }
 
   const parts = message.parts.map((part, index): ReactNode => {
-    if (isTextUIPart(part)) return part.text ? <p key={index} className="conversation-text">{part.text}</p> : null;
+    if (isTextUIPart(part)) {
+      return part.text ? <Markdown key={index} text={part.text} streaming={part.state === "streaming"} /> : null;
+    }
     if (isToolUIPart(part)) return <ToolLine key={index} part={part} turnRunning={turnRunning} />;
     if (part.type === "reasoning" && part.state === "streaming") {
       return (
@@ -224,6 +229,16 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
       {parts}
     </li>
   );
+}
+
+/** The Agent's Markdown. Memoised, so only the reply that's streaming renders again as it grows. */
+const Markdown = memo(function Markdown({ text, streaming = false }: { text: string; streaming?: boolean }) {
+  return createElement("div", { className: "markdown" }, ...renderMarkdown(text, streaming).map(toReact));
+});
+
+/** Children passed one by one to createElement, unlike a JSX array, need no keys. */
+function toReact(node: MarkdownNode): ReactNode {
+  return typeof node === "string" ? node : createElement(node.tag, node.attributes, ...node.children.map(toReact));
 }
 
 /** One line for a tool the Agent used, with its output behind a disclosure. */

@@ -107,6 +107,7 @@ The Checker runs ts-rust's WebAssembly module (`vendor/ts-rust-wasm`): MIT, copy
 | `smol-toml` | 1.9.1 | BSD-3-Clause |
 | `sprintf-js` | 1.1.3 | BSD-3-Clause |
 | `sucrase` | 3.35.1 | MIT |
+| `tailwindcss` | 4.3.3 | MIT |
 | `trough` | 2.2.0 | MIT |
 | `ts-interface-checker` | 0.1.13 | Apache-2.0 |
 | `turndown` | 7.2.4 | MIT |
@@ -155,6 +156,7 @@ The Checker runs ts-rust's WebAssembly module (`vendor/ts-rust-wasm`): MIT, copy
 | `capnweb` | 0.12.0 | MIT |
 | `codemirror` | 6.0.2 | MIT |
 | `crelt` | 1.0.7 | MIT |
+| `decode-named-character-reference` | 1.3.0 | MIT |
 | `eventsource-parser` | 3.1.1 | MIT |
 | `nanoid` | 5.1.16 | MIT |
 | `partysocket` | 1.3.0 | MIT |
@@ -4029,6 +4031,32 @@ THE SOFTWARE.
 The MIT License (MIT)
 
 Copyright (c) 2012-2018 various contributors (see AUTHORS)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+### tailwindcss 4.3.3
+
+```text
+MIT License
+
+Copyright (c) Tailwind Labs, Inc.
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
