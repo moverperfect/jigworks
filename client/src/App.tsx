@@ -7,10 +7,10 @@ import { Link, matchRoute, usePath, type Route } from "./router";
 
 // Loaded when first opened, so the home page doesn't wait for the editor.
 const WorkspacePage = lazy(() => import("./WorkspacePage").then((module) => ({ default: module.WorkspacePage })));
-// PROTOTYPE, throwaway: full-screen, without the platform's header or sign-in.
-const ChatFirstPrototypePage = lazy(() =>
-  import("./prototype/ChatFirstPrototypePage").then((module) => ({ default: module.ChatFirstPrototypePage })),
-);
+// PROTOTYPE, throwaway: full-screen, without the platform's header or sign-in. Left out of production builds.
+const ChatFirstPrototypePage = import.meta.env.DEV
+  ? lazy(() => import("./prototype/ChatFirstPrototypePage").then((module) => ({ default: module.ChatFirstPrototypePage })))
+  : () => null;
 
 export function App() {
   const path = usePath();

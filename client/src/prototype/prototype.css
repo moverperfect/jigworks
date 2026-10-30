@@ -1,7 +1,6 @@
 /* PROTOTYPE, throwaway: the stage, the floating bar, the fake app and the code stand-in. */
 
 .proto-page {
-  --proto-bar-height: 5.5rem;
   height: 100dvh;
   display: flex;
   flex-direction: column;
@@ -36,8 +35,26 @@
 
 .proto-bar-group {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 0.3rem;
+}
+
+@media (max-width: 760px) {
+  .proto-bar {
+    font-size: 0.7rem;
+    gap: 0.25rem 0.5rem;
+    padding: 0.35rem 0.5rem;
+  }
+
+  .proto-bar-dim {
+    display: none;
+  }
+
+  .proto-bar-label {
+    min-width: 0;
+  }
 }
 
 .proto-bar-label {

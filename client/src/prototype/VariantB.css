@@ -1,0 +1,722 @@
+/* PROTOTYPE, throwaway: Variant B, "Chat beside the app". */
+
+.vb {
+  --vb-accent: #4f46e5;
+  --vb-soft: color-mix(in srgb, var(--vb-accent) 12%, var(--surface));
+  --vb-tint: color-mix(in srgb, var(--vb-accent) 7%, var(--background));
+  --vb-ok: #2f7d32;
+  --vb-changed: #b45309;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+}
+
+@media (prefers-color-scheme: dark) {
+  .vb {
+    --vb-accent: #8b85ff;
+    --vb-ok: #7bc47f;
+    --vb-changed: #f0b45c;
+  }
+}
+
+/* The header. */
+.vb-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.vb-logo {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.vb-divider {
+  color: var(--border-strong);
+}
+
+.vb-name {
+  font-weight: 600;
+}
+
+.vb-status {
+  font-size: 0.8rem;
+  padding: 0.1rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.vb-status-live {
+  color: var(--vb-ok);
+  border-color: color-mix(in srgb, var(--vb-ok) 40%, transparent);
+}
+
+.vb-status-changed {
+  color: var(--vb-changed);
+  border-color: color-mix(in srgb, var(--vb-changed) 40%, transparent);
+}
+
+.vb-publish-wrap {
+  margin-left: auto;
+  position: relative;
+}
+
+/* Buttons. */
+.vb-button {
+  font: inherit;
+  font-size: 0.9rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.35rem 0.85rem;
+  cursor: pointer;
+}
+
+.vb-button:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.vb-button-primary,
+.vb-button-primary:hover:not(:disabled) {
+  background: var(--vb-accent);
+  border-color: var(--vb-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.vb-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vb-button-small {
+  font-size: 0.8rem;
+  padding: 0.2rem 0.6rem;
+}
+
+.vb-link {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+  width: fit-content;
+}
+
+/* The publish popover. */
+.vb-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.vb-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 0.5rem);
+  z-index: 41;
+  width: min(22rem, calc(100vw - 2rem));
+  padding: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+}
+
+.vb-popover-title {
+  font-weight: 700;
+  font-size: 1.05rem;
+}
+
+.vb-url {
+  font-family: var(--monospace);
+  font-size: 0.85rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 6px;
+  background: var(--vb-soft);
+}
+
+.vb-quiet {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.vb-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+/* Tabs, on narrow screens only. */
+.vb-tabs {
+  display: none;
+}
+
+/* The two panes. */
+.vb-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 24rem 1fr;
+}
+
+.vb-chat {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+}
+
+.vb-chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.vb-messages {
+  margin: 0;
+  padding: 1rem;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.vb-bubble {
+  max-width: 92%;
+  padding: 0.6rem 0.8rem;
+  border-radius: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  line-height: 1.5;
+  font-size: 0.93rem;
+}
+
+.vb-bubble-you {
+  align-self: flex-end;
+  display: block;
+  background: var(--vb-accent);
+  color: #fff;
+  border-bottom-right-radius: 4px;
+  white-space: pre-wrap;
+}
+
+.vb-about {
+  display: block;
+  font-size: 0.72rem;
+  opacity: 0.8;
+}
+
+.vb-bubble-agent {
+  align-self: flex-start;
+  background: var(--background);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: 4px;
+}
+
+.vb-bubble-failed {
+  border-color: color-mix(in srgb, var(--vb-changed) 55%, var(--border));
+  background: color-mix(in srgb, var(--vb-changed) 7%, var(--background));
+}
+
+.vb-failed-label {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--vb-changed);
+}
+
+.vb-ideas {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.vb-idea {
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.6rem 0.8rem;
+  cursor: pointer;
+}
+
+.vb-idea:hover {
+  border-color: var(--vb-accent);
+  background: var(--vb-soft);
+}
+
+.vb-start-chip {
+  font-size: 0.8rem;
+  padding: 0.4rem 0.6rem;
+  border-radius: 8px;
+  background: var(--vb-soft);
+}
+
+.vb-start-chip details {
+  display: inline;
+  margin-left: 0.4rem;
+}
+
+.vb-start-chip summary {
+  display: inline;
+  cursor: pointer;
+  color: var(--vb-accent);
+  text-decoration: underline;
+}
+
+.vb-start-chip details p {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+
+.vb-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.85rem;
+}
+
+.vb-step {
+  display: flex;
+  gap: 0.45rem;
+  color: var(--muted);
+}
+
+.vb-step-running,
+.vb-step-fixing {
+  color: var(--text);
+}
+
+.vb-step-icon {
+  flex: none;
+  width: 1rem;
+  text-align: center;
+}
+
+.vb-step-running .vb-step-icon,
+.vb-step-fixing .vb-step-icon {
+  animation: vb-spin 1.2s linear infinite;
+}
+
+.vb-step-done .vb-step-icon {
+  color: var(--vb-ok);
+}
+
+.vb-step-failed {
+  color: var(--vb-changed);
+}
+
+.vb-step-result {
+  color: var(--muted);
+}
+
+@keyframes vb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.vb-technical {
+  margin: 0;
+  padding: 0.4rem 0.6rem 0.4rem 1.4rem;
+  font-family: var(--monospace);
+  font-size: 0.75rem;
+  color: var(--muted);
+  background: var(--surface);
+  border-radius: 6px;
+}
+
+.vb-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.vb-chat-bottom {
+  flex: none;
+  padding: 0.6rem 0.8rem 0.8rem;
+  border-top: 1px solid var(--border);
+}
+
+.vb-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.vb-chip {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--vb-accent);
+  background: var(--vb-soft);
+  border: 0;
+  border-radius: 999px;
+  padding: 0.2rem 0.65rem;
+  cursor: pointer;
+}
+
+.vb-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.vb-composer textarea {
+  flex: 1;
+  font: inherit;
+  font-size: 0.93rem;
+  color: inherit;
+  background: var(--background);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  padding: 0.5rem 0.65rem;
+  resize: none;
+}
+
+.vb-composer textarea:disabled {
+  opacity: 0.6;
+}
+
+/* The canvas. */
+.vb-canvas {
+  min-width: 0;
+  min-height: 0;
+  background: var(--vb-tint);
+  position: relative;
+}
+
+.vb-canvas-inner {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.vb-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.5rem 1rem;
+}
+
+.vb-toolbar-space {
+  flex: 1;
+}
+
+.vb-segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+.vb-segmented button {
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  padding: 0.2rem 0.7rem;
+  cursor: pointer;
+}
+
+.vb-segmented button[aria-pressed="true"] {
+  background: var(--vb-accent);
+  color: #fff;
+}
+
+.vb-quiet-toggle {
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 0.15rem 0.5rem;
+  cursor: pointer;
+}
+
+.vb-quiet-toggle:hover,
+.vb-quiet-toggle[aria-pressed="true"] {
+  border-color: var(--border);
+  background: var(--surface);
+}
+
+.vb-banner {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0 1rem 0.5rem;
+  padding: 0.4rem 0.8rem;
+  border-radius: 8px;
+  background: var(--vb-accent);
+  color: #fff;
+  font-size: 0.85rem;
+}
+
+.vb-progress {
+  display: block;
+  height: 6px;
+  width: min(22rem, 80%);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--vb-accent) 18%, var(--surface));
+  overflow: hidden;
+}
+
+.vb-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--vb-accent);
+  transition: width 0.5s ease;
+}
+
+.vb-progress-small {
+  flex: 1;
+  max-width: 10rem;
+  height: 4px;
+  background: rgb(255 255 255 / 0.3);
+}
+
+.vb-progress-small > span {
+  background: #fff;
+}
+
+.vb-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 0 1rem 1rem;
+  transition: opacity 0.3s;
+}
+
+.vb-dimmed {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.vb-stage-phone {
+  align-items: center;
+  justify-content: center;
+}
+
+.vb-phone {
+  width: 390px;
+  max-width: 100%;
+  height: 760px;
+  max-height: 100%;
+  overflow: auto;
+  border: 10px solid #15151a;
+  border-radius: 38px;
+  background: #fff;
+  box-shadow: 0 18px 40px rgb(0 0 0 / 0.2);
+}
+
+.vb-browser {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 8px 28px rgb(0 0 0 / 0.1);
+}
+
+.vb-browser-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.vb-dots {
+  color: var(--border-strong);
+  font-size: 0.6rem;
+  letter-spacing: 0.1em;
+}
+
+.vb-browser-url {
+  flex: 1;
+  text-align: center;
+  padding: 0.15rem 0.6rem;
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--muted);
+}
+
+.vb-browser-page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.vb-code {
+  flex: 1;
+  min-height: 0;
+  margin: 0 1rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+/* Before the first Build. */
+.vb-empty,
+.vb-building {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+.vb-skeleton {
+  width: min(22rem, 80%);
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  opacity: 0.55;
+}
+
+.vb-skeleton-line,
+.vb-skeleton-box {
+  display: block;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vb-accent) 14%, var(--surface));
+}
+
+.vb-skeleton-line {
+  height: 0.7rem;
+}
+
+.vb-skeleton-short {
+  width: 40%;
+}
+
+.vb-skeleton-title {
+  height: 1.6rem;
+  width: 70%;
+}
+
+.vb-skeleton-box {
+  height: 4rem;
+}
+
+.vb-skeleton-tall {
+  height: 7rem;
+}
+
+.vb-empty-text {
+  font-size: 1.15rem;
+  color: var(--muted);
+}
+
+.vb-building-kicker {
+  font-size: 0.8rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--vb-accent);
+}
+
+.vb-building-activity {
+  font-size: clamp(1.4rem, 3vw, 2rem);
+  font-weight: 700;
+}
+
+.vb-building-steps {
+  margin: 0.5rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  text-align: left;
+  color: var(--muted);
+}
+
+.vb-building-steps li {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.vb-building-steps .vb-step-icon {
+  color: var(--vb-ok);
+}
+
+/* Narrow screens: one pane at a time. */
+@media (max-width: 760px) {
+  .vb-divider,
+  .vb-status {
+    display: none;
+  }
+
+  .vb-tabs {
+    flex: none;
+    display: flex;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .vb-tab {
+    flex: 1;
+    font: inherit;
+    color: var(--muted);
+    background: none;
+    border: 0;
+    border-bottom: 2px solid transparent;
+    padding: 0.5rem;
+    cursor: pointer;
+  }
+
+  .vb-tab[aria-selected="true"] {
+    color: var(--text);
+    font-weight: 600;
+    border-bottom-color: var(--vb-accent);
+  }
+
+  .vb-body {
+    grid-template-columns: 1fr;
+  }
+
+  .vb-chat {
+    border-right: 0;
+  }
+
+  .vb-body[data-tab="chat"] .vb-canvas,
+  .vb-body[data-tab="app"] .vb-chat {
+    display: none;
+  }
+}
