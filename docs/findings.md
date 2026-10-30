@@ -183,7 +183,7 @@ The isolate ID showed when Cloudflare replaced the probe's isolate:
 
 ## Stage 4: Builds and the Preview
 
-**Verdict:** waits for the Preview (ticket 08). **Builds so far:** they fit.
+**Verdict: yes, in Chrome.** Builds fit, and the Preview works on the deployed platform, in the pane and in a tab, and for the Agent (below, "Stage 4, continued"). Firefox and WebKit are still to check. **Builds:**
 - A Worker Template Build takes 108–138 ms of CPU once warm.
 - One that bundles zod takes about 1 s.
 - The Workspace's Durable Object kept its isolate through Builds, Checks and Turns, with esbuild's memory at up to 46.7 MB beside the Agent.
@@ -300,31 +300,42 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 
 ### The live check
 
-**The Preview works as ADR 0013 planned, in the pane and in a tab, and the Agent tried its own change on it.** Measured on 2026-10-30, after ticket 08's deploy, from the Developer's signed-in browser (Chrome) in the UK, with a fresh Workspace made from the Worker Template.
+**The Preview works in Chrome as ADR 0013 planned, in the pane and in a tab, and the Agent tried its own change on it.** Firefox and WebKit weren't checked.
 
-| Step | Time |
+- **Platform:** the deployed platform, measured on 2026-10-30 after ticket 08's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:** each taken in the page, from the request or click to the response or the frame's `load` event. The trace's figures are each invocation's own.
+- **Workspace:** a fresh one made from the Worker Template.
+
+| Step | Browser |
 | --- | ---: |
-| First Build, then the Preview reports ready | 986 ms |
-| Preview tab chosen, to the frame's first page loaded (cold) | 1.1 s: 104 ms for the link, 992 ms for the link's exchange and the page |
+| First Build, its round trip (the Preview reported ready straight after) | 986 ms |
+| Preview tab chosen, to the frame's first page (cold) | 1.1 s: 104 ms for the link, 992 ms for the Preview to swap the link for a session and load the page |
 | Pane shown again, after the Editor tab | 669 ms |
-| A save, to its successful Build on the server, unasked | under 0.8 s |
+| A save, to the successful Build it starts by itself | under 0.8 s |
 
 - **Access:** after the deploy, `anything-preview.jigworks.app` reached the platform, and `anything.`, `preview.` and `x-preview-y.jigworks.app` still went to Access sign-in.
 - **Cookies in the pane:** the app never saw the session cookie. Its own `__Host-app` cookie, which the platform made partitioned, came back on the next load. The page's scripts could read neither.
-- **Logs:** the app's `console.log` lines and an uncaught front-end error both reached the pane's Logs. The error's report needs the frame's partitioned session, so Chrome kept it.
+- **Logs:** the app's `console.log` lines and an uncaught front-end error both reached the pane's Logs. The error's report goes with the frame's partitioned session cookie, so Chrome kept that cookie.
 - **A hidden pane:** there was no frame while the Editor tab was chosen. Shown again, the pane signed in with a fresh link.
 - **A tab:** Open in a new tab, and `/preview-sign-in` with a path and query, both landed on the Preview, at that path, signed in with a `Lax` session that worked for other paths. Every page carried `frame-ancestors 'self' https://app.jigworks.dev`. A private window with no session went to the platform's Access sign-in, set to come back to the same path.
 - **Deleting the Workspace:** afterwards, the tab, with its session not yet expired, got `404 There's no app here.`
 
-**The Turn:** "Add a `GET /api/time` route that returns the current time as JSON, then try it on the Preview", against a budget of $1.
+**The Turn:** "Add a `GET /api/time` route that returns the current time as JSON, then try it on the Preview", against a budget of $1. The browser didn't time it.
 
-| Browser | Turn log | Steps | Retries | Input tokens (cache read / written) | Output | Cost |
-| ---: | ---: | ---: | ---: | --- | ---: | ---: |
-| | 11.7 s | 4 | 0 | 20.7K (15.2K / 5.5K) | 0.4K | $0.04 |
+| Turn log | Steps | Retries | Input tokens (cache read / written) | Output | Cost |
+| ---: | ---: | ---: | --- | ---: | ---: |
+| 11.7 s | 4 | 0 | 20.7K (15.2K / 5.5K) | 0.4K | $0.04 |
 
 - **What the Agent did:** it read `src/index.ts`, added the route, called `build`, then called `request_preview` on `/api/time`. It got a 200, reported the JSON it got, and the Turn ended with a clean Check and a cached Build.
 - **The trace:**
-  - The Agent's Build was the first in a fresh isolate: 5.4 s wall, 1,015 ms CPU.
-  - Sending the Build to the app host took 382 ms.
+  - The Agent's Build was the first in a fresh isolate. It reached the app host 1.6 s after it started. Its trace event, 5.4 s wall and 1,015 ms CPU, also counts the rest of the Turn, as in stage 4.
+  - `receiveBuild` took 382 ms in the app host.
   - `request_preview`, the Build's first request on its Dynamic Worker, took 48 ms in the app host.
-- **Three Turns failed first with `invalid x-api-key`,** costing nothing. The key had been replaced with `wrangler secret put`, but the Workspace's Durable Object went on running the version from before the change, with the old key, for over five minutes. Each Turn kept it in memory, so it never restarted. A redeploy restarted it (`docs/development.md`).
+
+### Found along the way
+
+- **A secret change didn't reach a running Workspace.** Three Turns failed with `invalid x-api-key`, costing nothing.
+  - The first failed because the key was wrong.
+  - It was replaced with `wrangler secret put`, but the next two Turns failed the same way. The Workspace's Durable Object went on running the version from before the change, with the old key, for nearly five minutes, until a redeploy.
+  - Its log lines name one isolate from 18:46 to 18:54, so it never restarted. The platform Worker's first request after the change, 17 s later, already ran the new version.
+  - `docs/development.md` now says to redeploy after changing the key.
