@@ -182,6 +182,16 @@ describe("the Preview", () => {
     );
   });
 
+  it("keeps /__jigworks/ for the platform, so app code never sees it", async () => {
+    const workspace = await create("Preview Reserved");
+    await save(workspace.id, "src/index.ts", 'export default { fetch: () => new Response("app") };\n');
+    await build(workspace.id);
+    expect(await (await visit(workspace.id, "/__jigworks")).text()).toBe("app");
+    const reserved = await visit(workspace.id, "/__jigworks/anything");
+    expect(reserved.status).toBe(404);
+    expect(await reserved.text()).not.toBe("app");
+  });
+
   it("shows a Workspace's Preview, logs and sign-in links only to its own Developer", async () => {
     const workspace = await create("Preview Private");
     const theirs = { email: testAccess.secondDeveloper };

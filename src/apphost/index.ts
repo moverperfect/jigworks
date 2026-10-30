@@ -43,9 +43,10 @@ const logLineLength = 2_000;
 const previewBodyShown = 20_000;
 // SQLite's rows hold at most 2 MB; a UTF-8 character takes up to 3 bytes.
 const chunkCharacters = 500_000;
-// The paths the app host answers itself on a Preview. App code never sees them.
-export const browserErrorsPath = "/__jigworks/errors";
-export const signInPath = "/__jigworks/sign-in";
+// The paths the app host keeps for itself on a Preview. App code never sees them.
+const reservedPaths = "/__jigworks/";
+export const browserErrorsPath = `${reservedPaths}errors`;
+export const signInPath = `${reservedPaths}sign-in`;
 // The Preview's own session cookie (ADR 0013), which app code never sees or sets.
 export const sessionCookie = "__Host-jigworks-preview";
 const signInSeconds = 60;
@@ -300,7 +301,9 @@ export class AppHost extends DurableObject<Env> {
 
   /** Runs the request through the slot's Build. `session` is null for the Agent's own requests. */
   private async serve(request: Request, slot: Slot, session: Session | null): Promise<Response> {
-    if (new URL(request.url).pathname === browserErrorsPath) return this.receiveBrowserErrors(request, slot);
+    const { pathname } = new URL(request.url);
+    if (pathname === browserErrorsPath) return this.receiveBrowserErrors(request, slot);
+    if (pathname.startsWith(reservedPaths)) return new Response("Not found.", { status: 404 });
     const build = this.previewBuildCode();
     if (!build) return new Response("The Preview starts after the Workspace's first successful Build.", { status: 503 });
 

@@ -335,6 +335,7 @@ say "Previews and Deployments live on *.$APPS_DOMAIN, behind an Access applicati
 open_url "https://one.dash.cloudflare.com/"
 step "Create another self-hosted application, \"Jigworks apps\": subdomain *, domain $APPS_DOMAIN."
 step "Give it the \"Jigworks Developers\" policy for now. Ticket 10 decides who opens Deployments."
+step "Configure → Advanced settings → Cookie settings: turn HTTP Only on, so app code can't read it. Save."
 step "Copy its Application Audience (AUD) Tag."
 ask APPS_ACCESS_AUD "Paste the apps' AUD tag:"
 [[ "$APPS_ACCESS_AUD" =~ ^[0-9a-f]{64}$ ]] || warn "An AUD tag is usually 64 hex characters. Check it."
@@ -349,6 +350,17 @@ if curl -sI "https://wizard-check.$APPS_DOMAIN/" | grep -qi 'cloudflareaccess.co
   printf '  %s✓%s *.%s sends visitors to Access sign-in\n' "$GREEN" "$RESET" "$APPS_DOMAIN"
 else
   warn "https://wizard-check.$APPS_DOMAIN/ didn't redirect to Access yet. DNS can take a few minutes."
+fi
+say "Previews sign their Developer in themselves, inside the platform's page (ADR 0013),"
+say "so Access must let Preview hostnames through."
+step "Create a third self-hosted application, \"Jigworks previews\": subdomain *-preview, domain $APPS_DOMAIN."
+step "Give it one policy: action Bypass, include Everyone. Save."
+pause "Press Enter once it's saved."
+if curl -sI "https://wizard-check-preview.$APPS_DOMAIN/" | grep -qi 'cloudflareaccess.com'; then
+  warn "https://wizard-check-preview.$APPS_DOMAIN/ still goes to Access sign-in. Check the Bypass application;"
+  warn "Previews stay closed until it applies (ADR 0013)."
+else
+  printf '  %s✓%s Preview hostnames get past Access, and only the platform signs anyone in to them\n' "$GREEN" "$RESET"
 fi
 pause
 

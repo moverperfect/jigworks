@@ -36,6 +36,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
 - **Capture:** run `npx wrangler tail jigworks --format json > .wrangler/tail.jsonl` in the background, and summarise it with `python3 -I scripts/tail-events.py .wrangler/tail.jsonl`.
   - The tail drops its connection on every deploy, reconnects, and writes a warning into the file. The script skips those lines.
   - Stopping the task leaves the tail running. Kill it with `pkill -f "[w]rangler.* tail jigworks"`; the brackets stop the pattern matching the shell that runs it.
+- **Access and Previews** (ADR 0013): `curl -sI https://anything-preview.jigworks.app/` must reach the platform, with no redirect to `cloudflareaccess.com`, and `curl -sI https://anything.jigworks.app/` must still redirect to Access. Cloudflare doesn't document which of the two Access applications wins, so check both after each deploy.
 - **The deployed clock:** `Date.now()` doesn't move during CPU work, during a call into a Dynamic Worker, or after a timer. Time from the platform Worker, whose call to the Durable Object is I/O, or use the trace's CPU and wall time.
 - **Durable Object traces:**
   - A Durable Object's events are reported only when its invocation ends.

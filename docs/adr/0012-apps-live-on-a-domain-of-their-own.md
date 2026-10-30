@@ -14,7 +14,7 @@ ADR 0008 put each Preview and Deployment under the platform's own hostname, beca
 - The Preview pane on the Workspace page is now a cross-site frame:
   - Browsers that block or partition third-party cookies, such as Safari and Firefox, won't send the apps' Access cookie into it (inferred). So ticket 08's short-lived signed link is likely to be the pane's normal way in, not a fallback.
   - A signed link only works on a hostname that Access doesn't intercept. How Access resolves an application for `*-preview.<apps domain>` inside one for `*.<apps domain>` is undocumented (`docs/research/run-and-host.md`, open question 4).
-  - Ticket 08 settles both: how Preview hostnames get past Access, and whether the pane keeps its sign-in in a partitioned cookie or a token in each URL.
+  - [ADR 0013](0013-the-preview-signs-its-developer-in-itself.md) settles both: a Bypass application lets Preview hostnames through, and the pane keeps its sign-in in a partitioned cookie.
 - Each Operator registers and runs a second domain, which costs a domain registration.
 - The Public Suffix List would make apps cross-site to each other too. Its maintainers turn down small projects, so applying waits for the hosted SaaS (ticket 22).
 - Moving an Installation's apps to another domain later changes every app's URL.
