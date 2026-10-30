@@ -103,6 +103,15 @@ describe("a Build with a front end", () => {
     expect(css(result)).toContain("box-sizing: border-box");
   });
 
+  it("finds class names in unquoted HTML attributes, and keeps arbitrary variants whole", async () => {
+    const result = await built({
+      "index.html": page.replace('<div id="root"></div>', '<main class=flex-col>Hi</main><p class="[&>*]:p-4 data-[state=open]:block">Hi</p>'),
+    });
+    for (const rule of [".flex-col", ".\\[\\&\\>\\*\\]\\:p-4", ".data-\\[state\\=open\\]\\:block"]) {
+      expect(css(result)).toContain(rule);
+    }
+  });
+
   it("finds Tailwind through a stylesheet it imports, however the import names it", async () => {
     for (const id of ["/src/base.css", "./base.css", "base.css"]) {
       const result = await built({

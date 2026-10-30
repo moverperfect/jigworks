@@ -166,12 +166,17 @@ function candidates(snapshot: Snapshot): Set<string> {
   const found = new Set<string>();
   for (const [path, text] of snapshot) {
     if (path.startsWith("node_modules/") || /\.d\.[cm]?ts$/.test(path) || !scanned.test(path)) continue;
-    for (const token of text.split(/[\s"'`;{}]+/)) {
-      if (token.length === 0 || token.length > 200) continue;
-      found.add(token);
-      // Such as `"p-4",` in an array, or `(p-4)` in a call.
-      const trimmed = token.replace(/^[(,]+/, "").replace(/[),.:]+$/, "");
-      if (trimmed.length > 0) found.add(trimmed);
+    // Split twice: on quotes and braces, which keeps arbitrary variants such
+    // as `[&>*]:p-4` whole, and on `<`, `>` and `=` as well, which finds
+    // `flex` in HTML's unquoted `class=flex>`.
+    for (const separators of [/[\s"'`;{}]+/, /[\s"'`;{}<>=]+/]) {
+      for (const token of text.split(separators)) {
+        if (token.length === 0 || token.length > 200) continue;
+        found.add(token);
+        // Such as `"p-4",` in an array, or `(p-4)` in a call.
+        const trimmed = token.replace(/^[(,]+/, "").replace(/[),.:]+$/, "");
+        if (trimmed.length > 0) found.add(trimmed);
+      }
     }
     // Arbitrary values with quotes inside, such as `bg-[url('/hero.svg')]`,
     // which splitting on quotes breaks up.
