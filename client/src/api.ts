@@ -1,6 +1,7 @@
 import type { BuildReport } from "../../src/shared/build-report.ts";
 import type { AppLogEntry } from "../../src/shared/app-logs.ts";
 import type { CheckReport } from "../../src/shared/check-report.ts";
+import type { Deployment } from "../../src/shared/deployment.ts";
 
 export interface Template {
   id: string;
@@ -162,7 +163,17 @@ export function previewTabUrl(host: string, to: string): string {
   return `/preview-sign-in?host=${encodeURIComponent(host)}&to=${encodeURIComponent(to)}`;
 }
 
-export type { AppLogEntry };
+export type { AppLogEntry, Deployment };
+
+/** Where the Deployment answers, and when it was last published. */
+export async function getDeployment(id: string): Promise<Deployment> {
+  return request("GET", `${workspaceApiPath(id)}/deployment`);
+}
+
+/** Publishes the Build the Preview runs as the Deployment. Fails with status 409 before the first successful Build. */
+export async function publish(id: string): Promise<Deployment> {
+  return request("POST", `${workspaceApiPath(id)}/deployment`);
+}
 
 /** The Preview's newest 100 log lines, oldest first. */
 export async function getPreviewLogs(id: string): Promise<AppLogEntry[]> {

@@ -23,6 +23,7 @@ import {
   withAgentsMd,
 } from "../agent";
 import {
+  deploymentHost,
   newAppLabel,
   previewHost,
   runnable,
@@ -38,6 +39,7 @@ import { isHidden, normalisePath, storeFiles, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
 import type { BuildReport } from "../shared/build-report";
+import type { Deployment } from "../shared/deployment";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
 
@@ -406,6 +408,27 @@ export class Workspace extends Think<Env, ConversationState> {
   /** Sends the Preview a request for the Agent's `request_preview` tool. */
   async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
     return this.env.APP_HOSTS.getByName(this.appLabel()).requestPreview(init);
+  }
+
+  /** Where the Deployment answers, and what it runs. */
+  async deployment(): Promise<Deployment> {
+    const label = this.appLabel();
+    const published = await this.env.APP_HOSTS.getByName(label).published();
+    return { url: `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`, publishedAt: null, hash: null, ...published };
+  }
+
+  /**
+   * Publishes the Build the Preview runs as the Deployment, replacing any
+   * Deployment there was. Null before the first successful Build.
+   */
+  async publish(): Promise<Deployment | null> {
+    // As for the Preview, a successful Build from before the app host goes there first.
+    if (!(await this.preview()).ready) return null;
+    const label = this.appLabel();
+    const published = await this.env.APP_HOSTS.getByName(label).publish(this.name);
+    if (!published) return null;
+    console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: published.hash }));
+    return { url: `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`, ...published };
   }
 
   /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */

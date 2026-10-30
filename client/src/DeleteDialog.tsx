@@ -59,7 +59,8 @@ export function DeleteDialog({
           Delete <span className="exact">{workspace.name}</span>?
         </h2>
         <p id={`${id}-description`}>
-          This deletes the Workspace's files and its Conversation. It can't be undone.
+          This deletes the Workspace's files and its Conversation, and takes down its Preview and its Deployment. It can't be
+          undone.
         </p>
         <div className="field">
           <label htmlFor={`${id}-confirm`}>

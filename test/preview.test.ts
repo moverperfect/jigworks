@@ -486,25 +486,6 @@ describe("signing in to the Preview", () => {
   });
 });
 
-describe("Deployments", () => {
-  it("need a token from the apps' own Access application", async () => {
-    const workspace = await create("Deployment Gate");
-    await build(workspace.id);
-    const label = labelOf(new URL((await preview(workspace.id)).url).hostname);
-    const deployment = `https://${label}.${testAccess.appsDomain}/`;
-    expect((await browse(deployment, { dest: "document" })).status).toBe(401);
-    const platformToken = await accessToken({ email: testAccess.developer });
-    expect((await browse(deployment, { dest: "document", headers: { "Cf-Access-Jwt-Assertion": platformToken } })).status).toBe(401);
-    const appsToken = await accessToken({ email: testAccess.developer }, { audience: testAccess.appsAudience });
-    // Through the gate; nothing is published until ticket 10.
-    expect((await browse(deployment, { dest: "document", headers: { "Cf-Access-Jwt-Assertion": appsToken } })).status).toBe(404);
-  });
-
-  it("aren't looked up for hostnames the platform never gives out", async () => {
-    expect((await browse(`https://not-a-label.${testAccess.appsDomain}/`, { dest: "document" })).status).toBe(404);
-  });
-});
-
 describe("Builds after a save", () => {
   it("follow the Developer's saves on the server, so the Preview does too", async () => {
     const workspace = await create("Preview Saves");

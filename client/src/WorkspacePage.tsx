@@ -5,6 +5,7 @@ import { ErrorMessage } from "./ErrorMessage";
 import { FileTree } from "./FileTree";
 import { useLoad, useTitle } from "./hooks";
 import { PreviewPanel } from "./PreviewPanel";
+import { PublishControl } from "./PublishControl";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { Link } from "./router";
 import { foldersOf } from "./tree";
@@ -39,6 +40,7 @@ export function WorkspacePage({ id }: { id: string }) {
           <span className="visually-hidden">Back to </span>Workspaces
         </Link>
         {workspace && <h1 className="workspace-title">{workspace.name}</h1>}
+        {workspace && <PublishControl id={workspace.id} />}
       </div>
       {state.status === "loading" && <p className="workspace-message muted">Loading the Workspace…</p>}
       {state.status === "failed" && (

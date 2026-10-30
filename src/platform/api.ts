@@ -166,6 +166,18 @@ api.get("/workspaces/:id/preview", async (c) => {
   return record ? c.json(await workspace(c, record.id).preview()) : noSuchWorkspace(c);
 });
 
+api.get("/workspaces/:id/deployment", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).deployment()) : noSuchWorkspace(c);
+});
+
+api.post("/workspaces/:id/deployment", async (c) => {
+  const record = await ownWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  const deployment = await workspace(c, record.id).publish();
+  return deployment ? c.json(deployment) : c.json({ error: "There's no successful Build to publish yet." }, 409);
+});
+
 // A sign-in link for the Preview pane's frame. A tab signs in through `/preview-sign-in`.
 api.post("/workspaces/:id/preview/sign-in", async (c) => {
   const record = await ownWorkspace(c);
