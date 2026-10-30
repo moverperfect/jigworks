@@ -448,6 +448,19 @@ h1.workspace-title {
   overflow-wrap: anywhere;
 }
 
+.publish {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  margin-left: auto;
+}
+
+.publish-status {
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
 .workspace-message {
   padding: 1.25rem;
 }

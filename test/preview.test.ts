@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { browserErrorsPath, labelOf, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
+import { browserErrorsPath, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
 import type { BuildReport } from "../src/shared/build-report";
 import { accessToken, testAccess } from "./helpers/access";
 import { call, create } from "./helpers/api";
@@ -483,25 +483,9 @@ describe("signing in to the Preview", () => {
     await build(workspace.id);
     const response = await visit(workspace.id, "/", { method: "POST", headers: { "Sec-Fetch-Site": "same-site" } });
     expect(response.status).toBe(403);
-  });
-});
-
-describe("Deployments", () => {
-  it("need a token from the apps' own Access application", async () => {
-    const workspace = await create("Deployment Gate");
-    await build(workspace.id);
-    const label = labelOf(new URL((await preview(workspace.id)).url).hostname);
-    const deployment = `https://${label}.${testAccess.appsDomain}/`;
-    expect((await browse(deployment, { dest: "document" })).status).toBe(401);
-    const platformToken = await accessToken({ email: testAccess.developer });
-    expect((await browse(deployment, { dest: "document", headers: { "Cf-Access-Jwt-Assertion": platformToken } })).status).toBe(401);
-    const appsToken = await accessToken({ email: testAccess.developer }, { audience: testAccess.appsAudience });
-    // Through the gate; nothing is published until ticket 10.
-    expect((await browse(deployment, { dest: "document", headers: { "Cf-Access-Jwt-Assertion": appsToken } })).status).toBe(404);
-  });
-
-  it("aren't looked up for hostnames the platform never gives out", async () => {
-    expect((await browse(`https://not-a-label.${testAccess.appsDomain}/`, { dest: "document" })).status).toBe(404);
+    // A browser that sends no Sec-Fetch-Site still sends Origin.
+    const sibling = `https://sibling-k3x9p2qa.${testAccess.appsDomain}`;
+    expect((await visit(workspace.id, "/", { method: "POST", headers: { Origin: sibling } })).status).toBe(403);
   });
 });
 

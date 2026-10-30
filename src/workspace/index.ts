@@ -23,6 +23,7 @@ import {
   withAgentsMd,
 } from "../agent";
 import {
+  deploymentHost,
   newAppLabel,
   previewHost,
   runnable,
@@ -38,6 +39,7 @@ import { isHidden, normalisePath, storeFiles, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
 import type { BuildReport } from "../shared/build-report";
+import type { Deployment } from "../shared/deployment";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
 
@@ -406,6 +408,47 @@ export class Workspace extends Think<Env, ConversationState> {
   /** Sends the Preview a request for the Agent's `request_preview` tool. */
   async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
     return this.env.APP_HOSTS.getByName(this.appLabel()).requestPreview(init);
+  }
+
+  /** Where the Deployment answers, and what it runs. */
+  async deployment(): Promise<Deployment> {
+    const label = this.appLabel();
+    const published = await this.env.APP_HOSTS.getByName(label).published();
+    return { url: this.deploymentUrl(label), publishedAt: null, hash: null, ...published };
+  }
+
+  /**
+   * Publishes the Build the Preview runs as the Deployment, in place of the
+   * one whose Build is `replaces`, or none. Refused while a Turn runs, when the
+   * Agent may be changing the Preview.
+   */
+  async publish(replaces: string | null): Promise<DeveloperChange<{ deployment: Deployment }>> {
+    if (this.state.turn) return busy;
+    // As for the Preview, a successful Build from before the app host goes
+    // there first. It builds through the Workspace's stub, which waits for
+    // the lock, so it comes before the lock is taken.
+    await this.preview();
+    // In line with Turns starting (see `startTurn`), so a Turn that started
+    // meanwhile is seen.
+    const result = await this.exclusive(async () => {
+      if (this.state.turn) return null;
+      return this.env.APP_HOSTS.getByName(this.appLabel()).publish(this.name, replaces);
+    });
+    if (!result) return busy;
+    const label = this.appLabel();
+    if (!result.ok) {
+      const error =
+        result.reason === "changed"
+          ? "The Deployment changed since this page loaded. Look at it again before publishing."
+          : "There's no successful Build to publish yet.";
+      return { ok: false, error };
+    }
+    console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: result.published.hash }));
+    return { ok: true, deployment: { url: this.deploymentUrl(label), ...result.published } };
+  }
+
+  private deploymentUrl(label: string): string {
+    return `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`;
   }
 
   /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */
