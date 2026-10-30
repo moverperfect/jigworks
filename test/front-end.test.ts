@@ -103,13 +103,15 @@ describe("a Build with a front end", () => {
     expect(css(result)).toContain("box-sizing: border-box");
   });
 
-  it("finds Tailwind through a stylesheet imported from the Workspace's root", async () => {
-    const result = await built({
-      "src/styles.css": '@import "/src/base.css";\n',
-      "src/base.css": '@import "tailwindcss";\n',
-      "src/client/main.tsx": 'export const App = () => <p className="text-brand-none underline">Hi</p>;\n',
-    });
-    expect(css(result)).toContain(".underline");
+  it("finds Tailwind through a stylesheet it imports, however the import names it", async () => {
+    for (const id of ["/src/base.css", "./base.css", "base.css"]) {
+      const result = await built({
+        "src/styles.css": `@import "${id}";\n`,
+        "src/base.css": '@import "tailwindcss";\n',
+        "src/client/main.tsx": 'export const App = () => <p className="underline">Hi</p>;\n',
+      });
+      expect(css(result)).toContain(".underline");
+    }
   });
 
   it("includes the Workspace's own stylesheets that a Tailwind stylesheet imports", async () => {
@@ -138,6 +140,13 @@ describe("a Build with a front end", () => {
     expect(config.errors).toEqual([
       expect.objectContaining({ file: "src/more.css", line: 2, message: expect.stringContaining("@config") }),
     ]);
+  });
+
+  it("takes @plugin in a string or a comment for what it is", async () => {
+    const result = await built({
+      "src/styles.css": '@import "tailwindcss";\n/* @plugin */\n.quote::before { content: "@plugin @config"; }\n',
+    });
+    expect(css(result)).toContain('"@plugin @config"');
   });
 
   it("reports Tailwind's own errors as Build errors", async () => {

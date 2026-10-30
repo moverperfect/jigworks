@@ -101,8 +101,9 @@ function usesTailwind(path: string, snapshot: Snapshot, visited = new Set<string
   const css = withoutComments(snapshot.get(path) ?? "");
   for (const [, id] of css.matchAll(/@import\s+(?:url\(\s*)?["']([^"']+)["']/g)) {
     if (tailwindStylesheet(id!) !== undefined) return true;
-    const own = id!.startsWith(".") || id!.startsWith("/");
-    if (own && usesTailwind(join(dirname(path), id!), snapshot, visited)) return true;
+    // CSS reads `base.css` as relative to the stylesheet, as it does `./base.css`.
+    const file = join(dirname(path), id!);
+    if (snapshot.has(file) && usesTailwind(file, snapshot, visited)) return true;
   }
   return false;
 }
@@ -119,7 +120,7 @@ async function compileTailwind(
 ): Promise<{ css: string } | { problems: BuildProblem[]; failure: TailwindFailure }> {
   const unsupported: BuildProblem[] = [];
   const findUnsupported = (file: string, css: string) => {
-    const code = withoutComments(css);
+    const code = withoutStrings(withoutComments(css));
     for (const match of code.matchAll(/@(plugin|config)\b/g)) {
       unsupported.push({
         message: `@${match[1]} isn't supported: the platform's Tailwind runs without plugins or config files.`,
@@ -190,6 +191,11 @@ function tailwindStylesheet(id: string): string | undefined {
 /** CSS with its comments blanked out, keeping every line where it was. */
 function withoutComments(css: string): string {
   return css.replace(/\/\*[\s\S]*?\*\//g, (comment) => comment.replace(/[^\n]/g, " "));
+}
+
+/** CSS with its strings' contents blanked out, such as `content: "@plugin"`. */
+function withoutStrings(css: string): string {
+  return css.replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'/g, (string) => string[0] + " ".repeat(string.length - 2) + string[0]);
 }
 
 function placeAt(text: string, index: number, file: string): Pick<BuildProblem, "file" | "line" | "column"> {
