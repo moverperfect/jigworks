@@ -387,6 +387,6 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 ### Found along the way
 
 - **Size:** with Tailwind and the Worker + React Template, the Worker is 7,941 KiB compressed, 107 KiB more than before.
-  - The Templates' Workers runtime types, 609 KiB, are now packed once, which saved 112 KiB compressed.
+  - The Templates' Workers runtime types, 608 KiB, are now packed once, which saved 112 KiB compressed.
   - Ticket 13 has about 2.2 MB of the 10 MB limit.
 - **Binary assets:** a Build serves `public/` as text, so a binary file there would be damaged (ADR 0014, #31).
