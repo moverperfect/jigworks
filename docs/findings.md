@@ -445,6 +445,7 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 | First request to the Preview after a new Build | 907 ms | 36 ms |
 | First request to the Deployment after publishing again | 105 ms | 34 ms |
 
+- **Left out of the warm row:** the Deployment's first request after about a minute idle took 156 ms in the platform Worker.
 - **In the browser:** counts took 53–92 ms once warm (14). The page's first count took 660 ms, of which the platform Worker spent 41 ms. The instance had already started on the page's own load.
 - **Instances by name:** "a" counted 1 to 5 in the Preview while "b" started at 1. Each instance had its own `ctx.id`, and `ctx.id.name` was its name.
 - **The Preview and the Deployment apart:** after publishing, the Deployment's "a" started at 1 while the Preview's stood at 5.
