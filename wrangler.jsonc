@@ -4,26 +4,40 @@
   "main": "src/platform/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Jack's Installation. It's served only at app.jigworks.dev, behind the
-  // platform's Access application. The custom domain makes Cloudflare create
-  // the DNS record and certificate.
-  "routes": [{ "pattern": "app.jigworks.dev", "custom_domain": true }],
+  // Jack's Installation. The platform is served at app.jigworks.dev, behind
+  // its Access application; the custom domain makes Cloudflare create the DNS
+  // record and certificate. Apps answer on their own domain (ADR 0012),
+  // through the same Worker: Deployments behind the apps' Access application,
+  // Previews past it, signing their Developer in themselves (ADR 0013).
+  "routes": [
+    { "pattern": "app.jigworks.dev", "custom_domain": true },
+    { "pattern": "*.jigworks.app/*", "zone_name": "jigworks.app" }
+  ],
   "workers_dev": false,
   "preview_urls": false,
   "limits": { "cpu_ms": 300000 },
   "observability": { "enabled": true },
+  // The Worker runs first for every request, because apps' hostnames must
+  // never be answered with the platform's pages. It serves those through
+  // ASSETS on the platform's own hostname.
   "assets": {
     "directory": "client/dist",
+    "binding": "ASSETS",
     "not_found_handling": "single-page-application",
-    "run_worker_first": ["/api/*"]
+    "run_worker_first": true
   },
   "durable_objects": {
     "bindings": [
       { "name": "DEVELOPERS", "class_name": "Developer" },
-      { "name": "WORKSPACES", "class_name": "Workspace" }
+      { "name": "WORKSPACES", "class_name": "Workspace" },
+      // One per app, named by its label (ADR 0009).
+      { "name": "APP_HOSTS", "class_name": "AppHost" }
     ]
   },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Developer", "Workspace"] }],
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Developer", "Workspace"] },
+    { "tag": "v2", "new_sqlite_classes": ["AppHost"] }
+  ],
   // Checks run in Dynamic Workers (ADR 0010).
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {

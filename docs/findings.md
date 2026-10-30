@@ -283,3 +283,17 @@ The isolate ID showed when Cloudflare replaced the probe's isolate:
   - It wasn't `HttpOnly`, so the page's own scripts could read the token. Nothing on the platform's pages needs to, so the set-up now asks for `HttpOnly` too.
   - This answers the research's open question 3 (`docs/research/run-and-host.md`). The cookie is host-only, and Access leaves `HttpOnly` off unless the application turns it on.
 - **New hostnames and DNS caches:** a resolver that looked up a hostname before its record existed went on answering "no such name" until its negative cache ran out. For `jigworks.dev`, the SOA's TTL and minimum are both 30 minutes, so that can take up to 30 minutes. One ISP resolver took about 7 minutes to see `app.jigworks.dev` after the first deploy created it.
+
+## Stage 4, continued: the Preview
+
+### Which Access application covers a Preview
+
+Previews sign their Developer in themselves (ADR 0013), so Access must let Preview hostnames through. A Bypass application on `*-preview.jigworks.app` sits beside the Allow application on `*.jigworks.app`, and Cloudflare doesn't document which wins. Measured on 2026-10-30 with `curl`, before the apps route was deployed:
+
+| Hostname | Answer |
+| --- | --- |
+| `anything-preview.jigworks.app`, `notes-k3x9p2qa-preview.jigworks.app`, `a-b-c-preview.jigworks.app` | past Access (522: no route yet) |
+| `anything.jigworks.app`, `notes-k3x9p2qa.jigworks.app` | Access sign-in |
+| `preview.jigworks.app`, `x-preview-y.jigworks.app` | Access sign-in |
+
+So the more specific hostname wins, as it does for paths, and only hostnames whose first label ends in `-preview` get past Access.

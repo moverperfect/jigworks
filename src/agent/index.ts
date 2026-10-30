@@ -34,6 +34,7 @@ export const instructions = `You are the Agent on a development platform where a
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
+- Each successful Build becomes the Preview. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.
 - Keep your replies short: say what you changed and anything the Developer needs to know.`;
 
@@ -109,6 +110,8 @@ export function agentTools(workspace: {
   /** A Build, after the step's other tools have finished. */
   build: () => Promise<BuildReport>;
   addPackageForAgent: Workspace["addPackageForAgent"];
+  requestPreview: Workspace["requestPreview"];
+  previewLogs: Workspace["previewLogs"];
 }): ToolSet {
   return {
     check: tool({
@@ -142,6 +145,34 @@ export function agentTools(workspace: {
         const warnings = result.status.warnings.map((warning) => `\nPackage warning: ${warning}`).join("");
         const failed = result.status.state === "failed" ? `\nThe install failed: ${result.status.error}` : "";
         return `Added ${name} ${result.version}.${failed}${warnings}`;
+      },
+    }),
+    request_preview: tool({
+      description:
+        "Sends the Preview, which runs the latest successful Build, an HTTP request and returns the response's status, headers and body. Build first to try new changes.",
+      inputSchema: z.object({
+        method: z.string().default("GET").describe("The HTTP method, such as GET or POST."),
+        path: z.string().describe("The path and query, such as /api/items?page=2."),
+        headers: z.record(z.string(), z.string()).optional().describe("Request headers, such as content-type."),
+        body: z.string().optional().describe("The request body, for methods that have one."),
+      }),
+      execute: async ({ method, path, headers, body }) => {
+        const response = await workspace.requestPreview({ method: method.toUpperCase(), path, headers, body });
+        const headerLines = Object.entries(response.headers).map(([name, value]) => `${name}: ${value}`).join("\n");
+        const cut = response.truncated ? "\n[The body was cut short.]" : "";
+        return `${response.status}\n${headerLines}\n\n${response.body}${cut}`;
+      },
+    }),
+    preview_logs: tool({
+      description:
+        "Reads the Preview's newest log lines, oldest first: its Worker's console output and uncaught exceptions, and front-end errors that browsers reported.",
+      inputSchema: z.object({
+        limit: z.number().int().min(1).max(500).optional().describe("How many of the newest lines to read. 100 if left out."),
+      }),
+      execute: async ({ limit }) => {
+        const entries = await workspace.previewLogs(limit);
+        if (entries.length === 0) return "The Preview has no logs yet.";
+        return entries.map((entry) => `${entry.at} ${entry.source} ${entry.level}: ${entry.message}`).join("\n");
       },
     }),
   };

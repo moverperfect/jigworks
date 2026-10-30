@@ -19,7 +19,8 @@ This Workspace runs only inside the platform. There is no local machine and noth
 
 ## Runtime
 
-- **Cookies:** every cookie name starts with `__Host-`; the platform drops all other cookies. With `hono/cookie`, `setCookie(c, "session", value, { prefix: "host" })` and `getCookie(c, "session", "host")` add the prefix and its required attributes for you.
+- **Cookies:** every cookie name starts with `__Host-`; the platform drops all other cookies. With `hono/cookie`, `setCookie(c, "session", value, { prefix: "host" })` and `getCookie(c, "session", "host")` add the prefix and its required attributes for you. The platform keeps the name `__Host-jigworks-preview` for itself.
+- **Reserved paths:** the platform answers `/__jigworks/` and everything below it itself, so app code never sees those requests.
 - **Storage:** Durable Objects are the only storage. KV, D1, R2, queues and cron triggers aren't available.
 - **Outbound requests:** `fetch` to any external URL works.
 - **Secrets:** each secret the Developer sets appears in `env` under its name, for example `c.env.API_KEY`.

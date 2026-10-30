@@ -335,6 +335,7 @@ say "Previews and Deployments live on *.$APPS_DOMAIN, behind an Access applicati
 open_url "https://one.dash.cloudflare.com/"
 step "Create another self-hosted application, \"Jigworks apps\": subdomain *, domain $APPS_DOMAIN."
 step "Give it the \"Jigworks Developers\" policy for now. Ticket 10 decides who opens Deployments."
+step "Configure → Advanced settings → Cookie settings: turn HTTP Only on, so app code can't read it. Save."
 step "Copy its Application Audience (AUD) Tag."
 ask APPS_ACCESS_AUD "Paste the apps' AUD tag:"
 [[ "$APPS_ACCESS_AUD" =~ ^[0-9a-f]{64}$ ]] || warn "An AUD tag is usually 64 hex characters. Check it."
@@ -345,10 +346,20 @@ step "Pick the $APPS_DOMAIN zone → DNS → Records → Add record:"
 step "type AAAA, name *, IPv6 address 100::, Proxy status Proxied. Save."
 note "100:: is the address Cloudflare uses for hostnames that only a Worker answers."
 pause "Press Enter once the record is saved."
-if curl -sI "https://wizard-check.$APPS_DOMAIN/" | grep -qi 'cloudflareaccess.com'; then
-  printf '  %s✓%s *.%s sends visitors to Access sign-in\n' "$GREEN" "$RESET" "$APPS_DOMAIN"
+say "Previews sign their Developer in themselves, inside the platform's page (ADR 0013),"
+say "so Access must let Preview hostnames through."
+step "Create a third self-hosted application, \"Jigworks previews\": subdomain *-preview, domain $APPS_DOMAIN."
+step "Give it one policy: action Bypass, include Everyone. Save."
+pause "Press Enter once it's saved."
+# The Preview check means something only once Access answers on the apps domain at all.
+if ! curl -sI "https://wizard-check.$APPS_DOMAIN/" | grep -qi 'cloudflareaccess.com'; then
+  warn "https://wizard-check.$APPS_DOMAIN/ didn't redirect to Access yet. DNS can take a few minutes;"
+  warn "docs/development.md has the check to run again later."
+elif curl -sI "https://wizard-check-preview.$APPS_DOMAIN/" | grep -qi 'cloudflareaccess.com'; then
+  warn "https://wizard-check-preview.$APPS_DOMAIN/ still goes to Access sign-in. Check the Bypass application;"
+  warn "Previews stay closed until it applies (ADR 0013)."
 else
-  warn "https://wizard-check.$APPS_DOMAIN/ didn't redirect to Access yet. DNS can take a few minutes."
+  printf '  %s✓%s *.%s sends visitors to Access sign-in, and Preview hostnames get past it\n' "$GREEN" "$RESET" "$APPS_DOMAIN"
 fi
 pause
 

@@ -1,3 +1,4 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { CheckReport } from "../src/workspace";
 import { brokenCount, buildableIndex, fixedCount } from "./fixtures/agent-scripts";
@@ -47,7 +48,9 @@ describe("a Turn", () => {
     expect(sent.system).toContain("You are the Agent on a development platform");
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
     expect(sent.latest).toContain("the Developer changed /src/notes.md");
-    expect(sent.tools).toEqual(expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "read", "write"]));
+    expect(sent.tools).toEqual(
+      expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "preview_logs", "read", "request_preview", "write"]),
+    );
 
     // The note is for the Turn after the change only.
     await runTurn(workspace.id, conversation, "And now?");
@@ -137,6 +140,36 @@ describe("the Agent's own tools", () => {
     await runTurn(workspace.id, conversation, "Build again");
     const replies = (await history(workspace.id)).filter((message) => message.role === "assistant");
     expect(textOf(replies[1]!)).toMatch(/^The tool said: The Build failed:\n\/src\/index\.ts:1:\d+: /);
+  });
+
+  it("tries the Preview with request_preview, and reads its logs with preview_logs", async () => {
+    const loggingIndex = `export default {
+  fetch: (request: Request) => {
+    console.log("serving", new URL(request.url).pathname);
+    return Response.json({ message: "Hello, Agent" });
+  },
+};
+`;
+    // The fake model takes its script from a Conversation's first message, so each tool gets a Workspace.
+    const [trying, reading] = [await create("Preview request"), await create("Preview logs")];
+    for (const workspace of [trying, reading]) {
+      expect((await call(`/api/workspaces/${workspace.id}/files/src/index.ts`, { method: "PUT", text: loggingIndex })).status).toBe(204);
+      expect((await call(`/api/workspaces/${workspace.id}/build`, { method: "POST" })).status).toBe(200);
+    }
+
+    await runTurn(trying.id, await connect(trying.id), "[script:request-preview] Try it");
+    const [, tried] = await history(trying.id);
+    expect(textOf(tried!)).toMatch(/^The tool said: 200\n[^]*content-type: application\/json[^]*\n\n\{"message":"Hello, Agent"\}$/);
+
+    await env.WORKSPACES.getByName(reading.id).requestPreview({ method: "GET", path: "/api/hello/Agent" });
+    // Server logs arrive from the Dynamic Worker's tail a moment later.
+    for (let attempt = 0; attempt < 50; attempt++) {
+      if ((await env.WORKSPACES.getByName(reading.id).previewLogs()).length > 0) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await runTurn(reading.id, await connect(reading.id), "[script:read-preview-logs] What did it log?");
+    const [, read] = await history(reading.id);
+    expect(textOf(read!)).toMatch(/^The tool said: \S+ server log: serving \/api\/hello\/Agent$/);
   });
 
   it("runs a check called in the same step as an edit after the edit", async () => {

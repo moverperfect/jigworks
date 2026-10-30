@@ -1,22 +1,30 @@
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState } from "react";
+import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { ApiError, getWorkspace, listFiles } from "./api";
 import { ConversationPanel } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
 import { FileTree } from "./FileTree";
 import { useLoad, useTitle } from "./hooks";
+import { PreviewPanel } from "./PreviewPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { Link } from "./router";
 import { foldersOf } from "./tree";
 import { useChecks } from "./useChecks";
 import { useConversation } from "./useConversation";
-import { useOpenFile } from "./useOpenFile";
+import { useOpenFile, type CursorTarget } from "./useOpenFile";
 
 const isNotFound = (error: unknown) => error instanceof ApiError && error.status === 404;
 
 /** Trying again only helps when the platform couldn't be reached or failed, not when it refused. */
 const canRetry = (error: ApiError) => error.status === 0 || error.status >= 500;
 
-/** The Workspace page, at `/workspaces/:id`: the file tree, the editor, the problems list and the Conversation. */
+/** What the middle of the page shows: the open file, or the Preview. */
+type View = "editor" | "preview";
+const views: { view: View; label: string }[] = [
+  { view: "editor", label: "Editor" },
+  { view: "preview", label: "Preview" },
+];
+
+/** The Workspace page, at `/workspaces/:id`: the file tree, the editor or the Preview, the problems list and the Conversation. */
 export function WorkspacePage({ id }: { id: string }) {
   const loaded = useLoad(() => getWorkspace(id).catch((error: unknown) => (isNotFound(error) ? null : Promise.reject(error))));
   const { state } = loaded;
@@ -64,6 +72,7 @@ function WorkspaceView({ id }: { id: string }) {
   });
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(() => new Set());
   const [problemsExpanded, setProblemsExpanded] = useState(true);
+  const [view, setView] = useState<View>("editor");
 
   // When a Turn ends, show what the Agent changed: the files, the open file and the Turn's Check and Build.
   // A Turn that ran while the socket was closed shows as a new `lastTurn`.
@@ -101,6 +110,19 @@ function WorkspaceView({ id }: { id: string }) {
     });
   }, [openedPath]);
 
+  function showFile(path: string, cursor?: CursorTarget) {
+    setView("editor");
+    void file.open(path, cursor);
+  }
+
+  // There are two tabs, so either arrow key moves to the other.
+  function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const next = view === "editor" ? "preview" : "editor";
+    setView(next);
+    document.getElementById(`${headingId}-${next}-tab`)?.focus();
+  }
+
   function toggleFolder(folder: string) {
     setCollapsed((folders) => {
       const next = new Set(folders);
@@ -133,57 +155,91 @@ function WorkspaceView({ id }: { id: string }) {
             selected={openedPath ?? null}
             collapsed={collapsed}
             onToggle={toggleFolder}
-            onOpen={(path) => void file.open(path)}
+            onOpen={(path) => showFile(path)}
           />
         )}
       </nav>
 
-      <section className="workspace-editor" aria-labelledby={`${headingId}-editor`}>
-        <div className="editor-toolbar">
-          <h2 id={`${headingId}-editor`} className="editor-path">
-            {openedPath ?? "No file open"}
-          </h2>
-          {isOpen && file.dirty && (
-            <span className="dirty-marker">
-              <span aria-hidden="true">● </span>Unsaved changes
-            </span>
-          )}
-          <span className="save-status" role="status">
-            {locked ? "Read-only while the Agent is working" : saveStatus}
-          </span>
-          <button
-            type="button"
-            className="button button-small"
-            onClick={() => void file.save()}
-            disabled={!isOpen || !file.dirty || locked}
-          >
-            Save
-          </button>
+      <div className="workspace-middle">
+        <div className="workspace-tabs" role="tablist" aria-label="Editor and Preview" onKeyDown={onTabKeyDown}>
+          {views.map((tab) => (
+            <button
+              key={tab.view}
+              type="button"
+              role="tab"
+              id={`${headingId}-${tab.view}-tab`}
+              className="workspace-tab"
+              aria-selected={view === tab.view}
+              aria-controls={`${headingId}-${tab.view}-panel`}
+              tabIndex={view === tab.view ? 0 : -1}
+              onClick={() => setView(tab.view)}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
-        {file.saveError && (
-          <div className="editor-message">
-            <ErrorMessage error={file.saveError} />
+
+        <section
+          id={`${headingId}-editor-panel`}
+          className="workspace-editor"
+          role="tabpanel"
+          aria-labelledby={`${headingId}-editor-tab`}
+          hidden={view !== "editor"}
+        >
+          <div className="editor-toolbar">
+            <h2 className="editor-path">
+              {openedPath ?? "No file open"}
+            </h2>
+            {isOpen && file.dirty && (
+              <span className="dirty-marker">
+                <span aria-hidden="true">● </span>Unsaved changes
+              </span>
+            )}
+            <span className="save-status" role="status">
+              {locked ? "Read-only while the Agent is working" : saveStatus}
+            </span>
+            <button
+              type="button"
+              className="button button-small"
+              onClick={() => void file.save()}
+              disabled={!isOpen || !file.dirty || locked}
+            >
+              Save
+            </button>
           </div>
-        )}
-        {!opened && <p className="editor-message muted">Choose a file to open it.</p>}
-        {opened?.status === "opening" && <p className="editor-message muted">Opening {opened.path}…</p>}
-        {opened?.status === "failed" && (
-          <div className="editor-message">
-            <ErrorMessage
-              error={opened.error}
-              retry={canRetry(opened.error) ? () => void file.open(opened.path) : undefined}
-            />
-          </div>
-        )}
-        <div ref={file.editorHost} className="editor-host" hidden={!isOpen} />
-      </section>
+          {file.saveError && (
+            <div className="editor-message">
+              <ErrorMessage error={file.saveError} />
+            </div>
+          )}
+          {!opened && <p className="editor-message muted">Choose a file to open it.</p>}
+          {opened?.status === "opening" && <p className="editor-message muted">Opening {opened.path}…</p>}
+          {opened?.status === "failed" && (
+            <div className="editor-message">
+              <ErrorMessage
+                error={opened.error}
+                retry={canRetry(opened.error) ? () => void file.open(opened.path) : undefined}
+              />
+            </div>
+          )}
+          <div ref={file.editorHost} className="editor-host" hidden={!isOpen} />
+        </section>
+
+        <PreviewPanel
+          id={id}
+          build={checks.build}
+          visible={view === "preview"}
+          panelId={`${headingId}-preview-panel`}
+          tabId={`${headingId}-preview-tab`}
+        />
+      </div>
 
       <ProblemsPanel
         checks={checks}
         expanded={problemsExpanded}
         onToggle={() => setProblemsExpanded((expanded) => !expanded)}
         canOpen={(path) => knownPaths.has(path)}
-        onOpen={(path, line, column) => void file.open(path, { line, column })}
+        onOpen={(path, line, column) => showFile(path, { line, column })}
       />
 
       <ConversationPanel id={id} conversation={conversation} unsavedChanges={isOpen && file.dirty} />

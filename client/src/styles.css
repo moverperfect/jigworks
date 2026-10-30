@@ -215,7 +215,7 @@ main {
 }
 
 /* Buttons that read as text. :where() keeps this reset below every class rule, so they set their own padding and size. */
-:where(.link-button, .tree-item, .problems-toggle, button.problem) {
+:where(.link-button, .tree-item, .problems-toggle, button.problem, .workspace-tab) {
   padding: 0;
   font: inherit;
   color: inherit;
@@ -321,6 +321,10 @@ input[aria-invalid="true"] {
 .message-error {
   background: var(--danger-surface);
   border: 1px solid var(--danger);
+}
+
+.message-notice {
+  border: 1px solid var(--border-strong);
 }
 
 .empty {
@@ -470,12 +474,27 @@ h1.workspace-title {
   border-right: 1px solid var(--border);
 }
 
-.workspace-editor {
+/* The editor and the Preview share the middle, as two tabs. */
+.workspace-middle {
   grid-area: editor;
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+.workspace-editor,
+.workspace-preview {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-editor[hidden],
+.workspace-preview[hidden] {
+  display: none;
 }
 
 .workspace-problems {
@@ -515,6 +534,17 @@ h1.workspace-title {
   .workspace-conversation {
     border-left: 0;
     border-top: 1px solid var(--border);
+  }
+
+  /* The page scrolls here, so the Preview takes the height it needs. */
+  .workspace-preview,
+  .workspace-preview .preview-view {
+    flex: 1 0 auto;
+  }
+
+  .workspace-preview .preview-frame {
+    flex: none;
+    height: 24rem;
   }
 }
 
@@ -571,7 +601,8 @@ h1.workspace-title {
 
 .tree-item:focus-visible,
 .problems-toggle:focus-visible,
-.problem:focus-visible {
+.problem:focus-visible,
+.workspace-tab:focus-visible {
   outline-offset: -2px;
 }
 
@@ -644,6 +675,131 @@ h2.editor-path {
   outline-offset: -2px;
 }
 
+.workspace-tabs {
+  display: flex;
+  padding: 0 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.workspace-tab {
+  padding: 0.4rem 0.6rem 0.3rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+}
+
+.workspace-tab:hover {
+  color: var(--text);
+}
+
+.workspace-tab[aria-selected="true"] {
+  color: var(--text);
+  border-bottom-color: var(--text);
+}
+
+.preview-address {
+  display: flex;
+  gap: 0.5rem;
+  flex: 1 1 18rem;
+  min-width: 0;
+}
+
+/* Reads as one field: the Preview's hostname, then the path the Developer types. */
+.preview-field {
+  display: flex;
+  align-items: center;
+  flex: 1 1 auto;
+  min-width: 0;
+  font-family: var(--monospace);
+  font-size: 0.8125rem;
+  font-weight: normal;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.preview-field:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: -1px;
+}
+
+.preview-host {
+  flex: 0 1 auto;
+  min-width: 0;
+  padding-left: 0.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+
+input.preview-path {
+  flex: 1 1 6rem;
+  min-width: 6rem;
+  padding: 0.2rem 0.5rem 0.2rem 0;
+  border: 0;
+  background: none;
+}
+
+input.preview-path:focus-visible {
+  outline: none;
+}
+
+.preview-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.preview-frame {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  border: 0;
+}
+
+.preview-logs {
+  border-top: 1px solid var(--border);
+}
+
+.problems-body.logs-body {
+  max-height: min(10rem, 22vh);
+}
+
+.log-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--monospace);
+  font-size: 0.8125rem;
+}
+
+.log-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 0.75rem;
+  padding: 0.1rem 0.75rem 0.1rem 1.75rem;
+}
+
+.log-detail {
+  flex: none;
+  color: var(--muted);
+}
+
+.log-level.severity {
+  min-width: 4.5rem;
+}
+
+.log-message {
+  flex: 1 1 18rem;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .problems-header {
   display: flex;
   flex-wrap: wrap;
@@ -653,7 +809,7 @@ h2.editor-path {
   padding: 0 0.75rem 0 0.25rem;
 }
 
-h2.problems-heading {
+.problems-heading {
   margin: 0;
   font-size: 0.9rem;
 }

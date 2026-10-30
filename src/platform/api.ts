@@ -40,7 +40,7 @@ api.post("/workspaces", async (c) => {
   // still be seen and deleted.
   await developer(c).add(record);
   try {
-    await workspace(c, record.id).initialise(template.files);
+    await workspace(c, record.id).initialise(template.files, record.name);
   } catch (error) {
     await developer(c).remove(record.id);
     throw error;
@@ -63,6 +63,7 @@ api.delete("/workspaces/:id", async (c) => {
   // The data goes before the record, so if removing the record fails, deleting
   // again completes the deletion.
   try {
+    await workspace(c, record.id).removeApp();
     // The Agents SDK's destroy() drops every table, then resets the object,
     // which can cut off its reply.
     await workspace(c, record.id).destroy();
@@ -158,6 +159,25 @@ api.post("/workspaces/:id/build", async (c) => {
 api.get("/workspaces/:id/build", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json(await workspace(c, record.id).latestBuild()) : noSuchWorkspace(c);
+});
+
+api.get("/workspaces/:id/preview", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).preview()) : noSuchWorkspace(c);
+});
+
+// A sign-in link for the Preview pane's frame. A tab signs in through `/preview-sign-in`.
+api.post("/workspaces/:id/preview/sign-in", async (c) => {
+  const record = await ownWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  const body = await c.req.json<{ to?: unknown }>().catch(() => null);
+  const to = typeof body?.to === "string" ? body.to : "/";
+  return c.json({ url: await workspace(c, record.id).previewSignIn("iframe", to) });
+});
+
+api.get("/workspaces/:id/preview/logs", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json({ logs: await workspace(c, record.id).previewLogs() }) : noSuchWorkspace(c);
 });
 
 api.get("/workspaces/:id/check", async (c) => {

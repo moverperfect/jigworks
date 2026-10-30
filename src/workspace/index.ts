@@ -22,7 +22,15 @@ import {
   turnProviderOptions,
   withAgentsMd,
 } from "../agent";
-import type { Builder } from "../builder";
+import {
+  newAppLabel,
+  previewHost,
+  type AppLogEntry,
+  type PreviewExchange,
+  type PreviewRequest,
+  type SignInDestination,
+} from "../apphost";
+import type { Build, Builder } from "../builder";
 import { takeWasmMemory, trackWasm } from "../builder/wasm-memory";
 import { checkInDynamicWorker } from "../checker/isolated";
 import { isHidden, normalisePath, storeFiles, type Files } from "../files";
@@ -45,6 +53,13 @@ export type PackageAdded = DeveloperChange<{ version: string; status: PackageSta
 
 const checkKey = "check:latest";
 const buildKey = "build:latest";
+// The app's label, which names its app host and its hostnames (ADR 0012).
+const appLabelKey = "app:label";
+// The hash of the last Build the app host took, so a cached Build isn't sent again.
+const appSentKey = "app:sent";
+// The Build waiting to follow the Developer's last save, so a burst of saves makes one Build.
+const saveBuildKey = "build:after-save";
+const saveBuildDelaySeconds = 1;
 const changedKey = "turn:developer-changes";
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
@@ -66,7 +81,7 @@ const waitingTools = new Set(["check", "build"]);
 trackWasm(() => "esbuild");
 
 /** Who a Check or a Build is for. */
-type RequestedBy = "developer" | "turn" | "agent";
+type RequestedBy = "developer" | "save" | "preview" | "turn" | "agent";
 
 /**
  * A name for this isolate, chosen when it's first needed, because Workers
@@ -177,6 +192,8 @@ export class Workspace extends Think<Env, ConversationState> {
         return this.buildInItsOwnCall("agent");
       },
       addPackageForAgent: (name, options) => this.addPackageForAgent(name, options),
+      requestPreview: (init) => this.requestPreview(init),
+      previewLogs: (limit) => this.previewLogs(limit),
     });
   }
 
@@ -235,8 +252,9 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /** Fills a new Workspace with its Template's files, and installs their Packages. */
-  async initialise(files: Record<string, string>): Promise<void> {
+  async initialise(files: Record<string, string>, name = ""): Promise<void> {
     if (this.files.list().length > 0) throw new Error(`Workspace ${this.name} already has files`);
+    this.ctx.storage.kv.put(appLabelKey, newAppLabel(name));
     for (const [path, text] of Object.entries(files)) await this.files.write(path, text);
     await this.installPackages();
   }
@@ -297,7 +315,8 @@ export class Workspace extends Think<Env, ConversationState> {
   /**
    * Builds the Workspace's code with its Packages, after installing them if
    * `package.json` changed since the last install. A recent Build of the same
-   * inputs is reused. A Check's errors don't stop a Build. Every Build goes
+   * inputs is reused. A Check's errors don't stop a Build, and a successful
+   * Build goes to the app host as the Preview. Every Build goes
    * to Workers Logs with esbuild's memory, the isolate it ran in, and the
    * Packages its output still imports; its CPU and wall time are in its
    * call's trace. The Workspace's own Builds call it through its stub (see
@@ -320,6 +339,7 @@ export class Workspace extends Think<Env, ConversationState> {
         warnings: result.warnings,
       };
       this.ctx.storage.kv.put(buildKey, report);
+      if (result.ok) await this.sendToAppHost(result);
       console.log(
         JSON.stringify({
           event: "build",
@@ -344,6 +364,86 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.ctx.storage.kv.get<BuildReport>(buildKey) ?? null;
   }
 
+  /** The app's label, which names its app host and hostnames. Workspaces made before ticket 08 get one now. */
+  appLabel(): string {
+    let label = this.ctx.storage.kv.get<string>(appLabelKey);
+    if (!label) {
+      label = newAppLabel("");
+      this.ctx.storage.kv.put(appLabelKey, label);
+    }
+    return label;
+  }
+
+  /**
+   * Where the Preview answers, and whether it has a Build to run. A Workspace
+   * whose successful Build predates its app host builds once more, from the
+   * cache, to send it there.
+   */
+  async preview(): Promise<{ url: string; ready: boolean }> {
+    let ready = await this.previewReady();
+    if (!ready && (await this.latestBuild())?.ok) {
+      await this.buildInItsOwnCall("preview");
+      ready = await this.previewReady();
+    }
+    return { url: `https://${previewHost(this.appLabel(), this.env.APPS_DOMAIN)}/`, ready };
+  }
+
+  private async previewReady(): Promise<boolean> {
+    return (await this.env.APP_HOSTS.getByName(this.appLabel()).previewHash()) !== null;
+  }
+
+  /** A single-use link that signs the Developer in to the Preview and shows `to` (ADR 0013). The caller checks ownership first. */
+  async previewSignIn(destination: SignInDestination, to: string): Promise<string> {
+    const label = this.appLabel();
+    const url = await this.env.APP_HOSTS.getByName(label).mintSignIn(this.name, label, destination, to);
+    if (url === null) throw new Error("The app's label belongs to another Workspace.");
+    return url;
+  }
+
+  /** Sends the Preview a request for the Agent's `request_preview` tool. */
+  async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
+    return this.env.APP_HOSTS.getByName(this.appLabel()).requestPreview(init);
+  }
+
+  /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */
+  async removeApp(): Promise<void> {
+    const label = this.ctx.storage.kv.get<string>(appLabelKey);
+    if (label) await this.env.APP_HOSTS.getByName(label).remove(this.name);
+  }
+
+  /** The Preview's newest server logs and front-end errors, for the Agent's `preview_logs` tool. */
+  async previewLogs(limit?: number): Promise<AppLogEntry[]> {
+    return this.env.APP_HOSTS.getByName(this.appLabel()).logs("preview", limit);
+  }
+
+  /**
+   * Gives the app host a successful Build, which the Preview then runs. In
+   * the unlikely case that another Workspace already holds this app's label,
+   * the Workspace picks a new one, up to three times: a Build that can't
+   * reach its Preview would leave the Developer looking at an old one.
+   */
+  private async sendToAppHost(build: Build): Promise<void> {
+    if (this.ctx.storage.kv.get<string>(appSentKey) === build.hash) return;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const label = this.appLabel();
+      const { hash, mainModule, modules, compatibilityDate, compatibilityFlags, vars } = build;
+      const { accepted } = await this.env.APP_HOSTS.getByName(label).receiveBuild(this.name, label, {
+        hash,
+        mainModule,
+        modules,
+        compatibilityDate,
+        compatibilityFlags,
+        vars,
+      });
+      if (accepted) {
+        this.ctx.storage.kv.put(appSentKey, hash);
+        return;
+      }
+      this.ctx.storage.kv.put(appLabelKey, newAppLabel(label.replace(/-[a-z0-9]{8}$/, "")));
+    }
+    throw new Error("Couldn't find a free label for the Workspace's app.");
+  }
+
   /**
    * A Build for the Turn or the Agent, through the Workspace's own stub, so
    * the Build is a call of its own with its own CPU and wall time in
@@ -351,7 +451,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * 156 ms for a Build the trace put at 1,036 ms), so it isn't timed here.
    * Work after the call is counted in the Build's trace too.
    */
-  private buildInItsOwnCall(by: "turn" | "agent"): Promise<BuildReport> {
+  private buildInItsOwnCall(by: Exclude<RequestedBy, "developer">): Promise<BuildReport> {
     return this.env.WORKSPACES.get(this.ctx.id).build(by);
   }
 
@@ -366,13 +466,32 @@ export class Workspace extends Think<Env, ConversationState> {
     // In line with Turns starting (see `startTurn`), so a save is checked
     // against the lock when its time comes, and lands either before the Turn,
     // which is told about it, or not at all.
-    return this.exclusive(async () => {
+    const result = await this.exclusive(async (): Promise<DeveloperChange> => {
       if (this.state.turn) return busy;
       await this.files.write(normalised, text);
       this.noteDeveloperChange(normalised);
       if (normalised === "package.json") await this.install();
       return { ok: true };
     });
+    if (result.ok) await this.buildSoon();
+    return result;
+  }
+
+  /**
+   * Builds shortly after the Developer's last save, on the server, so the
+   * Preview follows every save even when the page has closed.
+   */
+  private async buildSoon(): Promise<void> {
+    const waiting = this.ctx.storage.kv.get<string>(saveBuildKey);
+    if (waiting) await this.cancelSchedule(waiting);
+    const { id } = await this.schedule(saveBuildDelaySeconds, "buildAfterSave", undefined, { retry: { maxAttempts: 1 } });
+    this.ctx.storage.kv.put(saveBuildKey, id);
+  }
+
+  /** Runs the Build `buildSoon` scheduled. Only `buildSoon` schedules it. */
+  async buildAfterSave(): Promise<void> {
+    this.ctx.storage.kv.delete(saveBuildKey);
+    await this.buildInItsOwnCall("save");
   }
 
   /** Installs what `package.json` lists, unless that's already installed. */

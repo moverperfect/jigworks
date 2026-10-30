@@ -23,7 +23,8 @@ const severityLabel: Record<Severity, string> = {
 const timeFormat = new Intl.DateTimeFormat(undefined, { timeStyle: "medium" });
 const dateTimeFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
 
-function formatRanAt(iso: string): string {
+/** A time, with its date unless it was today. */
+export function formatTime(iso: string): string {
   const date = new Date(iso);
   return date.toDateString() === new Date().toDateString() ? timeFormat.format(date) : dateTimeFormat.format(date);
 }
@@ -57,7 +58,7 @@ export function ProblemsPanel({
   else if (!checking && report) {
     status = (
       <>
-        Checked at <time dateTime={report.ranAt}>{formatRanAt(report.ranAt)}</time>
+        Checked at <time dateTime={report.ranAt}>{formatTime(report.ranAt)}</time>
         {reportTookMs !== null && ` in ${formatDuration(reportTookMs)}`}
       </>
     );

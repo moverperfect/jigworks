@@ -4,5 +4,5 @@ import { defineConfig } from "vite";
 // The API is the platform Worker under `wrangler dev`, which signs you in from .dev.vars.
 export default defineConfig({
   plugins: [react()],
-  server: { proxy: { "/api": "http://localhost:8787" } },
+  server: { proxy: { "/api": "http://localhost:8787", "/preview-sign-in": "http://localhost:8787" } },
 });
