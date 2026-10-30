@@ -395,7 +395,7 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 
 **Verdict: yes.** Publishing and app data both work on the deployed platform.
 - **Publishing:** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
-- **App data:** an app's Durable Object instances kept their data across new Builds and publishes, with the Preview's apart from the Deployment's. A call through the binding took about 20–40 ms on Cloudflare's side.
+- **App data:** an app's Durable Object instances kept their data across new Builds and publishes, with the Preview's apart from the Deployment's. A call through the binding took 17–44 ms on Cloudflare's side.
 
 ### Publishing a Deployment (ticket 10)
 
@@ -439,13 +439,13 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 - **The app:** a Hono Worker with one binding, `COUNTER`, to a `Counter` class. Each instance counted clicks in its own SQLite table. `/api/count/:name` added one to the instance of that name and answered with the count and the code's version.
 - **Check and Build:** the Check was clean, and the Build succeeded.
 
-| Step | Browser | Platform Worker | `AppData` |
-| --- | ---: | ---: | ---: |
-| First count in the Preview, starting the instance | 660 ms | | |
-| Later counts, the Preview and the Deployment (12) | 53–92 ms | 28–46 ms | 17–44 ms |
-| First request to the Preview after a new Build | | 907 ms | 36 ms |
-| First request to the Deployment after publishing again | | 105 ms | 34 ms |
+| Step | Platform Worker | `AppData` |
+| --- | ---: | ---: |
+| Count requests once warm, the Preview and the Deployment (16) | 28–65 ms | 17–44 ms |
+| First request to the Preview after a new Build | 907 ms | 36 ms |
+| First request to the Deployment after publishing again | 105 ms | 34 ms |
 
+- **In the browser:** counts took 53–92 ms once warm (14). The page's first count took 660 ms, of which the platform Worker spent 41 ms. The instance had already started on the page's own load.
 - **Instances by name:** "a" counted 1 to 5 in the Preview while "b" started at 1. Each instance had its own `ctx.id`, and `ctx.id.name` was its name.
 - **The Preview and the Deployment apart:** after publishing, the Deployment's "a" started at 1 while the Preview's stood at 5.
 - **New code:**
