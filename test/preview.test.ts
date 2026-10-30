@@ -95,6 +95,30 @@ describe("the Preview", () => {
     expect(await response.text()).toBe("Hello from your Worker");
   });
 
+  it("runs with the Build's vars and compatibility flags", async () => {
+    const workspace = await create("Preview Settings");
+    await save(
+      workspace.id,
+      "wrangler.jsonc",
+      JSON.stringify({
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        compatibility_flags: ["nodejs_compat", "no_global_navigator"],
+        vars: { GREETING: "Hello" },
+      }),
+    );
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch: (_request: Request, env: { GREETING: string }) => new Response(\`\${env.GREETING} \${typeof navigator}\`),
+};
+`,
+    );
+    await build(workspace.id);
+    expect(await (await visit(workspace.id)).text()).toBe("Hello undefined");
+  });
+
   it("keeps the last successful Build when a Build fails, and takes the next one", async () => {
     const workspace = await create("Preview Builds");
     await build(workspace.id);

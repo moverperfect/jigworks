@@ -11,7 +11,7 @@ export interface PreviewFrame {
   /** Where the Preview answers, and whether it has a Build to run yet. */
   info: LoadState<{ url: string; ready: boolean }>;
   retryInfo(): void;
-  /** The sign-in link the frame opens, or null before the first. Each load gets a new one, as each works once. */
+  /** The sign-in link the frame opens, or null while there's no frame. Each load gets a new one, as each works once. */
   src: string | null;
   frame: RefObject<HTMLIFrameElement | null>;
   /** Whether the frame is on its way to showing a new link. */
@@ -29,8 +29,8 @@ export interface PreviewFrame {
 /**
  * The Preview pane's frame. It signs in with a fresh link each time it loads:
  * after each successful Build, on `load`, and when the Preview says the frame
- * has no session (ADR 0013). Links are made only while `visible`, so a hidden
- * pane runs no app code, and catches up when it's shown.
+ * has no session (ADR 0013). A hidden pane has no frame, so it runs no app
+ * code, and gets a fresh link when it's shown again.
  */
 export function usePreviewFrame(id: string, build: BuildReport | null, visible: boolean): PreviewFrame {
   const info = useLoad(() => getPreview(id));
@@ -60,7 +60,12 @@ export function usePreviewFrame(id: string, build: BuildReport | null, visible: 
 
   const key = `${goodHash} ${loads} ${path}`;
   useEffect(() => {
-    if (!visible || !ready || refused || key === shownKey.current) return;
+    if (!visible) {
+      shownKey.current = null;
+      setSrc(null);
+      return;
+    }
+    if (!ready || refused || key === shownKey.current) return;
     let current = true;
     setLoading(true);
     previewFrameLink(id, path).then(
