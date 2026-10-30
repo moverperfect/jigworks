@@ -82,17 +82,37 @@ describe("a Build with a front end", () => {
         "export const App = () => (",
         '  <main className={`flex hover:underline ${active}`}>',
         '    <p className="p-[13px] md:grid text-sm/6">Hi</p>',
+        `    <div className="bg-[url('/hero.svg')] before:content-[''] font-['Inter']" />`,
         "  </main>",
         ");",
         "",
       ].join("\n"),
     });
-    for (const rule of [".flex", ".hover\\:underline", ".bg-sky-500", ".p-\\[13px\\]", ".md\\:grid", ".text-sm\\/6"]) {
+    for (const rule of [
+      ".flex",
+      ".hover\\:underline",
+      ".bg-sky-500",
+      ".p-\\[13px\\]",
+      ".md\\:grid",
+      ".text-sm\\/6",
+      "url('/hero.svg')",
+      ".before\\:content-\\[\\'\\'\\]",
+      "font-family: 'Inter'",
+    ]) {
       expect(css(result)).toContain(rule);
     }
     expect(css(result)).not.toContain(".bg-red-500");
     // Tailwind's own reset comes with it.
     expect(css(result)).toContain("box-sizing: border-box");
+  });
+
+  it("finds Tailwind through a stylesheet imported from the Workspace's root", async () => {
+    const result = await built({
+      "src/styles.css": '@import "/src/base.css";\n',
+      "src/base.css": '@import "tailwindcss";\n',
+      "src/client/main.tsx": 'export const App = () => <p className="text-brand-none underline">Hi</p>;\n',
+    });
+    expect(css(result)).toContain(".underline");
   });
 
   it("includes the Workspace's own stylesheets that a Tailwind stylesheet imports", async () => {
@@ -111,7 +131,8 @@ describe("a Build with a front end", () => {
     expect(plugin.errors).toEqual([
       expect.objectContaining({ file: "src/styles.css", line: 2, message: expect.stringContaining("@plugin") }),
     ]);
-    expect(plugin.tailwindFailed).toBe(true);
+    // A gap in the platform's Tailwind, counted apart from mistakes in the CSS.
+    expect(plugin.tailwindFailure).toBe("unsupported");
 
     const config = await failed({
       "src/styles.css": '@import "tailwindcss";\n@import "./more.css";\n',
@@ -127,7 +148,7 @@ describe("a Build with a front end", () => {
     expect(result.errors).toEqual([
       expect.objectContaining({ file: "src/styles.css", message: expect.stringContaining("not-a-utility") }),
     ]);
-    expect(result.tailwindFailed).toBe(true);
+    expect(result.tailwindFailure).toBe("error");
   });
 
   it("bundles a plain stylesheet with its @imports, without Tailwind", async () => {

@@ -351,7 +351,7 @@ export class Workspace extends Think<Env, ConversationState> {
           errors: report.errors.length,
           warnings: report.warnings.length,
           missingPackages: result.ok ? [] : result.missingPackages,
-          tailwindFailed: !result.ok && result.tailwindFailed === true,
+          tailwindFailure: result.ok ? null : (result.tailwindFailure ?? null),
           tailwindCandidates: result.ok ? (result.tailwindCandidates ?? null) : null,
           files: snapshot.size,
           wasmMemoryBytes: takeWasmMemory(),

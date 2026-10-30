@@ -30,12 +30,16 @@ export function assetResponse(request: Request, build: Partial<AppAssets>): Resp
   }
   if (!path) return null;
 
-  const { contentType = "application/octet-stream", etag } = assetManifest[path] ?? {};
+  const { contentType = "application/octet-stream", etag: hash } = assetManifest[path] ?? {};
   // A Build's assets change with every Build, so the browser asks each time.
   const headers = new Headers({ "Content-Type": contentType, "Cache-Control": "no-cache" });
-  if (etag) headers.set("ETag", etag);
-  const seen = request.headers.get("If-None-Match")?.split(",").map((tag) => tag.trim());
-  if (etag && seen?.includes(etag)) return new Response(null, { status: 304, headers });
+  if (hash) {
+    const etag = `"${hash}"`;
+    headers.set("ETag", etag);
+    // Compared weakly, as If-None-Match is (RFC 9110).
+    const tags = request.headers.get("If-None-Match")?.split(",").map((tag) => tag.trim().replace(/^W\//, ""));
+    if (tags?.includes(etag)) return new Response(null, { status: 304, headers });
+  }
   return new Response(request.method === "HEAD" ? null : assets[path], { headers });
 }
 

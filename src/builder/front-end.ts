@@ -65,7 +65,8 @@ export function usesTailwind(path: string, snapshot: Snapshot, seen = new Set<st
   if (/@tailwind\s/.test(css)) return true;
   for (const [, id] of css.matchAll(/@import\s+(?:url\(\s*)?["']([^"']+)["']/g)) {
     if (id === "tailwindcss" || id!.startsWith("tailwindcss/")) return true;
-    if (id!.startsWith(".") && usesTailwind(join(dirname(path), id!), snapshot, seen)) return true;
+    const own = id!.startsWith(".") || id!.startsWith("/");
+    if (own && usesTailwind(join(dirname(path), id!), snapshot, seen)) return true;
   }
   return false;
 }
@@ -78,7 +79,7 @@ export function usesTailwind(path: string, snapshot: Snapshot, seen = new Set<st
 export async function compileTailwind(
   path: string,
   snapshot: Snapshot,
-): Promise<{ css: string; candidates: number } | { problems: BuildProblem[] }> {
+): Promise<{ css: string; candidates: number } | { problems: BuildProblem[]; failure: "unsupported" | "error" }> {
   const unsupported: BuildProblem[] = [];
   const check = (file: string, css: string) => {
     const code = withoutComments(css);
@@ -108,13 +109,13 @@ export async function compileTailwind(
         throw new Error(`@${kind} "${id}" isn't supported`);
       },
     });
-    if (unsupported.length > 0) return { problems: unsupported };
+    if (unsupported.length > 0) return { problems: unsupported, failure: "unsupported" };
     const found = candidates(snapshot);
     return { css: compiler.build([...found]), candidates: found.size };
   } catch (error) {
-    if (unsupported.length > 0) return { problems: unsupported };
+    if (unsupported.length > 0) return { problems: unsupported, failure: "unsupported" };
     const message = error instanceof Error ? error.message : String(error);
-    return { problems: [{ message: `Tailwind: ${message}`, file: path, line: null, column: null }] };
+    return { problems: [{ message: `Tailwind: ${message}`, file: path, line: null, column: null }], failure: "error" };
   }
 }
 
@@ -137,6 +138,11 @@ export function candidates(snapshot: Snapshot): Set<string> {
       // Such as `"p-4",` in an array, or `(p-4)` in a call.
       const trimmed = token.replace(/^[(,]+/, "").replace(/[),.:]+$/, "");
       if (trimmed.length > 0) found.add(trimmed);
+    }
+    // Arbitrary values with quotes inside, such as `bg-[url('/hero.svg')]`,
+    // which splitting on quotes breaks up.
+    for (const [bracketed] of text.matchAll(/[^\s"'`;{}<>]*\[[^\s\]]*["'][^\s\]]*\][^\s"'`;{}<>]*/g)) {
+      if (bracketed.length <= 200) found.add(bracketed);
     }
   }
   return found;

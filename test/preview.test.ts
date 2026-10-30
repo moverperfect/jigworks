@@ -427,11 +427,14 @@ describe("a Preview with a front end", () => {
   it("answers an unchanged asset with 304", async () => {
     const workspace = await frontEnd("Front End Cache");
     const first = await visit(workspace.id, "/styles.css");
-    const etag = first.headers.get("ETag");
-    expect(etag).toBeTruthy();
+    const etag = first.headers.get("ETag")!;
+    // An entity tag is quoted (RFC 9110), and a weak one matches too.
+    expect(etag).toMatch(/^"[^"]+"$/);
     expect(first.headers.get("Cache-Control")).toBe("no-cache");
-    const again = await visit(workspace.id, "/styles.css", { headers: { "If-None-Match": etag! } });
-    expect(again.status).toBe(304);
+    for (const sent of [etag, `W/${etag}`, `"other", ${etag}`]) {
+      expect((await visit(workspace.id, "/styles.css", { headers: { "If-None-Match": sent } })).status).toBe(304);
+    }
+    expect((await visit(workspace.id, "/styles.css", { headers: { "If-None-Match": '"other"' } })).status).toBe(200);
   });
 
   it("gives the Agent the front end too", async () => {

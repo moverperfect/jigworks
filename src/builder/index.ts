@@ -48,8 +48,11 @@ export interface BuildFailure {
   warnings: BuildProblem[];
   /** Packages the output still imports, which the bundler leaves in place without a word. Counted for the findings. */
   missingPackages: string[];
-  /** Whether the Tailwind step failed, counted for the findings. */
-  tailwindFailed?: true;
+  /**
+   * Why the Tailwind step failed, counted for the findings: something the
+   * platform's Tailwind doesn't support, or an error in the CSS.
+   */
+  tailwindFailure?: "unsupported" | "error";
 }
 
 export type BuildResult = Build | BuildFailure;
@@ -130,7 +133,7 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
         }
         const result = await compileTailwind(stylesheet, snapshot);
         if ("problems" in result) {
-          return { ok: false, hash, errors: result.problems, warnings: [], missingPackages: [], tailwindFailed: true };
+          return { ok: false, hash, errors: result.problems, warnings: [], missingPackages: [], tailwindFailure: result.failure };
         }
         compiled[outputPath(stylesheet)] = result.css;
         tailwindCandidates = result.candidates;
