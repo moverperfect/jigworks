@@ -30,6 +30,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - `npx wrangler secret put DEVELOPER_LIST`, with the whole list, because a secret can't be read back.
 
   Neither needs a deploy.
+- **After changing `ANTHROPIC_API_KEY`,** rerun the deploy job on `main` (or `npx wrangler deploy`). The Workspace's Durable Object reads it, and a Durable Object that's running keeps the version it started on, old secrets and all, until it restarts. On 2026-10-30, a Workspace in use kept a replaced key for over five minutes; the redeploy fixed it at once. The Developer list is read by the platform Worker, which takes the new version straight away.
 
 ## Live checks
 
