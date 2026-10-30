@@ -414,21 +414,33 @@ export class Workspace extends Think<Env, ConversationState> {
   async deployment(): Promise<Deployment> {
     const label = this.appLabel();
     const published = await this.env.APP_HOSTS.getByName(label).published();
-    return { url: `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`, publishedAt: null, hash: null, ...published };
+    return { url: this.deploymentUrl(label), publishedAt: null, hash: null, ...published };
   }
 
   /**
-   * Publishes the Build the Preview runs as the Deployment, replacing any
-   * Deployment there was. Null before the first successful Build.
+   * Publishes the Build the Preview runs as the Deployment, in place of the
+   * one whose Build is `replaces`, or none. Refused while a Turn runs, when the
+   * Agent may be changing the Preview.
    */
-  async publish(): Promise<Deployment | null> {
+  async publish(replaces: string | null): Promise<DeveloperChange<{ deployment: Deployment }>> {
+    if (this.state.turn) return busy;
     // As for the Preview, a successful Build from before the app host goes there first.
-    if (!(await this.preview()).ready) return null;
+    await this.preview();
     const label = this.appLabel();
-    const published = await this.env.APP_HOSTS.getByName(label).publish(this.name);
-    if (!published) return null;
-    console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: published.hash }));
-    return { url: `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`, ...published };
+    const result = await this.env.APP_HOSTS.getByName(label).publish(this.name, replaces);
+    if (!result.ok) {
+      const error =
+        result.reason === "changed"
+          ? "The Deployment changed since this page loaded. Look at it again before publishing."
+          : "There's no successful Build to publish yet.";
+      return { ok: false, error };
+    }
+    console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: result.published.hash }));
+    return { ok: true, deployment: { url: this.deploymentUrl(label), ...result.published } };
+  }
+
+  private deploymentUrl(label: string): string {
+    return `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`;
   }
 
   /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */

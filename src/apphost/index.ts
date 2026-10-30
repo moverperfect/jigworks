@@ -48,8 +48,8 @@ export function runnable(build: Build): RunnableBuild {
 /** A Build as the app host keeps it. Builds kept before ticket 09 have no assets. */
 type KeptBuild = Omit<RunnableBuild, keyof AppAssets> & Partial<AppAssets>;
 
-/** The Deployment: the Build it runs, and when the Developer published it. */
-export interface Published {
+/** The Deployment: the hash of the Build it runs, and when the Developer published it. */
+interface PublishedBuild {
   hash: string;
   /** ISO 8601. */
   publishedAt: string;
@@ -75,13 +75,17 @@ const signInSeconds = 60;
 const sessionSeconds = 8 * 60 * 60;
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const notReady = "The Preview starts after the Workspace's first successful Build.";
+const notPublished = "This app hasn't been published yet.";
+// The Deployment's copy of its Build, kept in build_chunks under this name
+// rather than its hash, so no later Build can change it.
+const deploymentCopy = "deployment";
 // How long the Agent's request to the Preview waits for its response, all of it.
 const previewWaitSeconds = 10;
 
 /**
  * One per app, named by its label (`<slug>-<random>`): the Workspace's
- * Preview and, from ticket 10, its Deployment (ADR 0009). It keeps the Build
- * each one runs, runs it on a Dynamic Worker, and keeps their logs.
+ * Preview and its Deployment (ADR 0009). It keeps the Build each one runs,
+ * runs it on a Dynamic Worker, and keeps their logs.
  *
  * Access lets Preview hostnames through (ADR 0013), so the app host is the
  * Preview's gate: it opens the Preview only with a session from one of its
@@ -89,7 +93,7 @@ const previewWaitSeconds = 10;
  * Developer. The platform Worker checks Access for the Deployment.
  */
 export class AppHost extends DurableObject<Env> {
-  // The Builds the Preview and the Deployment run, by hash, once read from storage.
+  // The Builds the Preview and the Deployment run, by their names in build_chunks, once read.
   private loaded = new Map<string, KeptBuild>();
   private tablesReady = false;
 
@@ -110,8 +114,7 @@ export class AppHost extends DurableObject<Env> {
     if (previous === build.hash) return { accepted: true };
     const text = JSON.stringify(build);
     this.ctx.storage.transactionSync(() => {
-      // The Deployment may still run it.
-      if (previous && previous !== this.published()?.hash) this.forget(previous);
+      if (previous) this.forget(previous);
       for (let part = 0; part * chunkCharacters < text.length; part++) {
         const body = text.slice(part * chunkCharacters, (part + 1) * chunkCharacters);
         this.sql().exec("INSERT OR REPLACE INTO build_chunks (hash, part, body) VALUES (?, ?, ?)", build.hash, part, body);
@@ -127,28 +130,37 @@ export class AppHost extends DurableObject<Env> {
   }
 
   /**
-   * Makes the Build the Preview runs the Deployment, until the Developer
-   * publishes again (ADR 0006). Null for another Workspace, or before the
-   * first successful Build.
+   * Copies the Build the Preview runs to the Deployment, until the Developer
+   * publishes again (ADR 0006). It replaces only the Deployment whose Build
+   * is `replaces`, or none, so a page that's out of date can't replace a
+   * Deployment its Developer hasn't seen.
    */
-  publish(workspaceId: string): Published | null {
+  publish(
+    workspaceId: string,
+    replaces: string | null,
+  ): { ok: true; published: PublishedBuild } | { ok: false; reason: "unbuilt" | "changed" } {
     const hash = this.previewHash();
-    if (this.workspaceId() !== workspaceId || !hash) return null;
-    const previous = this.published();
-    const published: Published = { hash, publishedAt: new Date().toISOString() };
+    if (this.workspaceId() !== workspaceId || !hash) return { ok: false, reason: "unbuilt" };
+    if ((this.published()?.hash ?? null) !== replaces) return { ok: false, reason: "changed" };
+    const published: PublishedBuild = { hash, publishedAt: new Date().toISOString() };
     this.ctx.storage.transactionSync(() => {
-      if (previous && previous.hash !== hash) this.forget(previous.hash);
+      this.forget(deploymentCopy);
+      this.sql().exec(
+        "INSERT INTO build_chunks (hash, part, body) SELECT ?, part, body FROM build_chunks WHERE hash = ?",
+        deploymentCopy,
+        hash,
+      );
       this.ctx.storage.kv.put("deployment", published);
     });
-    return published;
+    return { ok: true, published };
   }
 
   /** The Deployment, or null before the first publish. */
-  published(): Published | null {
-    return this.ctx.storage.kv.get<Published>("deployment") ?? null;
+  published(): PublishedBuild | null {
+    return this.ctx.storage.kv.get<PublishedBuild>("deployment") ?? null;
   }
 
-  /** Deletes the app with its Workspace (ADR 0009): its Builds, logs, sign-in links and sessions. */
+  /** Deletes the app with its Workspace (ADR 0009): its Preview and Deployment, their Builds and logs, sign-in links and sessions. */
   async remove(workspaceId: string): Promise<void> {
     if (this.workspaceId() !== workspaceId) return;
     await this.ctx.storage.deleteAll();
@@ -185,15 +197,12 @@ export class AppHost extends DurableObject<Env> {
     const slot = slotOf(url.hostname);
     if (this.workspaceId() === null) return new Response("There's no app here.", { status: 404 });
     // The platform Worker has checked Access for the Deployment.
-    if (slot === "deployment") {
-      if (!this.published()) return new Response("This app hasn't been published yet.", { status: 404 });
-      return fromAnotherApp(request, url) ?? this.serve(request, slot, false);
-    }
+    if (slot === "deployment") return refuseOtherApps(request, url) ?? this.serve(request, slot, false);
 
     if (url.pathname === signInPath) return this.signInWithLink(request, url);
     const session = this.sessionOf(request);
     if (!session) return this.signedOut(request, url);
-    return fromAnotherApp(request, url) ?? this.serve(request, slot, session.destination === "iframe");
+    return refuseOtherApps(request, url) ?? this.serve(request, slot, session.destination === "iframe");
   }
 
   /**
@@ -348,11 +357,11 @@ export class AppHost extends DurableObject<Env> {
   /** Runs the request through the slot's Build. `inFrame` says it came from the Preview pane's frame. */
   private async serve(request: Request, slot: Slot, inFrame: boolean): Promise<Response> {
     const { pathname } = new URL(request.url);
-    if (pathname === browserErrorsPath && slot === "preview") return this.receiveBrowserErrors(request, slot);
+    if (pathname === browserErrorsPath && slot === "preview") return this.receiveBrowserErrors(request);
     if (pathname.startsWith(reservedPaths)) return new Response("Not found.", { status: 404 });
-    const hash = slot === "preview" ? this.previewHash() : this.published()?.hash;
-    if (!hash) return new Response(notReady, { status: 503 });
-    const build = this.buildOf(hash);
+    const name = slot === "preview" ? this.previewHash() : this.published() && deploymentCopy;
+    if (!name) return slot === "preview" ? new Response(notReady, { status: 503 }) : new Response(notPublished, { status: 404 });
+    const build = this.buildOf(name);
     const asset = assetResponse(request, build);
     if (asset) return this.fromApp(asset, slot, inFrame);
 
@@ -377,23 +386,23 @@ export class AppHost extends DurableObject<Env> {
     return this.fromApp(response, slot, inFrame);
   }
 
-  private buildOf(hash: string): KeptBuild {
-    let build = this.loaded.get(hash);
+  /** The Build kept in build_chunks under `name`: the Preview's hash, or the Deployment's copy. */
+  private buildOf(name: string): KeptBuild {
+    let build = this.loaded.get(name);
     if (!build) {
-      const parts = this.sql().exec<{ body: string }>("SELECT body FROM build_chunks WHERE hash = ? ORDER BY part", hash).toArray();
+      const parts = this.sql().exec<{ body: string }>("SELECT body FROM build_chunks WHERE hash = ? ORDER BY part", name).toArray();
       build = JSON.parse(parts.map(({ body }) => body).join("")) as KeptBuild;
-      this.loaded.set(hash, build);
+      this.loaded.set(name, build);
     }
     return build;
   }
 
-  /** Deletes a Build that neither the Preview nor the Deployment runs any more. */
-  private forget(hash: string): void {
-    this.sql().exec("DELETE FROM build_chunks WHERE hash = ?", hash);
-    this.loaded.delete(hash);
+  private forget(name: string): void {
+    this.sql().exec("DELETE FROM build_chunks WHERE hash = ?", name);
+    this.loaded.delete(name);
   }
 
-  private async receiveBrowserErrors(request: Request, slot: Slot): Promise<Response> {
+  private async receiveBrowserErrors(request: Request): Promise<Response> {
     if (request.method !== "POST") return new Response(null, { status: 405 });
     const text = (await request.text()).slice(0, logLineLength * 2);
     let report: { kind?: unknown; message?: unknown };
@@ -402,7 +411,7 @@ export class AppHost extends DurableObject<Env> {
     } catch {
       return new Response(null, { status: 400 });
     }
-    this.log(slot, "browser", [{ level: String(report.kind ?? "error"), message: String(report.message ?? "") }]);
+    this.log("preview", "browser", [{ level: String(report.kind ?? "error"), message: String(report.message ?? "") }]);
     return new Response(null, { status: 204 });
   }
 
@@ -430,6 +439,11 @@ export class AppHost extends DurableObject<Env> {
     // A WebSocket's handshake keeps its socket, and the cookie rules above.
     if (response.webSocket) return new Response(null, { status: 101, webSocket: response.webSocket, headers });
     if (slot === "preview") headers.append("Content-Security-Policy", `frame-ancestors 'self' ${this.env.PLATFORM_ORIGIN}`);
+    // Other apps on the apps domain are the same site, so their frames get the
+    // Deployment's cookies. Unless the app says who may frame it, only its own pages may.
+    else if (!/frame-ancestors/i.test(headers.get("Content-Security-Policy") ?? "") && !headers.has("X-Frame-Options")) {
+      headers.append("Content-Security-Policy", "frame-ancestors 'self'");
+    }
     const result = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     // The error reports are for the Developer, so only the Preview carries them.
     if (slot !== "preview" || !headers.get("Content-Type")?.includes("text/html")) return result;
@@ -483,14 +497,16 @@ export function deploymentHost(label: string, appsDomain: string): string {
 /**
  * Refuses a request another app on the apps domain sent. Those apps are the
  * same site, so the browser sends cookies with their requests: only the app's
- * own pages may change things. A WebSocket's handshake is a GET, so it's held
- * to its Origin instead.
+ * own pages may change things. A browser that sends no `Sec-Fetch-Site` still
+ * sends `Origin` with a change. A WebSocket's handshake is a GET, so it's held
+ * to its Origin too.
  */
-function fromAnotherApp(request: Request, url: URL): Response | null {
+function refuseOtherApps(request: Request, url: URL): Response | null {
   const site = request.headers.get("Sec-Fetch-Site");
-  const crossOrigin = site === "same-site" || site === "cross-site";
+  const origin = request.headers.get("Origin");
+  const crossOrigin = site ? site === "same-site" || site === "cross-site" : origin !== null && origin !== url.origin;
   const isUpgrade = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
-  if ((unsafeMethods.has(request.method) && crossOrigin) || (isUpgrade && request.headers.get("Origin") !== url.origin)) {
+  if ((unsafeMethods.has(request.method) && crossOrigin) || (isUpgrade && origin !== url.origin)) {
     return new Response("Requests that change things must come from the app's own pages.", { status: 403 });
   }
   return null;

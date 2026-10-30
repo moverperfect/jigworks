@@ -11,6 +11,7 @@ import {
 } from "react";
 import { isSummary, maxRetries, type LastTurn } from "../../src/shared/conversation.ts";
 import { startFresh, startTurn, toApiError, type ApiError } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ErrorMessage } from "./ErrorMessage";
 import type { Conversation, ConversationMessage } from "./useConversation";
 
@@ -147,10 +148,15 @@ export function ConversationPanel({
       </form>
 
       {confirming && (
-        <StartFreshDialog
+        <ConfirmDialog
+          title="Start fresh?"
+          confirm="Start fresh"
           onClose={() => setConfirming(false)}
           onConfirm={() => void post(() => startFresh(id))}
-        />
+        >
+          The Agent summarises everything after your first message, then carries on from the summary. The messages it
+          summarises won't be shown any more.
+        </ConfirmDialog>
       )}
     </section>
   );
@@ -354,48 +360,6 @@ function formatElapsed(ms: number): string {
   // The platform's clock and this one can disagree a little.
   const seconds = Math.max(0, Math.round(ms / 1000));
   return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
-}
-
-function StartFreshDialog({ onClose, onConfirm }: { onClose(): void; onConfirm(): void }) {
-  const id = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    // StrictMode runs this twice in development, so don't open it twice.
-    if (dialog.current && !dialog.current.open) dialog.current.showModal();
-  }, []);
-
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    dialog.current?.close();
-    onConfirm();
-  }
-
-  return (
-    <dialog
-      ref={dialog}
-      className="dialog"
-      aria-labelledby={`${id}-title`}
-      aria-describedby={`${id}-description`}
-      onClose={onClose}
-    >
-      <form className="form" onSubmit={submit}>
-        <h2 id={`${id}-title`}>Start fresh?</h2>
-        <p id={`${id}-description`}>
-          The Agent summarises everything after your first message, then carries on from the summary. The messages it
-          summarises won't be shown any more.
-        </p>
-        <div className="dialog-actions">
-          <button type="button" className="button" onClick={() => dialog.current?.close()}>
-            Cancel
-          </button>
-          <button type="submit" className="button button-primary">
-            Start fresh
-          </button>
-        </div>
-      </form>
-    </dialog>
-  );
 }
 
 function plural(count: number, noun: string, plural = `${noun}s`): string {

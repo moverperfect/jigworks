@@ -1,34 +1,49 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useState } from "react";
 import { getDeployment, publish, toApiError, type ApiError, type Deployment } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ErrorMessage } from "./ErrorMessage";
 import { useLoad } from "./hooks";
 import { formatTime } from "./ProblemsPanel";
 
 /**
  * The Workspace's Deployment in the page's header: when it was published,
- * a link to it, and Publish, which makes the Build the Preview runs the
+ * a link to it, and Publish, which copies the Build the Preview runs to the
  * Deployment. Replacing a Deployment asks first, as there's no going back.
  */
 export function PublishControl({ id }: { id: string }) {
   const loaded = useLoad(() => getDeployment(id));
-  const [publishing, setPublishing] = useState(false);
-  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // The Deployment the Developer is asked about replacing.
+  const [replacing, setReplacing] = useState<Deployment | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const deployment = loaded.state.status === "ready" ? loaded.state.data : null;
 
-  async function publishNow() {
-    setConfirming(false);
-    setPublishing(true);
+  async function attempt(work: () => Promise<void>) {
+    setBusy(true);
     setError(null);
     try {
-      const published = await publish(id);
-      loaded.update(() => published);
+      await work();
     } catch (caught) {
       setError(toApiError(caught));
+      loaded.reload();
     } finally {
-      setPublishing(false);
+      setBusy(false);
     }
   }
+
+  const publishOver = async (replaces: string | null) => {
+    const published = await publish(id, replaces);
+    loaded.update(() => published);
+  };
+
+  // Looks again first, as another tab may have published since this page loaded.
+  const start = () =>
+    attempt(async () => {
+      const current = await getDeployment(id);
+      loaded.update(() => current);
+      if (current.hash) setReplacing(current);
+      else await publishOver(null);
+    });
 
   return (
     <div className="publish">
@@ -40,60 +55,22 @@ export function PublishControl({ id }: { id: string }) {
           </a>
         </span>
       )}
-      <button
-        type="button"
-        className="button button-small"
-        disabled={!deployment || publishing}
-        onClick={() => (deployment?.publishedAt ? setConfirming(true) : void publishNow())}
-      >
-        {publishing ? "Publishing…" : "Publish"}
+      <button type="button" className="button button-small" disabled={!deployment || busy} onClick={() => void start()}>
+        {busy ? "Publishing…" : "Publish"}
       </button>
       {loaded.state.status === "failed" && <ErrorMessage error={loaded.state.error} retry={loaded.retry} />}
       {error && <ErrorMessage error={error} />}
-      {confirming && deployment && (
-        <ReplaceDialog deployment={deployment} onConfirm={() => void publishNow()} onClose={() => setConfirming(false)} />
+      {replacing && (
+        <ConfirmDialog
+          title="Replace the Deployment?"
+          confirm="Publish"
+          onClose={() => setReplacing(null)}
+          onConfirm={() => void attempt(() => publishOver(replacing.hash))}
+        >
+          Everyone who opens {new URL(replacing.url).hostname} gets the Build the Preview runs now, in place of the one
+          published {formatTime(replacing.publishedAt!)}. There's no going back to it.
+        </ConfirmDialog>
       )}
     </div>
-  );
-}
-
-function ReplaceDialog({ deployment, onConfirm, onClose }: { deployment: Deployment; onConfirm(): void; onClose(): void }) {
-  const id = useId();
-  const dialog = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    // StrictMode runs this twice in development, so don't open it twice.
-    if (dialog.current && !dialog.current.open) dialog.current.showModal();
-  }, []);
-
-  return (
-    <dialog
-      ref={dialog}
-      className="dialog"
-      aria-labelledby={`${id}-title`}
-      aria-describedby={`${id}-description`}
-      onClose={onClose}
-    >
-      <h2 id={`${id}-title`}>Replace the Deployment?</h2>
-      <p id={`${id}-description`}>
-        Everyone who opens {new URL(deployment.url).hostname} gets the Build the Preview runs now, in place of the one
-        published {formatTime(deployment.publishedAt!)}. There's no going back to it.
-      </p>
-      <div className="dialog-actions">
-        <button type="button" className="button" onClick={() => dialog.current?.close()}>
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="button button-primary"
-          onClick={() => {
-            dialog.current?.close();
-            onConfirm();
-          }}
-        >
-          Publish
-        </button>
-      </div>
-    </dialog>
   );
 }

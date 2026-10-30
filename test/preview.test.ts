@@ -1,7 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { browserErrorsPath, labelOf, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
+import { browserErrorsPath, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
 import type { BuildReport } from "../src/shared/build-report";
 import { accessToken, testAccess } from "./helpers/access";
 import { call, create } from "./helpers/api";
@@ -483,6 +483,9 @@ describe("signing in to the Preview", () => {
     await build(workspace.id);
     const response = await visit(workspace.id, "/", { method: "POST", headers: { "Sec-Fetch-Site": "same-site" } });
     expect(response.status).toBe(403);
+    // A browser that sends no Sec-Fetch-Site still sends Origin.
+    const sibling = `https://sibling-k3x9p2qa.${testAccess.appsDomain}`;
+    expect((await visit(workspace.id, "/", { method: "POST", headers: { Origin: sibling } })).status).toBe(403);
   });
 });
 

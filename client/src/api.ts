@@ -170,9 +170,13 @@ export async function getDeployment(id: string): Promise<Deployment> {
   return request("GET", `${workspaceApiPath(id)}/deployment`);
 }
 
-/** Publishes the Build the Preview runs as the Deployment. Fails with status 409 before the first successful Build. */
-export async function publish(id: string): Promise<Deployment> {
-  return request("POST", `${workspaceApiPath(id)}/deployment`);
+/**
+ * Publishes the Build the Preview runs as the Deployment, in place of the one
+ * whose Build is `replaces`, or none. Fails with status 409 if the Deployment
+ * has changed since, during a Turn, or before the first successful Build.
+ */
+export async function publish(id: string, replaces: string | null): Promise<Deployment> {
+  return request("POST", `${workspaceApiPath(id)}/deployment`, { replaces });
 }
 
 /** The Preview's newest 100 log lines, oldest first. */

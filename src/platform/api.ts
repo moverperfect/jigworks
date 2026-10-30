@@ -171,11 +171,14 @@ api.get("/workspaces/:id/deployment", async (c) => {
   return record ? c.json(await workspace(c, record.id).deployment()) : noSuchWorkspace(c);
 });
 
+// Publishes in place of the Deployment whose Build is `replaces`, or none: the one the page shows.
 api.post("/workspaces/:id/deployment", async (c) => {
   const record = await ownWorkspace(c);
   if (!record) return noSuchWorkspace(c);
-  const deployment = await workspace(c, record.id).publish();
-  return deployment ? c.json(deployment) : c.json({ error: "There's no successful Build to publish yet." }, 409);
+  const body = await c.req.json<{ replaces?: unknown }>().catch(() => null);
+  const replaces = typeof body?.replaces === "string" ? body.replaces : null;
+  const result = await workspace(c, record.id).publish(replaces);
+  return result.ok ? c.json(result.deployment) : c.json({ error: result.error }, 409);
 });
 
 // A sign-in link for the Preview pane's frame. A tab signs in through `/preview-sign-in`.
