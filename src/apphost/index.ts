@@ -1,20 +1,11 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
+import type { AppLogEntry, Slot } from "../shared/app-logs";
 
-/** Which of an app's two faces a request is for: the Preview, or the Deployment (ticket 10). */
-export type Slot = "preview" | "deployment";
+export type { AppLogEntry, Slot };
 
 /** Where a Preview sign-in link opens: the Preview pane's frame, or a tab of its own. */
 export type SignInDestination = "iframe" | "document";
-
-/** One line in an app's logs: from its Worker, or from a browser running its pages. */
-export interface AppLogEntry {
-  at: string;
-  slot: Slot;
-  source: "server" | "browser";
-  level: string;
-  message: string;
-}
 
 /** A request the Agent sends the Preview, and what came back. */
 export interface PreviewExchange {

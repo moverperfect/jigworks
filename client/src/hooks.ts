@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ApiError, toApiError } from "./api";
 
 export type LoadState<T> = { status: "loading" } | { status: "failed"; error: ApiError } | { status: "ready"; data: T };
@@ -37,6 +37,16 @@ export function useLoad<T>(load: () => Promise<T>): Loader<T> {
     reload: () => setAttempt(({ count }) => ({ count: count + 1, quietly: true })),
     update: (change) => setState((s) => (s.status === "ready" ? { status: "ready", data: change(s.data) } : s)),
   };
+}
+
+const onVisibilityChange = (changed: () => void) => {
+  document.addEventListener("visibilitychange", changed);
+  return () => document.removeEventListener("visibilitychange", changed);
+};
+
+/** Whether the page is showing, rather than in a background tab or a minimised window. */
+export function usePageVisible(): boolean {
+  return useSyncExternalStore(onVisibilityChange, () => document.visibilityState === "visible");
 }
 
 export function useTitle(title: string | undefined): void {

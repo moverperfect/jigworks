@@ -1,4 +1,5 @@
 import type { BuildReport } from "../../src/shared/build-report.ts";
+import type { AppLogEntry } from "../../src/shared/app-logs.ts";
 import type { CheckReport } from "../../src/shared/check-report.ts";
 
 export interface Template {
@@ -143,6 +144,33 @@ export async function runBuild(id: string): Promise<BuildReport> {
 /** The latest Build's report, or null if no Build has run yet. */
 export async function getLatestBuild(id: string): Promise<BuildReport | null> {
   return request("GET", `${workspaceApiPath(id)}/build`);
+}
+
+/** Where the Preview answers, and whether it has a Build to run yet. Until then it answers 503. */
+export async function getPreview(id: string): Promise<{ url: string; ready: boolean }> {
+  return request("GET", `${workspaceApiPath(id)}/preview`);
+}
+
+/** A single-use link, good for 60 seconds, that signs the Preview pane's frame in and then shows `to`. */
+export async function previewFrameLink(id: string, to: string): Promise<string> {
+  const { url } = await request<{ url: string }>("POST", `${workspaceApiPath(id)}/preview/sign-in`, {
+    destination: "iframe",
+    to,
+  });
+  return url;
+}
+
+/** The platform page that signs the Developer in to the Preview in a tab of its own, then shows `to`. */
+export function previewTabUrl(host: string, to: string): string {
+  return `/preview-sign-in?host=${encodeURIComponent(host)}&to=${encodeURIComponent(to)}`;
+}
+
+export type { AppLogEntry };
+
+/** The Preview's newest 100 log lines, oldest first. */
+export async function getPreviewLogs(id: string): Promise<AppLogEntry[]> {
+  const { logs } = await request<{ logs: AppLogEntry[] }>("GET", `${workspaceApiPath(id)}/preview/logs`);
+  return logs;
 }
 
 /** The Conversation socket's path, for `useAgent`'s `basePath`, which takes it without the leading slash. */
