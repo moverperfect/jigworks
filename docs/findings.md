@@ -367,8 +367,8 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - The CSS was 7.2 KB, and React's production script 224 KB.
 - **Tailwind's cost:**
   - The Workspace's CPU over the three Tailwind Builds and their cached follow-ups was 1,453 ms, against 1,444 ms for the same with plain CSS. The trace doesn't split one Build's CPU finely enough to see Tailwind's share, so it's too small to matter beside esbuild bundling React.
-  - The scanner gave Tailwind 229 to 392 possible class names, against about 30 classes the page uses. Tailwind skips the rest.
-- **The isolate:** one isolate ran every Check, every Build and the Turn. esbuild's memory grew from 25.2 MB to 32.5 MB over 9 Builds, then held.
+  - The scanner gave Tailwind 229 possible class names for the Template, against the 23 classes its page uses, and 392 after the Turn. Tailwind skips the ones it doesn't know.
+- **The isolate:** one isolate ran every Check, every Build and the Turn. esbuild's memory grew from 25.2 MB to 32.5 MB over 10 Builds, then held.
 
 **The Turn:** "Add a dark mode toggle: a button at the top right of the page that switches between light and dark colours using Tailwind's dark: variant, and remembers the choice in localStorage", against a budget of $1.
 
@@ -379,7 +379,7 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 - **What the Agent did:**
   - It added `@custom-variant dark (&:where(.dark, .dark *));` to `src/styles.css`, Tailwind 4's way to switch dark mode with a class.
   - It added a `ThemeToggle` component, and a script in `index.html` that sets the class before the page paints.
-  - It ran `check` and `build` itself (the Build took 929 ms of CPU), and the Turn ended with a clean Check and a cached Build.
+  - It ran `check` and `build` itself, and the Turn ended with a clean Check and a cached Build.
 - **In the Preview:** the toggle sat fixed at the top right. Clicking it turned the body slate-900 and the heading slate-100, and the choice survived a reload. No server logs or front-end errors were recorded.
 
 ### Found along the way
