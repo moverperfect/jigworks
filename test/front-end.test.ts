@@ -1,5 +1,9 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { build, type Build, type BuildFailure } from "../src/builder";
+import type { BuildReport } from "../src/shared/build-report";
+import type { CheckReport } from "../src/workspace";
+import { call, create } from "./helpers/api";
 
 // Builds with a front end: index.html names the scripts and stylesheets the
 // Build bundles, and a stylesheet that imports tailwindcss goes through the
@@ -142,5 +146,31 @@ describe("a Build with a front end", () => {
     expect(result.errors).toEqual([
       expect.objectContaining({ file: "index.html", message: expect.stringContaining("/src/client/missing.tsx") }),
     ]);
+  });
+});
+
+describe("the Worker + React Template", () => {
+  it("makes a Workspace with a clean Check that builds and shows a styled page in the Preview", async () => {
+    const workspace = await create("React Notes", undefined, "worker-react");
+    const check = await (await call(`/api/workspaces/${workspace.id}/check`, { method: "POST" })).json<CheckReport>();
+    expect(check.problems).toEqual([]);
+    expect(check.projects).toEqual(["tsconfig.server.json", "tsconfig.client.json"]);
+    const report = await (await call(`/api/workspaces/${workspace.id}/build`, { method: "POST" })).json<BuildReport>();
+    expect(report).toMatchObject({ ok: true, errors: [] });
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const page = await preview.requestPreview({ method: "GET", path: "/" });
+    expect(page.body).toContain('<link rel="stylesheet" href="/styles.css" />');
+    expect(page.body).toContain('<script type="module" src="/client/main.js"></script>');
+    const styles = await preview.requestPreview({ method: "GET", path: "/styles.css" });
+    expect(styles.truncated).toBe(false);
+    for (const rule of [".bg-slate-50", ".bg-sky-600", ".hover\\:bg-sky-700", ".text-4xl", ".min-h-screen"]) {
+      expect(styles.body).toContain(rule);
+    }
+    const script = await preview.requestPreview({ method: "GET", path: "/client/main.js" });
+    expect(script.body).toContain("Your app");
+    const api = await preview.requestPreview({ method: "GET", path: "/api/hello/React" });
+    expect(JSON.parse(api.body)).toEqual({ message: "Hello, React" });
+    expect((await preview.requestPreview({ method: "GET", path: "/favicon.svg" })).body).toContain("<svg");
   });
 });

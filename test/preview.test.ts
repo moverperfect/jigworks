@@ -369,6 +369,78 @@ describe("the Preview", () => {
   });
 });
 
+describe("a Preview with a front end", () => {
+  /** A Workspace with a front end, as the Worker + React Template has, and a successful Build. */
+  const frontEnd = async (name: string) => {
+    const workspace = await create(name);
+    await save(
+      workspace.id,
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        assets: { not_found_handling: "single-page-application", run_worker_first: ["/api/*"] },
+        vars: { GREETING: "Hello" },
+      }),
+    );
+    await save(
+      workspace.id,
+      "index.html",
+      '<!doctype html><html><head><link rel="stylesheet" href="/src/styles.css"></head><body><script type="module" src="/src/client/main.ts"></script></body></html>',
+    );
+    await save(workspace.id, "src/styles.css", '@import "tailwindcss";\n');
+    await save(workspace.id, "src/client/main.ts", 'document.body.className = "bg-sky-500";\n');
+    await save(workspace.id, "public/robots.txt", "User-agent: *\n");
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    return workspace;
+  };
+  const navigate = { headers: { "Sec-Fetch-Mode": "navigate" } };
+
+  it("serves the Build's assets before the Worker, and index.html for pages it has no asset for", async () => {
+    const workspace = await frontEnd("Front End Assets");
+    const page = await visit(workspace.id, "/", navigate);
+    expect(page.headers.get("Content-Type")).toContain("text/html");
+    const html = await page.text();
+    expect(html).toContain('href="/styles.css"');
+    expect(html).toContain(browserErrorsPath);
+
+    const css = await visit(workspace.id, "/styles.css");
+    expect(css.headers.get("Content-Type")).toContain("text/css");
+    expect(await css.text()).toContain(".bg-sky-500");
+    expect(await (await visit(workspace.id, "/client/main.js")).text()).toContain("bg-sky-500");
+    expect(await (await visit(workspace.id, "/robots.txt")).text()).toBe("User-agent: *\n");
+
+    // A page the front end routes itself.
+    expect(await (await visit(workspace.id, "/notes/42", navigate)).text()).toContain('href="/styles.css"');
+    // Anything else goes to the Worker.
+    expect(await (await visit(workspace.id, "/api/hello/Front")).json()).toEqual({ message: "Hello, Front" });
+    expect((await visit(workspace.id, "/missing.js")).status).toBe(404);
+  });
+
+  it("sends the paths run_worker_first lists to the Worker, even for a page navigation", async () => {
+    const workspace = await frontEnd("Front End Worker First");
+    const response = await visit(workspace.id, "/api/hello/Tab", navigate);
+    expect(await response.json()).toEqual({ message: "Hello, Tab" });
+  });
+
+  it("answers an unchanged asset with 304", async () => {
+    const workspace = await frontEnd("Front End Cache");
+    const first = await visit(workspace.id, "/styles.css");
+    const etag = first.headers.get("ETag");
+    expect(etag).toBeTruthy();
+    expect(first.headers.get("Cache-Control")).toBe("no-cache");
+    const again = await visit(workspace.id, "/styles.css", { headers: { "If-None-Match": etag! } });
+    expect(again.status).toBe(304);
+  });
+
+  it("gives the Agent the front end too", async () => {
+    const workspace = await frontEnd("Front End Agent");
+    const response = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/styles.css" });
+    expect(response).toMatchObject({ status: 200, body: expect.stringContaining(".bg-sky-500") });
+  });
+});
+
 describe("signing in to the Preview", () => {
   it("lets the pane in with a link that works once, then only with the session it gives", async () => {
     const workspace = await create("Sign In Pane");

@@ -1,0 +1,1 @@
+{ "name": "Worker + React", "description": "A Cloudflare Worker using Hono, with a React front end styled with Tailwind." }

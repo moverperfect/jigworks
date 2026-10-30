@@ -1,5 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
+import { assetResponse, type AppAssets } from "./assets";
 import type { AppLogEntry, Slot } from "../shared/app-logs";
 
 export type { AppLogEntry, Slot };
@@ -24,8 +25,12 @@ export interface PreviewExchange {
   truncated: boolean;
 }
 
-/** The part of a Build that runs, as the app host keeps it. Assets come with ticket 09. */
-type RunnableBuild = Pick<Build, "hash" | "mainModule" | "modules" | "compatibilityDate" | "compatibilityFlags" | "vars">;
+/**
+ * The part of a Build that runs, as the app host keeps it. Builds kept before
+ * ticket 09 have no assets.
+ */
+type RunnableBuild = Pick<Build, "hash" | "mainModule" | "modules" | "compatibilityDate" | "compatibilityFlags" | "vars"> &
+  Partial<AppAssets>;
 
 // Limits on app code, so a runaway app can't burn through the account's
 // quota. Outbound requests are otherwise unrestricted (ticket 08).
@@ -305,6 +310,8 @@ export class AppHost extends DurableObject<Env> {
     if (pathname.startsWith(reservedPaths)) return new Response("Not found.", { status: 404 });
     const build = this.previewBuild();
     if (!build) return new Response(notReady, { status: 503 });
+    const asset = assetResponse(request, build);
+    if (asset) return this.fromApp(asset, slot, inFrame);
 
     const label = this.ctx.storage.kv.get<string>("label")!;
     const worker = this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({

@@ -1,0 +1,16 @@
+{
+  "name": "app",
+  "main": "src/server/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  // The platform serves index.html, public/ and the front end's bundles
+  // before the Worker. /api/* always goes to the Worker, and other page
+  // navigations get index.html, so the front end can route them.
+  "assets": {
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "vars": {
+    "GREETING": "Hello"
+  }
+}
