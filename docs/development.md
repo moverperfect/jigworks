@@ -46,7 +46,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
 - **Workers Logs:** the API refuses wrangler's OAuth token (403), so use the tail.
 - **Browser (T3 preview tools):**
   - `preview_evaluate` gives up after about 15 s, so poll long waits in steps.
-  - `preview_snapshot` and `preview_type` time out on the Workspace page. Use `preview_evaluate` instead: `document.execCommand('insertText', ...)` in the textarea, then click "Send".
+  - `preview_type` times out on the Workspace page, so use `preview_evaluate`: `document.execCommand('insertText', ...)` in the textarea, then click "Send". `preview_snapshot` used to time out there too, but it worked for #44's live check on 2026-10-30.
   - Access sign-in expires overnight. Ask Jack to sign in, rather than signing in yourself.
 
 ## Learned the hard way

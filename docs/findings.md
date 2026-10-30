@@ -466,3 +466,29 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 ### Found along the way
 
 - **The trace can't show an instance's CPU.** `AppData` showed 0 ms on each of its 9 events, and the one app host `callFacet` event 2 ms. The app's own events go to its tail, which keeps only their logs.
+
+## The Conversation panel
+
+### Markdown replies (#44)
+
+- **Platform:** the deployed platform, checked on 2026-10-30 after #44's deploy, from the Developer's signed-in browser (Chrome) in the UK. The window was 1280 × 800, so the Conversation panel was 384 px wide.
+- **The page:** the Workspace page's script was #46's build: 949,156 bytes, and 315,634 bytes compressed in transfer. Built from `main` before #46, it was 943,299 bytes.
+- **Workspace:** a fresh one from the Worker Template. Three Turns on the real model asked for replies and changed no files.
+- **Watching:** the page recorded every change to the Conversation's list, any call to `alert`, `confirm` or `prompt`, and any request to `example.com`.
+- **A reply with every element:**
+  - Headings 1 to 6 became `<h3>` to `<h6>`, with levels 4 to 6 all `<h6>`.
+  - Nested lists, a list numbered from 3, a ticked and an unticked task box (both disabled), a block quote, a rule, emphasis, strikethrough, inline code, a link and a bare URL all rendered. Both links had `target="_blank"` and `rel="noopener noreferrer"`.
+  - A 12-column table scrolled inside its wrapper, showing 359 of its 518 px. A 364-character line of code scrolled inside its block, showing 357 of 2,824 px. The list stayed 383 px wide, with nothing to scroll sideways.
+  - In the dark theme, code took the dark background (`#161615`) and border (`#393936`), and the text the dark text colour.
+  - The accessibility tree read "The Agent:", then the headings, lists, task boxes, quote, rule, a table with column headers, and the code, in order.
+- **A reply streaming 80 lines of code:**
+  - It rendered 91 times in 6.7 s, about once every 50 ms.
+  - The code block was a code block from the first render after its opening fence, 1.9 s in. Its fence never showed as text.
+  - The block never got shorter. It stayed 1,553.6 px tall as its closing fence and the reply's last sentence arrived.
+  - The list kept following the reply: on every render it was at most 1 px from the bottom.
+- **A reply with raw HTML and unsafe links,** which the Agent repeated exactly from the Developer's message:
+  - `<script>alert(1)</script>`, `<img src=x onerror=alert(1)>` and `<!-- a comment -->` showed as text.
+  - `![alt](https://example.com/a.png)` became a link labelled "alt".
+  - `javascript:`, `JAVASCRIPT:`, `data:` and relative links, and `<javascript:alert(1)>`, showed as their text. `HTTPS://example.com` and `mailto:` became links.
+  - Nothing called `alert`, the page had no `<img>`, and no request went to `example.com`.
+- **Unchanged:** the Developer's messages stayed plain text, as typed.
