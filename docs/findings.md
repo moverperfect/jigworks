@@ -183,9 +183,10 @@ The isolate ID showed when Cloudflare replaced the probe's isolate:
 
 ## Stage 4: Builds and the Preview
 
-**Verdict: yes, in Chrome.** Builds fit, and the Preview works on the deployed platform, in the pane and in a tab, and for the Agent (below, "Stage 4, continued"). Firefox and WebKit are still to check. **Builds:**
+**Verdict: yes, for both Templates, in Chrome.** Builds fit, and the Preview works on the deployed platform, in the pane and in a tab, and for the Agent (below, "Stage 4, continued"). The Worker + React Template builds a React page styled with Tailwind, and Tailwind's step costs too little to measure apart from the bundling (below, "Stage 4, continued: the Worker + React Template"). Firefox and WebKit are still to check. **Builds:**
 - A Worker Template Build takes 108–138 ms of CPU once warm.
 - One that bundles zod takes about 1 s.
+- A Worker + React Template Build takes 700–900 ms from the browser once warm, with or without Tailwind.
 - The Workspace's Durable Object kept its isolate through Builds, Checks and Turns, with esbuild's memory at up to 46.7 MB beside the Agent.
 
 ### How Builds were measured
@@ -241,7 +242,7 @@ The isolate ID showed when Cloudflare replaced the probe's isolate:
   - It gives each Build the Workspace runs itself (for a Turn or the Agent) a trace of its own.
   - The caller's clock barely moves across the call: 156 ms for a Build the trace put at 1,036 ms.
   - The work after the call runs inside it, so the Agent's Build event also counts the Turn's work that followed: 1.8 s of wall time for a cached Build.
-- **Room left:** 2.2 MB of the 10 MB compressed limit for Tailwind (ticket 09) and the test runner (ticket 13).
+- **Room left:** 2.2 MB of the 10 MB compressed limit for Tailwind (ticket 09) and the test runner (ticket 13). After ticket 09 it's still about 2.2 MiB (below).
 
 ## A second Installation
 
@@ -339,3 +340,53 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - It was replaced with `wrangler secret put`, but the next two Turns failed the same way. The Workspace's Durable Object went on running the version from before the change, with the old key, for nearly five minutes, until a redeploy.
   - Its log lines name one isolate from 18:46 to 18:54, so it never restarted. The platform Worker's first request after the change, 17 s later, already ran the new version.
   - `docs/development.md` now says to redeploy after changing the key.
+
+## Stage 4, continued: the Worker + React Template
+
+**A Workspace made from the Worker + React Template, with the real React 19.3.1 and its types from npm, had a clean Check, built, and showed a styled React page in the Preview.** The Agent styled it further with Tailwind 4's CSS-first setup, which the platform compiled.
+
+- **Platform:** the deployed platform, measured on 2026-10-30 after ticket 09's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:**
+  - **Browser:** each API call's round trip, timed in the page.
+  - **Request:** the platform Worker's time for the request, from Cloudflare's trace.
+  - **CPU:** the Workspace's, from the trace.
+- **Memory:** esbuild's linear memory, from the Workspace's own tracker.
+- **Workspace:** a fresh one from the Worker + React Template.
+
+| Step | Browser | Request | Workspace CPU | esbuild memory |
+| --- | ---: | ---: | ---: | ---: |
+| Create the Workspace, 7 Packages installed from npm | 2.8 s | | | |
+| First Check, both tsconfig projects | 1.0 s | 974 ms | 37 ms | |
+| First Build in a fresh isolate | 2.9 s | 2,817 ms | 1,756 ms | 25.2 MB |
+| Warm Build after an edit, Tailwind (3) | 732–930 ms | 696–891 ms | | 28.3–32.5 MB |
+| Warm Build after an edit, plain CSS (3) | 728–895 ms | 660–849 ms | | 32.5 MB |
+
+- **The page:**
+  - React rendered, asked the Worker for "Hello, React", and counted clicks.
+  - Every class applied as Tailwind defines it. The heading was 36px, bold and slate-900; the button sky-600, with an 8px radius; the column a flex box 576px wide; and the body slate-50, with Tailwind's reset.
+  - The CSS was 7.2 KB, and React's production script 224 KB.
+- **Tailwind's cost:**
+  - The Workspace's CPU over the three Tailwind Builds and their cached follow-ups was 1,453 ms, against 1,444 ms for the same with plain CSS. The trace doesn't split one Build's CPU finely enough to see Tailwind's share, so it's too small to matter beside esbuild bundling React.
+  - The scanner gave Tailwind 229 to 392 possible class names, against about 30 classes the page uses. Tailwind skips the rest.
+- **The isolate:** one isolate ran every Check, every Build and the Turn. esbuild's memory grew from 25.2 MB to 32.5 MB over 9 Builds, then held.
+
+**The Turn:** "Add a dark mode toggle: a button at the top right of the page that switches between light and dark colours using Tailwind's dark: variant, and remembers the choice in localStorage", against a budget of $1.
+
+| Turn log | Steps | Retries | Input tokens (cache read / written) | Output | Cost |
+| ---: | ---: | ---: | --- | ---: | ---: |
+| 27.5 s | 7 | 0 | 66.7K (50.1K / 16.5K) | 2.7K | $0.15 |
+
+- **What the Agent did:**
+  - It added `@custom-variant dark (&:where(.dark, .dark *));` to `src/styles.css`, Tailwind 4's way to switch dark mode with a class.
+  - It added a `ThemeToggle` component, and a script in `index.html` that sets the class before the page paints.
+  - It ran `check` and `build` itself (the Build took 929 ms of CPU), and the Turn ended with a clean Check and a cached Build.
+- **In the Preview:** the toggle sat fixed at the top right. Clicking it turned the body slate-900 and the heading slate-100, and the choice survived a reload. No server logs or front-end errors were recorded.
+
+### Found along the way
+
+- **Size:** with Tailwind and the second Template, the Worker is 7,941 KiB compressed, 107 KiB more than before.
+  - The Templates' 623 KB of Workers runtime types are now packed once, which saved 112 KiB.
+  - Ticket 13 has about 2.2 MiB of the 10 MiB limit.
+- **Not covered here:**
+  - Firefox and WebKit;
+  - binary files in `public/`, which a Build serves as text (ADR 0014, #31).
