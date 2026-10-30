@@ -358,6 +358,9 @@ describe("the Preview", () => {
       compatibilityDate: "2026-10-01",
       compatibilityFlags: [],
       vars: {},
+      assets: {},
+      assetManifest: {},
+      assetSettings: { notFoundHandling: "none", runWorkerFirst: false },
     });
     expect(someoneElse.accepted).toBe(true);
 
@@ -366,6 +369,26 @@ describe("the Preview", () => {
     expect(label).not.toBe(given);
     expect(label).toMatch(/^preview-labels-[a-z0-9]{8}$/);
     expect(await (await visit(workspace.id)).text()).toBe("Hello from your Worker");
+  });
+});
+
+describe("a Preview with a front end", () => {
+  it("serves the Build's assets before the Worker, with the Preview's own headers", async () => {
+    const workspace = await create("Front End", undefined, "worker-react");
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    const navigate = { headers: { "Sec-Fetch-Mode": "navigate" } };
+    const page = await visit(workspace.id, "/", navigate);
+    expect(page.headers.get("Content-Type")).toContain("text/html");
+    expect(page.headers.get("Content-Security-Policy")).toBe(`frame-ancestors 'self' ${testAccess.origin}`);
+    const html = await page.text();
+    expect(html).toContain('href="/styles.css"');
+    expect(html).toContain(browserErrorsPath);
+    expect((await visit(workspace.id, "/styles.css")).headers.get("Content-Type")).toContain("text/css");
+
+    // A page the front end routes itself; the Worker's API, even for a page navigation; and the Worker's own 404.
+    expect(await (await visit(workspace.id, "/notes/42", navigate)).text()).toContain('href="/styles.css"');
+    expect(await (await visit(workspace.id, "/api/hello/Tab", navigate)).json()).toEqual({ message: "Hello, Tab" });
+    expect((await visit(workspace.id, "/missing.js")).status).toBe(404);
   });
 });
 

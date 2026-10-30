@@ -21,7 +21,7 @@ A browser-based platform where a Developer and the Agent build and host Cloudfla
 
 ## Development
 
-Read `docs/development.md` before running, testing or deploying the platform, before a live check, and before upgrading Think, the Agents SDK, the AI SDK, worker-bundler or the vitest plugin.
+Read `docs/development.md` before running, testing or deploying the platform, before a live check, and before upgrading Think, the Agents SDK, the AI SDK, worker-bundler, Tailwind or the vitest plugin.
 
 ## Agent skills
 

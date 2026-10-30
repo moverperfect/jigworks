@@ -66,6 +66,99 @@ export const registryPackages: FakePackage[] = [
       },
     },
   },
+  // The Worker + React Template's Packages: just enough of React and its
+  // types for the Template to pass a Check and bundle.
+  {
+    name: "react",
+    versions: {
+      "19.3.1": {
+        ageHours: 240,
+        files: {
+          "package.json": JSON.stringify({
+            name: "react",
+            version: "19.3.1",
+            exports: { ".": "./index.js", "./jsx-runtime": "./jsx-runtime.js" },
+          }),
+          "index.js": [
+            "export const StrictMode = ({ children }) => children;",
+            "export const useState = (initial) => [typeof initial === 'function' ? initial() : initial, () => {}];",
+            "export const useEffect = () => {};",
+            "",
+          ].join("\n"),
+          "jsx-runtime.js":
+            "export const jsx = (type, props) => ({ type, props });\nexport const jsxs = jsx;\nexport const Fragment = Symbol('Fragment');\n",
+        },
+      },
+    },
+  },
+  {
+    name: "react-dom",
+    versions: {
+      "19.3.1": {
+        ageHours: 240,
+        files: {
+          "package.json": JSON.stringify({ name: "react-dom", version: "19.3.1", exports: { "./client": "./client.js" } }),
+          "client.js": "export const createRoot = (element) => ({ render: (node) => { element.textContent = String(node.type); } });\n",
+        },
+      },
+    },
+  },
+  {
+    name: "@types/react",
+    versions: {
+      "19.3.0": {
+        ageHours: 240,
+        files: {
+          "package.json": JSON.stringify({
+            name: "@types/react",
+            version: "19.3.0",
+            exports: { ".": { types: "./index.d.ts" }, "./jsx-runtime": { types: "./jsx-runtime.d.ts" } },
+          }),
+          "index.d.ts": [
+            'import type { JSX } from "./jsx-runtime";',
+            "export type ReactNode = string | number | boolean | null | undefined | JSX.Element | ReactNode[];",
+            "export type SetStateAction<S> = S | ((previous: S) => S);",
+            "export declare function useState<S>(initial: S | (() => S)): [S, (action: SetStateAction<S>) => void];",
+            "export declare function useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void;",
+            "export declare function StrictMode(props: { children?: ReactNode }): JSX.Element;",
+            "",
+          ].join("\n"),
+          "jsx-runtime.d.ts": [
+            "export declare namespace JSX {",
+            "  interface Element { type: unknown; props: unknown }",
+            "  interface ElementChildrenAttribute { children: {} }",
+            "  interface IntrinsicElements { [name: string]: { [prop: string]: unknown } }",
+            "}",
+            "export declare function jsx(type: unknown, props: unknown, key?: unknown): JSX.Element;",
+            "export declare const jsxs: typeof jsx;",
+            "export declare const Fragment: unique symbol;",
+            "",
+          ].join("\n"),
+        },
+      },
+    },
+  },
+  {
+    name: "@types/react-dom",
+    versions: {
+      "19.3.0": {
+        ageHours: 240,
+        files: {
+          "package.json": JSON.stringify({
+            name: "@types/react-dom",
+            version: "19.3.0",
+            exports: { "./client": { types: "./client.d.ts" } },
+          }),
+          "client.d.ts": [
+            'import type { ReactNode } from "react";',
+            "export interface Root { render(children: ReactNode): void }",
+            "export declare function createRoot(container: Element | DocumentFragment): Root;",
+            "",
+          ].join("\n"),
+        },
+      },
+    },
+  },
   {
     name: "@fake/a",
     versions: {

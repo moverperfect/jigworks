@@ -45,6 +45,9 @@ importers:
       semver:
         specifier: 7.8.5
         version: 7.8.5
+      tailwindcss:
+        specifier: 4.3.3
+        version: 4.3.3
       ts-rust-wasm:
         specifier: link:vendor/ts-rust-wasm
         version: link:vendor/ts-rust-wasm
@@ -326,6 +329,7 @@ packages:
 
   '@cloudflare/shell@0.4.3':
     resolution: {integrity: sha512-6ZMKQZqdZeommh8LGFK5C2rep4byJfCuyjR4NBdMqn2wW9tbeDJORfDhP/No75MLx8nJeWdgeXvq3D2Ijpa0XA==}
+    deprecated: 'Deprecated: use @cloudflare/computer. Migration guide: https://github.com/cloudflare/agents/blob/main/docs/shell/migrating-to-computer.md'
 
   '@cloudflare/think@0.20.2':
     resolution: {integrity: sha512-6hkdWYlS3n00tbPwQ6eT6pcHJ9W1POlNgVrZWbwL7biO77/tX80tBwORoujMtTMdc3OaLjb7L5MokAy6bjFO/Q==}
@@ -2413,6 +2417,9 @@ packages:
     resolution: {integrity: sha512-BRw55e8r0B7SpDN20CAzoQAHl7y1yP7/Zt7oqUjMv0vSt2u2Xnkm88Ws+VypbV9BXHQVuSuyVq7zMjO16wSExw==}
     peerDependencies:
       react: ^16.11.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+
+  tailwindcss@4.3.3:
+    resolution: {integrity: sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ==}
 
   tar-fs@2.1.5:
     resolution: {integrity: sha512-OboTd8mmMhZDNPV+UjQcK9yKAatXu2aJ+r1w4im1Otd4M4fl2hwvdoXUxIYHFTHWK/3y3FarBP70v3vwmGlOxw==}
@@ -5104,6 +5111,8 @@ snapshots:
       dequal: 2.0.3
       react: 19.3.0
       use-sync-external-store: 1.7.0(react@19.3.0)
+
+  tailwindcss@4.3.3: {}
 
   tar-fs@2.1.5:
     dependencies:

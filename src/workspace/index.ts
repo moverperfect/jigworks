@@ -25,6 +25,7 @@ import {
 import {
   newAppLabel,
   previewHost,
+  runnable,
   type AppLogEntry,
   type PreviewExchange,
   type PreviewRequest,
@@ -351,6 +352,8 @@ export class Workspace extends Think<Env, ConversationState> {
           errors: report.errors.length,
           warnings: report.warnings.length,
           missingPackages: result.ok ? [] : result.missingPackages,
+          tailwindFailure: result.ok ? null : (result.tailwindFailure ?? null),
+          tailwindCandidates: result.ok ? (result.tailwindCandidates ?? null) : null,
           files: snapshot.size,
           wasmMemoryBytes: takeWasmMemory(),
         }),
@@ -426,17 +429,9 @@ export class Workspace extends Think<Env, ConversationState> {
     if (this.ctx.storage.kv.get<string>(appSentKey) === build.hash) return;
     for (let attempt = 0; attempt < 3; attempt++) {
       const label = this.appLabel();
-      const { hash, mainModule, modules, compatibilityDate, compatibilityFlags, vars } = build;
-      const { accepted } = await this.env.APP_HOSTS.getByName(label).receiveBuild(this.name, label, {
-        hash,
-        mainModule,
-        modules,
-        compatibilityDate,
-        compatibilityFlags,
-        vars,
-      });
+      const { accepted } = await this.env.APP_HOSTS.getByName(label).receiveBuild(this.name, label, runnable(build));
       if (accepted) {
-        this.ctx.storage.kv.put(appSentKey, hash);
+        this.ctx.storage.kv.put(appSentKey, build.hash);
         return;
       }
       this.ctx.storage.kv.put(appLabelKey, newAppLabel(label.replace(/-[a-z0-9]{8}$/, "")));

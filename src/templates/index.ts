@@ -9,10 +9,17 @@ export interface Template {
   files: Record<string, string>;
 }
 
+const { runtimeTypes, templates: packedTemplates } = JSON.parse(packed) as {
+  /** The end of every Template's `worker-configuration.d.ts`, packed once. */
+  runtimeTypes: string;
+  templates: Record<string, Omit<Template, "id">>;
+};
+const typesFile = "worker-configuration.d.ts";
+
 const templates = new Map(
-  Object.entries(JSON.parse(packed) as Record<string, Omit<Template, "id">>).map(([id, template]) => [
+  Object.entries(packedTemplates).map(([id, { files, ...template }]) => [
     id,
-    { id, ...template },
+    { id, ...template, files: typesFile in files ? { ...files, [typesFile]: files[typesFile] + runtimeTypes } : files },
   ]),
 );
 

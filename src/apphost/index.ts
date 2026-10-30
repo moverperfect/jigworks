@@ -1,5 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
+import { assetResponse, type AppAssets } from "./assets";
 import type { AppLogEntry, Slot } from "../shared/app-logs";
 
 export type { AppLogEntry, Slot };
@@ -24,8 +25,28 @@ export interface PreviewExchange {
   truncated: boolean;
 }
 
-/** The part of a Build that runs, as the app host keeps it. Assets come with ticket 09. */
-type RunnableBuild = Pick<Build, "hash" | "mainModule" | "modules" | "compatibilityDate" | "compatibilityFlags" | "vars">;
+const runnableFields = [
+  "hash",
+  "mainModule",
+  "modules",
+  "compatibilityDate",
+  "compatibilityFlags",
+  "vars",
+  "assets",
+  "assetManifest",
+  "assetSettings",
+] as const;
+
+/** The part of a Build that runs, which the Workspace gives its app host. */
+export type RunnableBuild = Pick<Build, (typeof runnableFields)[number]>;
+
+/** A Build's runnable part, without its report. */
+export function runnable(build: Build): RunnableBuild {
+  return Object.fromEntries(runnableFields.map((field) => [field, build[field]])) as RunnableBuild;
+}
+
+/** A Build as the app host keeps it. Builds kept before ticket 09 have no assets. */
+type KeptBuild = Omit<RunnableBuild, keyof AppAssets> & Partial<AppAssets>;
 
 // Limits on app code, so a runaway app can't burn through the account's
 // quota. Outbound requests are otherwise unrestricted (ticket 08).
@@ -61,7 +82,7 @@ const previewWaitSeconds = 10;
  * Developer. The platform Worker checks Access for the Deployment.
  */
 export class AppHost extends DurableObject<Env> {
-  private loaded: RunnableBuild | null = null;
+  private loaded: KeptBuild | null = null;
   private tablesReady = false;
 
   /** The Workspace this app belongs to, or null before it has one. */
@@ -305,6 +326,8 @@ export class AppHost extends DurableObject<Env> {
     if (pathname.startsWith(reservedPaths)) return new Response("Not found.", { status: 404 });
     const build = this.previewBuild();
     if (!build) return new Response(notReady, { status: 503 });
+    const asset = assetResponse(request, build);
+    if (asset) return this.fromApp(asset, slot, inFrame);
 
     const label = this.ctx.storage.kv.get<string>("label")!;
     const worker = this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({
@@ -327,12 +350,12 @@ export class AppHost extends DurableObject<Env> {
     return this.fromApp(response, slot, inFrame);
   }
 
-  private previewBuild(): RunnableBuild | null {
+  private previewBuild(): KeptBuild | null {
     const hash = this.previewHash();
     if (!hash) return null;
     if (this.loaded?.hash !== hash) {
       const parts = this.sql().exec<{ body: string }>("SELECT body FROM build_chunks WHERE hash = ? ORDER BY part", hash).toArray();
-      this.loaded = JSON.parse(parts.map(({ body }) => body).join("")) as RunnableBuild;
+      this.loaded = JSON.parse(parts.map(({ body }) => body).join("")) as KeptBuild;
     }
     return this.loaded;
   }

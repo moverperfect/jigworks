@@ -39,9 +39,9 @@ export async function call(
   );
 }
 
-/** Creates a Workspace from the Worker Template. */
-export async function create(name: string, email?: string): Promise<WorkspaceRecord> {
-  const response = await call("/api/workspaces", { method: "POST", body: { name, template: "worker" }, email });
+/** Creates a Workspace, from the Worker Template unless `template` names another. */
+export async function create(name: string, email?: string, template = "worker"): Promise<WorkspaceRecord> {
+  const response = await call("/api/workspaces", { method: "POST", body: { name, template }, email });
   expect(response.status).toBe(201);
   return (await response.json<{ workspace: WorkspaceRecord }>()).workspace;
 }
