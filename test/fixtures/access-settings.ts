@@ -2,6 +2,8 @@
 export const testAccess = {
   teamDomain: "test.cloudflareaccess.com",
   audience: "test-platform-aud",
+  /** The apps' own Access application (ADR 0012). */
+  appsAudience: "test-apps-aud",
   developer: "developer@example.com",
   secondDeveloper: "second@example.com",
   /** Every email at exactly this domain is on the Developer list too. */

@@ -30,6 +30,7 @@ export default defineConfig({
               bindings: {
                 ACCESS_TEAM_DOMAIN: testAccess.teamDomain,
                 ACCESS_AUD: testAccess.audience,
+                APPS_ACCESS_AUD: testAccess.appsAudience,
                 DEVELOPER_LIST: `${testAccess.developer},${testAccess.secondDeveloper},${testAccess.developerDomain}`,
                 PLATFORM_ORIGIN: testAccess.origin,
                 APPS_DOMAIN: testAccess.appsDomain,

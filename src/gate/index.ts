@@ -13,6 +13,12 @@ export interface GateConfig extends AccessConfig {
    * signed in with. Ignored for any other hostname.
    */
   devSignedInAs?: string | undefined;
+  /**
+   * For a page the browser opens from elsewhere, such as the Preview's way
+   * back to sign in: only GET, and from any site, since all it can do is
+   * send the signed-in Developer on to their own Preview.
+   */
+  navigation?: boolean;
 }
 
 /** The signed-in Developer's email, or the response that refuses the request. */
@@ -30,14 +36,18 @@ const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
  * an app's page sending requests in a Developer's name.
  */
 export async function gate(request: Request, config: GateConfig): Promise<GateDecision> {
-  const origin = request.headers.get("Origin");
-  const site = request.headers.get("Sec-Fetch-Site");
-  const mustHaveOrigin =
-    !safeMethods.has(request.method) || request.headers.get("Upgrade")?.toLowerCase() === "websocket";
-  if ((origin !== null || mustHaveOrigin) && origin !== config.origin) return refuseElsewhere();
-  // Browsers say where every request comes from. "none" is the Developer
-  // opening a URL themselves.
-  if (site !== null && site !== "same-origin" && site !== "none") return refuseElsewhere();
+  if (config.navigation) {
+    if (request.method !== "GET") return refuse(405, "Only GET is allowed here.");
+  } else {
+    const origin = request.headers.get("Origin");
+    const site = request.headers.get("Sec-Fetch-Site");
+    const mustHaveOrigin =
+      !safeMethods.has(request.method) || request.headers.get("Upgrade")?.toLowerCase() === "websocket";
+    if ((origin !== null || mustHaveOrigin) && origin !== config.origin) return refuseElsewhere();
+    // Browsers say where every request comes from. "none" is the Developer
+    // opening a URL themselves.
+    if (site !== null && site !== "same-origin" && site !== "none") return refuseElsewhere();
+  }
 
   const url = new URL(request.url);
   let email: string;

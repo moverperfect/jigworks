@@ -22,7 +22,7 @@ import {
   turnProviderOptions,
   withAgentsMd,
 } from "../agent";
-import { newAppLabel, type AppLogEntry, type PreviewExchange } from "../apphost";
+import { newAppLabel, type AppLogEntry, type PreviewExchange, type SignInDestination } from "../apphost";
 import type { Build, Builder } from "../builder";
 import { takeWasmMemory, trackWasm } from "../builder/wasm-memory";
 import { checkInDynamicWorker } from "../checker/isolated";
@@ -371,6 +371,14 @@ export class Workspace extends Think<Env, ConversationState> {
     const label = this.appLabel();
     const ready = (await this.env.APP_HOSTS.getByName(label).previewBuild()) !== null;
     return { url: `https://${label}-preview.${this.env.APPS_DOMAIN}/`, ready };
+  }
+
+  /** A single-use link that signs `email` in to the Preview and shows `to` (ADR 0013). The API checks ownership first. */
+  async previewSignIn(email: string, destination: SignInDestination, to: string): Promise<string> {
+    const label = this.appLabel();
+    const url = await this.env.APP_HOSTS.getByName(label).mintSignIn(this.name, label, email, destination, to);
+    if (url === null) throw new Error("The app's label belongs to another Workspace.");
+    return url;
   }
 
   /** Sends the Preview a request for the Agent's `request_preview` tool. */

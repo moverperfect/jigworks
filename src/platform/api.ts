@@ -165,6 +165,16 @@ api.get("/workspaces/:id/preview", async (c) => {
   return record ? c.json(await workspace(c, record.id).preview()) : noSuchWorkspace(c);
 });
 
+api.post("/workspaces/:id/preview/sign-in", async (c) => {
+  const record = await ownWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  const body = await c.req.json<{ destination?: unknown; to?: unknown }>().catch(() => null);
+  const destination = body?.destination === "document" ? "document" : body?.destination === "iframe" ? "iframe" : null;
+  if (!destination) return c.json({ error: "Say whether the Preview opens in its pane (iframe) or a tab (document)." }, 400);
+  const to = typeof body?.to === "string" ? body.to : "/";
+  return c.json({ url: await workspace(c, record.id).previewSignIn(c.get("email"), destination, to) });
+});
+
 api.get("/workspaces/:id/preview/logs", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json({ logs: await workspace(c, record.id).previewLogs() }) : noSuchWorkspace(c);
