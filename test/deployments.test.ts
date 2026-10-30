@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { browserErrorsPath, labelOf, sessionCookie } from "../src/apphost";
@@ -123,6 +124,21 @@ describe("publishing", () => {
     const refused = await publish(workspace.id);
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ error: "The Agent is working. Wait for its Turn to end." });
+  });
+
+  it("is refused for a Turn that starts while it's on its way", async () => {
+    const workspace = await create("Deployment Race");
+    await build(workspace.id);
+    // As for a Workspace built before ticket 08, so publishing waits for a Build first.
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (_instance, state) => {
+      state.storage.kv.delete("app:label");
+      state.storage.kv.delete("app:sent");
+    });
+    const stub = env.WORKSPACES.getByName(workspace.id);
+    const publishing = stub.publish(null);
+    const turn = await stub.startTurn("[script:slow] Take your time");
+    expect(turn.ok).toBe(true);
+    expect(await publishing).toEqual({ ok: false, busy: true, error: "The Agent is working. Wait for its Turn to end." });
   });
 
   it("needs a successful Build first", async () => {

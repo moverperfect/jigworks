@@ -424,10 +424,18 @@ export class Workspace extends Think<Env, ConversationState> {
    */
   async publish(replaces: string | null): Promise<DeveloperChange<{ deployment: Deployment }>> {
     if (this.state.turn) return busy;
-    // As for the Preview, a successful Build from before the app host goes there first.
+    // As for the Preview, a successful Build from before the app host goes
+    // there first. It builds through the Workspace's stub, which waits for
+    // the lock, so it comes before the lock is taken.
     await this.preview();
+    // In line with Turns starting (see `startTurn`), so a Turn that started
+    // meanwhile is seen.
+    const result = await this.exclusive(async () => {
+      if (this.state.turn) return null;
+      return this.env.APP_HOSTS.getByName(this.appLabel()).publish(this.name, replaces);
+    });
+    if (!result) return busy;
     const label = this.appLabel();
-    const result = await this.env.APP_HOSTS.getByName(label).publish(this.name, replaces);
     if (!result.ok) {
       const error =
         result.reason === "changed"
