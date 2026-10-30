@@ -134,6 +134,19 @@ describe("build", () => {
       );
       expect(await build(files)).toMatchObject({ ok: false, errors: [{ file: "wrangler.jsonc", message: expect.stringContaining("Durable Object binding") }] });
     }
+
+    // Bindings that aren't a list, rather than a list of one.
+    const files = project('export default { fetch: () => new Response("hi") };');
+    files.set(
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        durable_objects: { bindings: { name: "COUNTER", class_name: "Counter" } },
+      }),
+    );
+    expect(await build(files)).toMatchObject({ ok: false, errors: [{ file: "wrangler.jsonc", message: expect.stringContaining("durable_objects.bindings") }] });
   });
 
   it("records the Durable Object bindings of a Worker that exports their classes", async () => {

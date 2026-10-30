@@ -239,6 +239,9 @@ function wranglerBindings(config: Record<string, unknown>): { durableObjects: Re
     }));
   const durableObjects: Record<string, string> = {};
   const declared = (config.durable_objects as { bindings?: unknown } | undefined)?.bindings;
+  if (declared !== undefined && !Array.isArray(declared)) {
+    problems.push({ message: "durable_objects.bindings in wrangler.jsonc must be a list of Durable Object bindings.", ...inWrangler });
+  }
   for (const binding of Array.isArray(declared) ? (declared as unknown[]) : []) {
     const { name, class_name: className, script_name: scriptName } = (binding ?? {}) as Record<string, unknown>;
     if (typeof scriptName === "string" && scriptName !== "") {
