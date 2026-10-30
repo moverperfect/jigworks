@@ -393,9 +393,9 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 
 ## Stage 5: Hosting (Deployments)
 
-**Verdict: yes.** Publishing and app data both work on the deployed platform.
-- **Publishing:** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
-- **App data:** an app's Durable Object instances kept their data across new Builds and publishes, with the Preview's apart from the Deployment's. A call through the binding took 17–44 ms on Cloudflare's side.
+**No verdict yet:** stage 5 also covers app secrets (ticket 12).
+- **Publishing works.** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
+- **App data works.** An app's Durable Object instances kept their data across new Builds and publishes, and the Preview's data stayed apart from the Deployment's. Calls through the binding took 17–44 ms on Cloudflare's side, for the 9 calls in the trace.
 
 ### Publishing a Deployment (ticket 10)
 
@@ -434,19 +434,26 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 - **Times:**
   - **Browser:** each request's round trip, timed in the page.
   - **Platform Worker:** its wall time for the request, from Cloudflare's trace, leaving out the network.
-  - **`AppData`:** the wall time of each call through the binding, from `AppData` to the app host and the instance, from the trace.
+  - **`AppData`:** the wall time of a call through the binding, from the trace. `AppData` is the platform's entrypoint an app's binding calls (ADR 0015). The trace has 9 of the roughly 22 calls.
 - **Workspace:** a fresh one from the Worker Template.
-- **The app:** a Hono Worker with one binding, `COUNTER`, to a `Counter` class. Each instance counted clicks in its own SQLite table. `/api/count/:name` added one to the instance of that name and answered with the count and the code's version.
+- **The app:** a Hono Worker with one binding, `COUNTER`, to a `Counter` class. Each instance kept a count in its own SQLite table.
+  - `/api/count/:name` added one to the instance of that name, and answered with the count and the code's version.
+  - `/api/whoami/:name` answered with the instance's `ctx.id` and its name.
 - **Check and Build:** the Check was clean, and the Build succeeded.
 
 | Step | Platform Worker | `AppData` |
 | --- | ---: | ---: |
-| Count requests once warm, the Preview and the Deployment (16) | 28–65 ms | 17–44 ms |
+| First request to the Preview, starting its instance | 980 ms | 42 ms |
+| First request to the Deployment after publishing | 976 ms | 35 ms |
+| Count requests once warm, the Preview and the Deployment (14) | 28–46 ms | 17–21 ms (2 in the trace) |
+| First fetch from a newly opened page (2) | 41–65 ms | 18–44 ms |
 | First request to the Preview after a new Build | 907 ms | 36 ms |
 | First request to the Deployment after publishing again | 105 ms | 34 ms |
 
-- **Left out of the warm row:** the Deployment's first request after about a minute idle took 156 ms in the platform Worker.
-- **In the browser:** counts took 53–92 ms once warm (14). The page's first count took 660 ms, of which the platform Worker spent 41 ms. The instance had already started on the page's own load.
+- **The first fetches from a newly opened page:** each was the first request on a new connection. Its call through the binding came about 0.6 s after the request reached the platform Worker, outside the request's own wall time. The trace doesn't say where that time went. In the browser the first of them took 660 ms.
+- **The first requests' `AppData` events ended `canceled`,** though the requests got their answers.
+- **Left out of the warm row:** the Deployment's first request after 48 s with no requests to it took 156 ms in the platform Worker.
+- **In the browser:** counts took 53–92 ms once warm (14).
 - **Instances by name:** "a" counted 1 to 5 in the Preview while "b" started at 1. Each instance had its own `ctx.id`, and `ctx.id.name` was its name.
 - **The Preview and the Deployment apart:** after publishing, the Deployment's "a" started at 1 while the Preview's stood at 5.
 - **New code:**
@@ -454,7 +461,8 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - The Deployment, not yet published again, stayed on version 1 and carried on from 3 to 4.
   - After publishing again, the Deployment answered as version 2 and carried on from 4 to 5.
 - **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
+- **Not tried live:** the Build errors for KV, D1, R2, queues and cron triggers, which the tests cover.
 
 ### Found along the way
 
-- **The trace's CPU for app data is near zero:** 0–2 ms per `AppData` and app host call. The instance's own work wasn't reported as a separate event.
+- **The trace can't show an instance's CPU.** `AppData` showed 0 ms on each of its 9 events, and the one app host `callFacet` event 2 ms. The app's own events go to its tail, which keeps only their logs.
