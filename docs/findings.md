@@ -390,3 +390,38 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - The Templates' Workers runtime types, 608 KiB, are now packed once, which saved 112 KiB compressed.
   - Ticket 13 has about 2.2 MB of the 10 MB limit.
 - **Binary assets:** a Build serves `public/` as text, so a binary file there would be damaged (ADR 0014, #31).
+
+## Stage 5: Hosting (Deployments)
+
+**No verdict yet:** stage 5 also covers app data (ticket 11). **Publishing works.** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
+
+### Publishing a Deployment (ticket 10)
+
+- **Platform:** the deployed platform, measured on 2026-10-30 after ticket 10's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:**
+  - **Browser:** timed in the page. For the first Publish, from the click to the page showing the Deployment: the button looks at the Deployment again (`GET`), then publishes (`POST`). For the second, from confirming in the dialog, so the `POST` alone.
+  - **Platform Worker:** its wall time for the request, from Cloudflare's trace, leaving out the network. For Publish, the `POST`; the `GET` before it took 42–49 ms. The trace missed the first Publish's `POST`.
+  - **App host:** the app host's wall time from its Durable Object's trace: its `publish` call, with CPU, or the request passed to it. These figures can run on (`docs/development.md`).
+- **Workspace:** a fresh one from the Worker + React Template.
+
+| Step | Browser | Platform Worker | App host |
+| --- | ---: | ---: | ---: |
+| First Publish | 258 ms | | 54 ms, 2 ms of CPU |
+| Publish again | 153 ms, from confirming | 87 ms | 17 ms, 3 ms of CPU |
+| The Deployment's page, the first request to it | | 376 ms | 3 ms |
+| The rest (3), including the first after publishing again | | 34–38 ms | 0–18 ms |
+| Its API, through its Dynamic Worker (4) | | 25–42 ms | 1–14 ms |
+
+- **The first page:** 373 of its 376 ms were spent outside the app host. The trace doesn't say where.
+- **Opening it:**
+  - The Developer's existing Access session let them into the Deployment without signing in again.
+  - With no session, `curl` was sent to Access's sign-in.
+- **What it served:**
+  - The React page, styled, and its API.
+  - Its pages carried `frame-ancestors 'self'` and none of the Preview's error reporting, and a `POST` to `/__jigworks/errors` got 404.
+  - Page scripts could read no cookies.
+  - A `POST` from its own page reached the app, which answered 404 as it has no `POST` route: the platform didn't refuse it.
+  - Unchanged assets were answered 304.
+- **Later Builds:** the Developer changed the page's heading to "version 2" and published, then to "version 3" and built. The Preview showed "version 3"; the Deployment stayed on "version 2", and its script still came back 304.
+- **Publishing again:** it asked first, naming the Deployment's hostname and when the Build it would replace was published.
+- **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
