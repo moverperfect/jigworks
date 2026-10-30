@@ -42,8 +42,9 @@ The platform serves the front end and `public/` in front of the Worker, as Cloud
   - declare a binding in `wrangler.jsonc`: `"durable_objects": { "bindings": [{ "name": "NOTES", "class_name": "Notes" }] }`. No `migrations` are needed;
   - export `class Notes extends DurableObject` (from `cloudflare:workers`) from `src/server/index.ts`, and keep its data in `this.ctx.storage.sql`, each instance's own SQLite database;
   - add `NOTES: DurableObjectNamespace<import("./src/server/index").Notes>;` to `__BaseEnv_Env` in `worker-configuration.d.ts`;
-  - reach an instance with `c.env.NOTES.getByName(name)`, and call its methods or its `fetch`. Arguments and results must be values that can be copied, as with any Durable Object.
+  - reach an instance with `c.env.NOTES.getByName(name)`, and call its methods or its `fetch`. Arguments and results must be values that can be copied. Use the `env` the platform passes in (`c.env`, or `fetch`'s and the class's `env`): `env` imported from `cloudflare:workers` doesn't have the binding;
+  - in the class, `this.ctx.id.name` is the name the instance was reached by.
 
-  The Preview's data and the Deployment's are kept apart. Both survive new Builds, and the Preview's isn't copied when the Developer publishes. Renaming a binding starts it afresh.
+  The Preview's data and the Deployment's are kept apart. Both survive new code, and the Preview's isn't copied when the Developer publishes. Renaming a binding starts it afresh.
 - **Outbound requests:** `fetch` to any external URL works.
 - **Secrets:** each secret the Developer sets appears in `env` under its name, for example `c.env.API_KEY`.

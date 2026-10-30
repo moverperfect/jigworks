@@ -49,6 +49,10 @@ export class Counter extends DurableObject {
   override async fetch(): Promise<Response> {
     return new Response(String(this.count()));
   }
+
+  async whoami(): Promise<{ id: string; name: string | null }> {
+    return { id: this.ctx.id.toString(), name: this.ctx.id.name ?? null };
+  }
 }
 
 export default {
@@ -57,6 +61,7 @@ export default {
     const name = url.searchParams.get("name") ?? "a";
     if (url.pathname === "/increment") return new Response(${JSON.stringify(prefix)} + (await env.COUNTER.getByName(name).increment()));
     if (url.pathname === "/read") return env.COUNTER.get(env.COUNTER.idFromName(name)).fetch(request);
+    if (url.pathname === "/whoami") return Response.json(await env.COUNTER.getByName(name).whoami());
     if (url.pathname === "/id") {
       const id = env.COUNTER.idFromName(name);
       return Response.json({ id: id.toString(), same: id.equals(env.COUNTER.idFromString(id.toString())), name: id.name });
@@ -100,6 +105,71 @@ describe("an app's Durable Object binding", () => {
     expect(await inPreview(workspace.id, "/read?name=a")).toBe("2");
     const ids = JSON.parse(await inPreview(workspace.id, "/id?name=a")) as { id: string; same: boolean; name: string };
     expect(ids).toEqual({ id: expect.stringMatching(/^[0-9a-f]{64}$/), same: true, name: "a" });
+
+    // Each instance has an ID of its own, with its name when it was reached by name.
+    const a = JSON.parse(await inPreview(workspace.id, "/whoami?name=a")) as { id: string; name: string };
+    const b = JSON.parse(await inPreview(workspace.id, "/whoami?name=b")) as { id: string; name: string };
+    expect([a.name, b.name]).toEqual(["a", "b"]);
+    expect(a.id).not.toBe(b.id);
+  });
+
+  it("works whatever the class is called, even a name the platform's own code uses", async () => {
+    const workspace = await create("Data Class Names");
+    await save(
+      workspace.id,
+      "wrangler.jsonc",
+      wrangler({
+        durable_objects: {
+          bindings: [
+            { name: "IDS", class_name: "Id" },
+            { name: "REQUESTS", class_name: "Request" },
+          ],
+        },
+      }),
+    );
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { DurableObject } from "cloudflare:workers";
+export class Id extends DurableObject { hello() { return "id"; } }
+class Requests extends DurableObject { hello() { return "request"; } }
+export { Requests as Request };
+export default {
+  async fetch(_request: Request, env: { IDS: DurableObjectNamespace<Id>; REQUESTS: DurableObjectNamespace<Requests> }) {
+    return new Response((await env.IDS.getByName("x").hello()) + " " + (await env.REQUESTS.getByName("x").hello()));
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    expect(await inPreview(workspace.id, "/")).toBe("id request");
+  });
+
+  it("gives app code its own slot's instances and nothing more", async () => {
+    const workspace = await create("Data Contained");
+    await save(workspace.id, "wrangler.jsonc", wrangler());
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { env } from "cloudflare:workers";
+export { Counter } from "./counter";
+export default {
+  async fetch() {
+    // What the platform puts in env for the binding, reached from outside it.
+    const data = (env as unknown as Record<string, Record<string, (...args: unknown[]) => Promise<unknown>>>).__jigworks_app_data!;
+    const tries = await Promise.all(
+      [() => data.host!(), () => data.callFacet!("constructor", "a".repeat(64), "toString", [])].map((attempt) =>
+        attempt().then(() => "reached", () => "refused"),
+      ),
+    );
+    return new Response(tries.join(" "));
+  },
+};
+`,
+    );
+    await save(workspace.id, "src/counter.ts", counterApp().replace(/export default \{[^]*$/, ""));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    expect(await inPreview(workspace.id, "/")).toBe("refused refused");
   });
 
   it("keeps the Preview's data apart from the Deployment's", async () => {

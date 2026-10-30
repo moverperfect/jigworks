@@ -125,6 +125,17 @@ describe("build", () => {
     });
   });
 
+  it("reports a malformed Durable Object binding rather than failing to build", async () => {
+    for (const binding of [null, "COUNTER", { name: "__proto__", class_name: "Counter" }, { name: "COUNTER", class_name: "default" }]) {
+      const files = project('import { DurableObject } from "cloudflare:workers";\nexport class Counter extends DurableObject {}\nexport default { fetch: () => new Response("hi") };');
+      files.set(
+        "wrangler.jsonc",
+        JSON.stringify({ name: "app", main: "src/index.ts", compatibility_date: "2026-10-01", durable_objects: { bindings: [binding] } }),
+      );
+      expect(await build(files)).toMatchObject({ ok: false, errors: [{ file: "wrangler.jsonc", message: expect.stringContaining("Durable Object binding") }] });
+    }
+  });
+
   it("records the Durable Object bindings of a Worker that exports their classes", async () => {
     const files = project('import { DurableObject } from "cloudflare:workers";\nexport class Counter extends DurableObject {}\nexport default { fetch: () => new Response("hi") };');
     files.set(

@@ -66,6 +66,10 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
   - The settings are in `src/agent/index.ts`: effort `high`, `fallbacks: "default"`, `drop_block` for mismatched thinking blocks, and automatic caching.
 - **Parallel tool calls:** Opus calls `edit`, `bash`, `check` and `build` in the same step. `check` and `build` wait for their siblings, counted with `beforeToolCall` and `afterToolCall`.
 - **Agents SDK upgrades:** `agents` pins its MCP SDK peers (`@modelcontextprotocol/sdk`, `client` and `server`) to exact versions. pnpm keeps the peers it has already installed, so after bumping `agents`, check that `pnpm install` reports no "unmet peer". If it does, add the pinned versions as direct dependencies, install, and then remove them; the lockfile keeps the new versions.
+- **App data (ADR 0015):** an app's Durable Object instances are facets in its app host. The platform relies on facet behaviour that a workerd upgrade could change, and `test/app-data.test.ts` covers each:
+  - `ctx.facets.abort()` makes the next call start the facet with new code, its storage kept;
+  - `deleteAll()` doesn't reach a facet's database (locally, the deletion test fails without the loop), so the app host deletes each facet it started by name;
+  - nothing documents alarms in a facet, so apps aren't told they can use them.
 - **worker-bundler:** it runs its own npm installer for any Package missing from `node_modules/`, which would skip the one-day rule. The Builder strips `dependencies` before handing over `package.json`.
 - **Tailwind** (ADRs 0007 and 0014): the platform has one version, `tailwindcss` in its own `package.json`. To upgrade, change that exact version and run `pnpm generate`, which packs its stylesheets. The version goes into every Build's hash, so each Workspace's next Build uses it.
 - **Size:** with Tailwind and the Worker + React Template, the Worker is 7,941 KiB compressed (`npx wrangler deploy --dry-run`), against Cloudflare's 10 MiB limit. Ticket 13 (the test runner) has about 2.2 MiB. The Templates' runtime types, 623 KB, are packed once for all of them.
