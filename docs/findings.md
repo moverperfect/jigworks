@@ -390,3 +390,36 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - The Templates' Workers runtime types, 608 KiB, are now packed once, which saved 112 KiB compressed.
   - Ticket 13 has about 2.2 MB of the 10 MB limit.
 - **Binary assets:** a Build serves `public/` as text, so a binary file there would be damaged (ADR 0014, #31).
+
+## Stage 5: Hosting (Deployments)
+
+**Verdict:** waits for app data (ticket 11). **Publishing so far:** it fits. Publish copies a Build to the Deployment in well under a second, the Deployment serves its pages in tens of milliseconds, and later Builds change only the Preview.
+
+### Publishing a Deployment (ticket 10)
+
+- **Platform:** the deployed platform, measured on 2026-10-30 after ticket 10's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:**
+  - **Browser:** from the click to the page showing the new Deployment, timed in the page.
+  - **Request:** the platform Worker's wall time for the request, from Cloudflare's trace.
+  - **App host:** its wall time for the call, from the trace.
+- **Workspace:** a fresh one from the Worker + React Template.
+
+| Step | Browser | Request | App host |
+| --- | ---: | ---: | ---: |
+| First Publish | 258 ms | | 54 ms, 2 ms of CPU |
+| Publish again, after confirming | 153 ms | 87 ms | 17 ms, 3 ms of CPU |
+| The Deployment's page, first after publishing | | 376 ms | 3 ms |
+| The Deployment's page, later (3) | | 34–38 ms | 0–18 ms |
+| Its API, through its Dynamic Worker (3) | | 37–42 ms | 1–14 ms |
+
+- **Opening it:**
+  - The Developer's existing Access session let them into the Deployment without signing in again.
+  - With no session, `curl` was sent to Access's sign-in.
+- **What it served:**
+  - The React page, styled, and its API.
+  - `frame-ancestors 'self'`, none of the Preview's error reports, and a 404 for `/__jigworks/errors`.
+  - Page scripts could read no cookies, and a `POST` from its own page reached the app.
+  - Unchanged assets were answered 304.
+- **Later Builds:** after publishing "version 2", a Build of "version 3" changed the Preview and left the Deployment on "version 2".
+- **Publishing again** asked first, naming the Deployment's hostname and when the Build it would replace was published.
+- **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
