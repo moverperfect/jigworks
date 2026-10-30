@@ -33,6 +33,8 @@ export interface Build {
   assetSettings: AssetSettings;
   /** How many possible class names the Tailwind step was given, if it ran. */
   tailwindCandidates?: number;
+  /** Each Durable Object binding in `wrangler.jsonc`, to the class it binds (ADR 0006). */
+  durableObjects: Record<string, string>;
   warnings: BuildProblem[];
 }
 
@@ -103,7 +105,18 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     compatibility_flags?: string[];
     vars?: Record<string, unknown>;
     assets?: WranglerAssets;
+    main?: string;
   };
+  // The bindings' problems come with any others, so the Agent sees them all at once.
+  const bindings = wranglerBindings(config);
+  const fail = (errors: BuildProblem[], more: Partial<BuildFailure> = {}): BuildFailure => ({
+    ok: false,
+    hash,
+    warnings: [],
+    missingPackages: [],
+    ...more,
+    errors: [...bindings.problems, ...errors],
+  });
 
   let mainModule: string;
   let modules: Modules;
@@ -116,7 +129,7 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     if (snapshot.has("index.html")) {
       const front = await frontEnd(snapshot);
       if (!front.ok) {
-        return { ok: false, hash, errors: front.problems, warnings: [], missingPackages: [], tailwindFailure: front.tailwindFailure };
+        return fail(front.problems, { tailwindFailure: front.tailwindFailure });
       }
       const app = await createApp({
         files,
@@ -139,7 +152,7 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
       warningTexts = worker.warnings ?? [];
     }
   } catch (error) {
-    return { ok: false, hash, errors: esbuildProblems(error), warnings: [], missingPackages: [] };
+    return fail(esbuildProblems(error));
   }
   const warnings = warningTexts.map(unplaced);
 
@@ -154,13 +167,22 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     }),
   ];
   if (missing.length > 0) {
-    return {
-      ok: false,
-      hash,
-      errors: missing.map(({ name, specifier }) => unplaced(`${name} imports "${specifier}", which isn't in the Workspace's Packages`)),
-      warnings,
-      missingPackages: [...new Set(missing.map(({ specifier }) => specifier))],
-    };
+    return fail(
+      missing.map(({ name, specifier }) => unplaced(`${name} imports "${specifier}", which isn't in the Workspace's Packages`)),
+      { warnings, missingPackages: [...new Set(missing.map(({ specifier }) => specifier))] },
+    );
+  }
+  const main = modules[mainModule];
+  const exported = new Set(parse(typeof main === "string" ? main : (main?.js ?? ""))[1].map((name) => ("name" in name ? name.name : "")));
+  const unexported = Object.entries(bindings.durableObjects).filter(([, className]) => !exported.has(className));
+  if (unexported.length > 0 || bindings.problems.length > 0) {
+    return fail(
+      unexported.map(([binding, className]) => ({
+        message: `${config.main ?? "The Worker"} doesn't export the class "${className}" that ${binding} binds to.`,
+        ...inWrangler,
+      })),
+      { warnings },
+    );
   }
   return {
     ok: true,
@@ -175,12 +197,78 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
     assets,
     assetManifest,
     assetSettings: assetSettings(config.assets),
+    durableObjects: bindings.durableObjects,
     tailwindCandidates,
     warnings,
   };
 }
 
 type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };
+
+// What `wrangler.jsonc` can ask for that the platform doesn't have: apps get
+// Durable Objects and nothing else (ADR 0006). Each is a list in the config.
+const unsupported: { key: string; lists: (config: Record<string, unknown>) => unknown[]; isNot: string }[] = [
+  { key: "kv_namespaces", lists: (config) => [config.kv_namespaces], isNot: "KV isn't" },
+  { key: "d1_databases", lists: (config) => [config.d1_databases], isNot: "D1 isn't" },
+  { key: "r2_buckets", lists: (config) => [config.r2_buckets], isNot: "R2 isn't" },
+  {
+    key: "queues",
+    lists: (config) => {
+      const queues = config.queues as { producers?: unknown; consumers?: unknown } | undefined;
+      return [queues?.producers, queues?.consumers];
+    },
+    isNot: "queues aren't",
+  },
+  { key: "triggers.crons", lists: (config) => [(config.triggers as { crons?: unknown } | undefined)?.crons], isNot: "cron triggers aren't" },
+];
+
+const inWrangler = { file: "wrangler.jsonc", line: null, column: null };
+const jsName = /^[A-Za-z_$][\w$]*$/;
+
+/**
+ * The bindings `wrangler.jsonc` asks for: each Durable Object binding, to
+ * the class it binds, and the problems with the rest. Those are anything the
+ * platform doesn't have, and Durable Objects it can't run.
+ */
+function wranglerBindings(config: Record<string, unknown>): { durableObjects: Record<string, string>; problems: BuildProblem[] } {
+  const problems: BuildProblem[] = unsupported
+    .filter(({ lists }) => lists(config).some((list) => Array.isArray(list) && list.length > 0))
+    .map(({ key, isNot }) => ({
+      message: `${key} in wrangler.jsonc: ${isNot} available here. Apps get Durable Objects and nothing else.`,
+      ...inWrangler,
+    }));
+  const durableObjects: Record<string, string> = {};
+  const declared = (config.durable_objects as { bindings?: unknown } | undefined)?.bindings;
+  if (declared !== undefined && !Array.isArray(declared)) {
+    problems.push({ message: "durable_objects.bindings in wrangler.jsonc must be a list of Durable Object bindings.", ...inWrangler });
+  }
+  for (const binding of Array.isArray(declared) ? (declared as unknown[]) : []) {
+    const { name, class_name: className, script_name: scriptName } = (binding ?? {}) as Record<string, unknown>;
+    if (typeof scriptName === "string" && scriptName !== "") {
+      problems.push({
+        message: `${String(name)}'s class is in another Worker ("${scriptName}"). An app's Durable Objects must be its own classes.`,
+        ...inWrangler,
+      });
+    } else if (
+      typeof name !== "string" ||
+      typeof className !== "string" ||
+      !jsName.test(name) ||
+      !jsName.test(className) ||
+      // Not a key a plain object can hold, nor the platform's own, nor the app's default export.
+      name === "__proto__" ||
+      name.startsWith("__jigworks") ||
+      className === "default"
+    ) {
+      problems.push({
+        message: `A Durable Object binding in wrangler.jsonc needs a name and a class_name, each a JavaScript name: ${JSON.stringify(binding)}.`,
+        ...inWrangler,
+      });
+    } else {
+      durableObjects[name] = className;
+    }
+  }
+  return { durableObjects, problems };
+}
 
 /** Each file under `public/`, at its path below it. */
 function publicAssets(snapshot: Snapshot): Record<string, string> {

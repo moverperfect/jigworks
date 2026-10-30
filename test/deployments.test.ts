@@ -112,6 +112,7 @@ describe("publishing", () => {
       assets: {},
       assetManifest: {},
       assetSettings: { notFoundHandling: "none", runWorkerFirst: false },
+      durableObjects: {},
     });
     expect(accepted.accepted).toBe(true);
     expect(await (await open(url)).text()).toBe("one");

@@ -38,6 +38,13 @@ The platform serves the front end and `public/` in front of the Worker, as Cloud
 
 - **Cookies:** every cookie name starts with `__Host-`; the platform drops all other cookies. With `hono/cookie`, `setCookie(c, "session", value, { prefix: "host" })` and `getCookie(c, "session", "host")` add the prefix and its required attributes for you. The platform keeps the name `__Host-jigworks-preview` for itself.
 - **Reserved paths:** the platform answers `/__jigworks/` and everything below it itself, so app code never sees those requests.
-- **Storage:** Durable Objects are the only storage. KV, D1, R2, queues and cron triggers aren't available.
+- **Storage:** Durable Objects are the only storage. KV, D1, R2, queues and cron triggers aren't available: the Build fails if `wrangler.jsonc` asks for them. To store data:
+  - declare a binding in `wrangler.jsonc`: `"durable_objects": { "bindings": [{ "name": "NOTES", "class_name": "Notes" }] }`. No `migrations` are needed;
+  - export `class Notes extends DurableObject` (from `cloudflare:workers`) from `src/server/index.ts`, and keep its data in `this.ctx.storage.sql`, each instance's own SQLite database;
+  - add `NOTES: DurableObjectNamespace<import("./src/server/index").Notes>;` to `__BaseEnv_Env` in `worker-configuration.d.ts`;
+  - reach an instance with `c.env.NOTES.getByName(name)`, and call its methods or its `fetch`. Arguments and results must be values that can be copied. Use the `env` the platform passes in (`c.env`, or `fetch`'s and the class's `env`): `env` imported from `cloudflare:workers` doesn't have the binding;
+  - in the class, `this.ctx.id.name` is the name the instance was reached by.
+
+  The Preview's data and the Deployment's are kept apart. Both survive new code, and the Preview's isn't copied when the Developer publishes. Renaming a binding starts it afresh.
 - **Outbound requests:** `fetch` to any external URL works.
 - **Secrets:** each secret the Developer sets appears in `env` under its name, for example `c.env.API_KEY`.

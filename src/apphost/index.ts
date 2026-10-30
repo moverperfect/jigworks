@@ -1,5 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
+import { appDataBinding, appDataModule, appDataWrapper } from "./app-data";
 import { assetResponse, type AppAssets } from "./assets";
 import type { AppLogEntry, Slot } from "../shared/app-logs";
 
@@ -35,6 +36,7 @@ const runnableFields = [
   "assets",
   "assetManifest",
   "assetSettings",
+  "durableObjects",
 ] as const;
 
 /** The part of a Build that runs, which the Workspace gives its app host. */
@@ -45,8 +47,8 @@ export function runnable(build: Build): RunnableBuild {
   return Object.fromEntries(runnableFields.map((field) => [field, build[field]])) as RunnableBuild;
 }
 
-/** A Build as the app host keeps it. Builds kept before ticket 09 have no assets. */
-type KeptBuild = Omit<RunnableBuild, keyof AppAssets> & Partial<AppAssets>;
+/** A Build as the app host keeps it. Builds kept before ticket 09 have no assets, and before ticket 11 no Durable Object bindings. */
+type KeptBuild = Omit<RunnableBuild, keyof AppAssets | "durableObjects"> & Partial<Pick<RunnableBuild, keyof AppAssets | "durableObjects">>;
 
 /** The Deployment: the hash of the Build it runs, and when the Developer published it. */
 interface PublishedBuild {
@@ -95,6 +97,8 @@ const previewWaitSeconds = 10;
 export class AppHost extends DurableObject<Env> {
   // The Builds the Preview and the Deployment run, by their names in build_chunks, once read.
   private loaded = new Map<string, KeptBuild>();
+  // The facets started since this object started, which new code must stop.
+  private running = new Set<string>();
   private tablesReady = false;
 
   /** The Workspace this app belongs to, or null before it has one. */
@@ -120,6 +124,8 @@ export class AppHost extends DurableObject<Env> {
         this.sql().exec("INSERT OR REPLACE INTO build_chunks (hash, part, body) VALUES (?, ?, ?)", build.hash, part, body);
       }
       kv.put("preview", build.hash);
+      // So the Preview's instances pick up the new code, their data kept.
+      this.abortFacets("preview");
     });
     return { accepted: true };
   }
@@ -151,6 +157,7 @@ export class AppHost extends DurableObject<Env> {
         hash,
       );
       this.ctx.storage.kv.put("deployment", published);
+      this.abortFacets("deployment");
     });
     return { ok: true, published };
   }
@@ -160,11 +167,17 @@ export class AppHost extends DurableObject<Env> {
     return this.ctx.storage.kv.get<PublishedBuild>("deployment") ?? null;
   }
 
-  /** Deletes the app with its Workspace (ADR 0009): its Preview and Deployment, their Builds and logs, sign-in links and sessions. */
+  /**
+   * Deletes the app with its Workspace (ADR 0009): its Preview and
+   * Deployment, their Builds, data and logs, sign-in links and sessions.
+   */
   async remove(workspaceId: string): Promise<void> {
     if (this.workspaceId() !== workspaceId) return;
+    // Each instance's storage is its own, and deleteAll() isn't documented to reach it.
+    for (const { name } of this.sql().exec<{ name: string }>("SELECT name FROM facets")) this.ctx.facets.delete(name);
     await this.ctx.storage.deleteAll();
     this.loaded.clear();
+    this.running.clear();
     this.tablesReady = false;
   }
 
@@ -273,6 +286,7 @@ export class AppHost extends DurableObject<Env> {
         CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, slot TEXT NOT NULL, source TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS sign_ins (token TEXT PRIMARY KEY, destination TEXT NOT NULL, path TEXT NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, destination TEXT NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS facets (name TEXT PRIMARY KEY);
       `);
       this.tablesReady = true;
     }
@@ -359,31 +373,26 @@ export class AppHost extends DurableObject<Env> {
     const { pathname } = new URL(request.url);
     if (pathname === browserErrorsPath && slot === "preview") return this.receiveBrowserErrors(request);
     if (pathname.startsWith(reservedPaths)) return new Response("Not found.", { status: 404 });
-    const name = slot === "preview" ? this.previewHash() : this.published() && deploymentCopy;
-    if (!name) return slot === "preview" ? new Response(notReady, { status: 503 }) : new Response(notPublished, { status: 404 });
-    const build = this.buildOf(name);
+    const build = this.buildIn(slot);
+    if (!build) return slot === "preview" ? new Response(notReady, { status: 503 }) : new Response(notPublished, { status: 404 });
     const asset = assetResponse(request, build);
     if (asset) return this.fromApp(asset, slot, inFrame);
 
-    const label = this.ctx.storage.kv.get<string>("label")!;
-    const worker = this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({
-      compatibilityDate: build.compatibilityDate ?? fallbackCompatibilityDate,
-      compatibilityFlags: build.compatibilityFlags,
-      mainModule: build.mainModule,
-      modules: build.modules as WorkerLoaderWorkerCode["modules"],
-      env: build.vars,
-      limits: appLimits,
-      tails: [this.ctx.exports.AppTail({ props: { label, slot } })],
-    }));
     let response: Response;
     try {
-      response = await worker.getEntrypoint().fetch(forApp(request));
+      response = await this.workerOf(slot, build).getEntrypoint().fetch(forApp(request));
     } catch (error) {
       const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
       this.log(slot, "server", [{ level: "exception", message }]);
       return new Response(`The app threw an error: ${message}`, { status: 500 });
     }
     return this.fromApp(response, slot, inFrame);
+  }
+
+  /** The Build the slot runs, or null before there is one. */
+  private buildIn(slot: Slot): KeptBuild | null {
+    const name = slot === "preview" ? this.previewHash() : this.published() && deploymentCopy;
+    return name ? this.buildOf(name) : null;
   }
 
   /** The Build kept in build_chunks under `name`: the Preview's hash, or the Deployment's copy. */
@@ -401,6 +410,70 @@ export class AppHost extends DurableObject<Env> {
     this.sql().exec("DELETE FROM build_chunks WHERE hash = ?", name);
     this.loaded.delete(name);
   }
+
+  /**
+   * The slot's Build on a Dynamic Worker. With Durable Object bindings, the
+   * app is loaded through a module that gives it them (`app-data.ts`).
+   */
+  private workerOf(slot: Slot, build: KeptBuild): WorkerStub {
+    const label = this.ctx.storage.kv.get<string>("label")!;
+    const durableObjects = build.durableObjects ?? {};
+    const withData = Object.keys(durableObjects).length > 0;
+    return this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({
+      compatibilityDate: build.compatibilityDate ?? fallbackCompatibilityDate,
+      compatibilityFlags: build.compatibilityFlags,
+      mainModule: withData ? appDataModule : build.mainModule,
+      modules: {
+        ...(build.modules as WorkerLoaderWorkerCode["modules"]),
+        ...(withData && { [appDataModule]: appDataWrapper(build.mainModule, durableObjects) }),
+      },
+      env: { ...build.vars, ...(withData && { [appDataBinding]: this.ctx.exports.AppData({ props: { label, slot } }) }) },
+      limits: appLimits,
+      tails: [this.ctx.exports.AppTail({ props: { label, slot } })],
+    }));
+  }
+
+  /**
+   * Calls a method of one of the slot's Durable Object instances, `fetch`
+   * included, for the app's binding. `name` is the instance's name, if the
+   * app reached it by name.
+   */
+  async callFacet(slot: Slot, binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {
+    const facet = this.facet(slot, binding, id, name) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    return facet[method]!(...args);
+  }
+
+  /**
+   * One of the slot's Durable Object instances, running as a facet named by
+   * the slot, the binding and the instance's ID, so the Preview's data and
+   * the Deployment's never meet (ADR 0015).
+   */
+  private facet(slot: Slot, binding: string, id: string, name: string | null): Fetcher {
+    const build = this.buildIn(slot);
+    const bindings = build?.durableObjects ?? {};
+    if (!build || !Object.hasOwn(bindings, binding)) throw new Error(`The app has no Durable Object binding named ${binding}.`);
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new TypeError(`Invalid Durable Object ID: ${id}`);
+    const facetName = `${slot}:${binding}:${id}`;
+    this.sql().exec("INSERT OR IGNORE INTO facets (name) VALUES (?)", facetName);
+    this.running.add(facetName);
+    const worker = this.workerOf(slot, build);
+    return this.ctx.facets.get(facetName, () => ({
+      class: worker.getDurableObjectClass(bindings[binding]!),
+      // An ID of the instance's own, with its name if the app reached it by
+      // name, as ctx.id.name gives. A namespace's ID carries the name.
+      id: name === null ? id : this.env.APP_HOSTS.idFromName(name),
+    }));
+  }
+
+  /** Stops the slot's running instances, so the next call starts them with the slot's new code. */
+  private abortFacets(slot: Slot): void {
+    for (const name of [...this.running].filter((running) => running.startsWith(`${slot}:`))) {
+      this.ctx.facets.abort(name, new Error("The app has new code."));
+      this.running.delete(name);
+    }
+  }
+
+
 
   private async receiveBrowserErrors(request: Request): Promise<Response> {
     if (request.method !== "POST") return new Response(null, { status: 405 });
@@ -460,6 +533,17 @@ export class AppHost extends DurableObject<Env> {
         },
       })
       .transform(result);
+  }
+}
+
+/**
+ * What an app's Durable Object bindings call (`app-data.ts`). Each instance
+ * runs as a facet in the app's app host, in the slot the call came from (ADR 0015).
+ */
+export class AppData extends WorkerEntrypoint<Env, { label: string; slot: Slot }> {
+  callFacet(binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {
+    const { label, slot } = this.ctx.props;
+    return this.env.APP_HOSTS.getByName(label).callFacet(slot, binding, id, name, method, args);
   }
 }
 
