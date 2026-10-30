@@ -93,7 +93,8 @@ export function useChecks(id: string): Checks {
     const checks = createCheckScheduler(async () => {
       const savesBefore = saves.current;
       await run(runCheck, setChecking, setError, (report, tookMs) => show(report, savesBefore, tookMs));
-      // A Build goes ahead whatever the Check found.
+      // A Build goes ahead whatever the Check found. The Workspace also builds
+      // after a save itself, for the Preview; whichever comes second is cached.
       if (current) await run(runBuild, setBuilding, setBuildError, showBuild);
     });
     scheduler.current = checks;

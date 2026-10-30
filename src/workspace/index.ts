@@ -22,7 +22,14 @@ import {
   turnProviderOptions,
   withAgentsMd,
 } from "../agent";
-import { newAppLabel, type AppLogEntry, type PreviewExchange, type SignInDestination } from "../apphost";
+import {
+  newAppLabel,
+  previewHost,
+  type AppLogEntry,
+  type PreviewExchange,
+  type PreviewRequest,
+  type SignInDestination,
+} from "../apphost";
 import type { Build, Builder } from "../builder";
 import { takeWasmMemory, trackWasm } from "../builder/wasm-memory";
 import { checkInDynamicWorker } from "../checker/isolated";
@@ -74,7 +81,7 @@ const waitingTools = new Set(["check", "build"]);
 trackWasm(() => "esbuild");
 
 /** Who a Check or a Build is for. */
-type RequestedBy = "developer" | "save" | "turn" | "agent";
+type RequestedBy = "developer" | "save" | "preview" | "turn" | "agent";
 
 /**
  * A name for this isolate, chosen when it's first needed, because Workers
@@ -308,7 +315,8 @@ export class Workspace extends Think<Env, ConversationState> {
   /**
    * Builds the Workspace's code with its Packages, after installing them if
    * `package.json` changed since the last install. A recent Build of the same
-   * inputs is reused. A Check's errors don't stop a Build. Every Build goes
+   * inputs is reused. A Check's errors don't stop a Build, and a successful
+   * Build goes to the app host as the Preview. Every Build goes
    * to Workers Logs with esbuild's memory, the isolate it ran in, and the
    * Packages its output still imports; its CPU and wall time are in its
    * call's trace. The Workspace's own Builds call it through its stub (see
@@ -366,24 +374,41 @@ export class Workspace extends Think<Env, ConversationState> {
     return label;
   }
 
-  /** Where the Preview answers. */
+  /**
+   * Where the Preview answers, and whether it has a Build to run. A Workspace
+   * whose successful Build predates its app host builds once more, from the
+   * cache, to send it there.
+   */
   async preview(): Promise<{ url: string; ready: boolean }> {
-    const label = this.appLabel();
-    const ready = (await this.env.APP_HOSTS.getByName(label).previewBuild()) !== null;
-    return { url: `https://${label}-preview.${this.env.APPS_DOMAIN}/`, ready };
+    let ready = await this.previewReady();
+    if (!ready && (await this.latestBuild())?.ok) {
+      await this.buildInItsOwnCall("preview");
+      ready = await this.previewReady();
+    }
+    return { url: `https://${previewHost(this.appLabel(), this.env.APPS_DOMAIN)}/`, ready };
   }
 
-  /** A single-use link that signs `email` in to the Preview and shows `to` (ADR 0013). The API checks ownership first. */
-  async previewSignIn(email: string, destination: SignInDestination, to: string): Promise<string> {
+  private async previewReady(): Promise<boolean> {
+    return (await this.env.APP_HOSTS.getByName(this.appLabel()).previewHash()) !== null;
+  }
+
+  /** A single-use link that signs the Developer in to the Preview and shows `to` (ADR 0013). The caller checks ownership first. */
+  async previewSignIn(destination: SignInDestination, to: string): Promise<string> {
     const label = this.appLabel();
-    const url = await this.env.APP_HOSTS.getByName(label).mintSignIn(this.name, label, email, destination, to);
+    const url = await this.env.APP_HOSTS.getByName(label).mintSignIn(this.name, label, destination, to);
     if (url === null) throw new Error("The app's label belongs to another Workspace.");
     return url;
   }
 
   /** Sends the Preview a request for the Agent's `request_preview` tool. */
-  async requestPreview(init: { method: string; path: string; headers?: Record<string, string>; body?: string }): Promise<PreviewExchange> {
+  async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
     return this.env.APP_HOSTS.getByName(this.appLabel()).requestPreview(init);
+  }
+
+  /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */
+  async removeApp(): Promise<void> {
+    const label = this.ctx.storage.kv.get<string>(appLabelKey);
+    if (label) await this.env.APP_HOSTS.getByName(label).remove(this.name);
   }
 
   /** The Preview's newest server logs and front-end errors, for the Agent's `preview_logs` tool. */
@@ -392,9 +417,10 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /**
-   * Gives the app host a good Build, which the Preview then runs. In the
-   * unlikely case that another Workspace already holds this app's label, the
-   * Workspace picks a new one.
+   * Gives the app host a successful Build, which the Preview then runs. In
+   * the unlikely case that another Workspace already holds this app's label,
+   * the Workspace picks a new one, up to three times: a Build that can't
+   * reach its Preview would leave the Developer looking at an old one.
    */
   private async sendToAppHost(build: Build): Promise<void> {
     if (this.ctx.storage.kv.get<string>(appSentKey) === build.hash) return;
@@ -425,7 +451,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * 156 ms for a Build the trace put at 1,036 ms), so it isn't timed here.
    * Work after the call is counted in the Build's trace too.
    */
-  private buildInItsOwnCall(by: "save" | "turn" | "agent"): Promise<BuildReport> {
+  private buildInItsOwnCall(by: Exclude<RequestedBy, "developer">): Promise<BuildReport> {
     return this.env.WORKSPACES.get(this.ctx.id).build(by);
   }
 

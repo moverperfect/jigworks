@@ -154,9 +154,6 @@ function PreviewLogs({ id, visible }: { id: string; visible: boolean }) {
             Logs
           </button>
         </h3>
-        <button type="button" className="button button-small" onClick={refresh} disabled={!expanded}>
-          Refresh
-        </button>
       </div>
       <div
         ref={body}

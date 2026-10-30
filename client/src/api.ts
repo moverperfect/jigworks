@@ -153,10 +153,7 @@ export async function getPreview(id: string): Promise<{ url: string; ready: bool
 
 /** A single-use link, good for 60 seconds, that signs the Preview pane's frame in and then shows `to`. */
 export async function previewFrameLink(id: string, to: string): Promise<string> {
-  const { url } = await request<{ url: string }>("POST", `${workspaceApiPath(id)}/preview/sign-in`, {
-    destination: "iframe",
-    to,
-  });
+  const { url } = await request<{ url: string }>("POST", `${workspaceApiPath(id)}/preview/sign-in`, { to });
   return url;
 }
 

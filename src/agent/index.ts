@@ -34,7 +34,7 @@ export const instructions = `You are the Agent on a development platform where a
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
-- Each good Build becomes the Preview. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
+- Each successful Build becomes the Preview. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.
 - Keep your replies short: say what you changed and anything the Developer needs to know.`;
 
@@ -149,7 +149,7 @@ export function agentTools(workspace: {
     }),
     request_preview: tool({
       description:
-        "Sends the Preview, which runs the latest good Build, an HTTP request and returns the response's status, headers and body. Build first to try new changes.",
+        "Sends the Preview, which runs the latest successful Build, an HTTP request and returns the response's status, headers and body. Build first to try new changes.",
       inputSchema: z.object({
         method: z.string().default("GET").describe("The HTTP method, such as GET or POST."),
         path: z.string().describe("The path and query, such as /api/items?page=2."),

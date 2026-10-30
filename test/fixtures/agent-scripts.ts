@@ -53,11 +53,13 @@ export const agentScripts: Record<string, Script> = {
   // Pauses mid-reply, so a test can act while the Turn streams.
   slow: () => ({ text: "Done, slowly.", delayMs: 2_000 }),
 
-  // Add a Package with add_package, or run a Check with check, then repeat what the tool said.
+  // Use one tool, then repeat what it said.
   "add-package": echoTool("add_package", { name: "@fake/a" }),
   "add-missing-package": echoTool("add_package", { name: "@fake/missing" }),
   "use-check": echoTool("check", {}),
   "use-build": echoTool("build", {}),
+  "request-preview": echoTool("request_preview", { method: "get", path: "/api/hello/Agent" }),
+  "read-preview-logs": echoTool("preview_logs", {}),
 
   // Writes a file with a type error and runs check in the same step, as the model often does.
   "write-and-check": (request) =>

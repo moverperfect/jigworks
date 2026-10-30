@@ -7,7 +7,15 @@ export type { AppLogEntry, Slot };
 /** Where a Preview sign-in link opens: the Preview pane's frame, or a tab of its own. */
 export type SignInDestination = "iframe" | "document";
 
-/** A request the Agent sends the Preview, and what came back. */
+/** A request the Agent sends the Preview. */
+export interface PreviewRequest {
+  method: string;
+  path: string;
+  headers?: Record<string, string>;
+  body?: string;
+}
+
+/** What came back from a request the Agent sent the Preview. */
 export interface PreviewExchange {
   status: number;
   headers: Record<string, string>;
@@ -18,11 +26,6 @@ export interface PreviewExchange {
 
 /** The part of a Build that runs, as the app host keeps it. Assets come with ticket 09. */
 type RunnableBuild = Pick<Build, "hash" | "mainModule" | "modules" | "compatibilityDate" | "compatibilityFlags" | "vars">;
-
-interface Session {
-  email: string;
-  destination: SignInDestination;
-}
 
 // Limits on app code, so a runaway app can't burn through the account's
 // quota. Outbound requests are otherwise unrestricted (ticket 08).
@@ -43,6 +46,9 @@ export const sessionCookie = "__Host-jigworks-preview";
 const signInSeconds = 60;
 const sessionSeconds = 8 * 60 * 60;
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+const notReady = "The Preview starts after the Workspace's first successful Build.";
+// How long the Agent's request to the Preview waits for its response, all of it.
+const previewWaitSeconds = 10;
 
 /**
  * One per app, named by its label (`<slug>-<random>`): the Workspace's
@@ -64,31 +70,38 @@ export class AppHost extends DurableObject<Env> {
   }
 
   /**
-   * Takes a Workspace's latest good Build as the Preview. A label belongs to
-   * one Workspace for good, so another Workspace's Build is refused: its
-   * Workspace then picks a new label.
+   * Takes a Workspace's latest successful Build as the Preview. A label
+   * belongs to one Workspace for as long as it lasts, so another Workspace's
+   * Build is refused: its Workspace then picks a new label.
    */
   receiveBuild(workspaceId: string, label: string, build: RunnableBuild): { accepted: boolean } {
     if (!this.claim(workspaceId, label)) return { accepted: false };
     const kv = this.ctx.storage.kv;
     const previous = kv.get<string>("preview");
     if (previous === build.hash) return { accepted: true };
-    const { hash, mainModule, modules, compatibilityDate, compatibilityFlags, vars } = build;
-    const text = JSON.stringify({ hash, mainModule, modules, compatibilityDate, compatibilityFlags, vars });
+    const text = JSON.stringify(build);
     this.ctx.storage.transactionSync(() => {
       if (previous) this.sql().exec("DELETE FROM build_chunks WHERE hash = ?", previous);
       for (let part = 0; part * chunkCharacters < text.length; part++) {
         const body = text.slice(part * chunkCharacters, (part + 1) * chunkCharacters);
-        this.sql().exec("INSERT OR REPLACE INTO build_chunks (hash, part, body) VALUES (?, ?, ?)", hash, part, body);
+        this.sql().exec("INSERT OR REPLACE INTO build_chunks (hash, part, body) VALUES (?, ?, ?)", build.hash, part, body);
       }
-      kv.put("preview", hash);
+      kv.put("preview", build.hash);
     });
     return { accepted: true };
   }
 
-  /** The hash of the Build the Preview runs, or null before the first good Build. */
-  previewBuild(): string | null {
+  /** The hash of the Build the Preview runs, or null before the first successful Build. */
+  previewHash(): string | null {
     return this.ctx.storage.kv.get<string>("preview") ?? null;
+  }
+
+  /** Deletes the app with its Workspace (ADR 0009): its Builds, logs, sign-in links and sessions. */
+  async remove(workspaceId: string): Promise<void> {
+    if (this.workspaceId() !== workspaceId) return;
+    await this.ctx.storage.deleteAll();
+    this.loaded = null;
+    this.tablesReady = false;
   }
 
   /**
@@ -96,20 +109,19 @@ export class AppHost extends DurableObject<Env> {
    * and then shows `to`. It works once, within a minute, and only opened the
    * way it was meant for: in the Preview pane's frame, or in a tab.
    */
-  mintSignIn(workspaceId: string, label: string, email: string, destination: SignInDestination, to: string): string | null {
+  mintSignIn(workspaceId: string, label: string, destination: SignInDestination, to: string): string | null {
     if (!this.claim(workspaceId, label)) return null;
     const token = randomToken();
     const sql = this.sql();
     sql.exec("DELETE FROM sign_ins WHERE expires_at <= ?", Date.now());
     sql.exec(
-      "INSERT INTO sign_ins (token, email, destination, path, expires_at) VALUES (?, ?, ?, ?, ?)",
+      "INSERT INTO sign_ins (token, destination, path, expires_at) VALUES (?, ?, ?, ?)",
       token,
-      email,
       destination,
       safePath(to),
       Date.now() + signInSeconds * 1000,
     );
-    return `https://${label}-preview.${this.env.APPS_DOMAIN}${signInPath}?t=${token}`;
+    return `https://${previewHost(label, this.env.APPS_DOMAIN)}${signInPath}?t=${token}`;
   }
 
   /**
@@ -122,38 +134,44 @@ export class AppHost extends DurableObject<Env> {
     if (this.workspaceId() === null) return new Response("There's no app here.", { status: 404 });
     if (slot === "deployment") return new Response("This app hasn't been published yet.", { status: 404 });
 
-    if (url.pathname === signInPath) return this.exchange(request, url);
+    if (url.pathname === signInPath) return this.signInWithLink(request, url);
     const session = this.sessionOf(request);
     if (!session) return this.signedOut(request, url);
     // Other apps on the apps domain are the same site, so the session cookie
     // goes with requests they send. Only the Preview's own pages may change things.
+    // A WebSocket's handshake is a GET, so it's held to its Origin instead.
     const site = request.headers.get("Sec-Fetch-Site");
-    if (unsafeMethods.has(request.method) && (site === "same-site" || site === "cross-site")) {
+    const crossOrigin = site === "same-site" || site === "cross-site";
+    const isUpgrade = request.headers.get("Upgrade")?.toLowerCase() === "websocket";
+    if ((unsafeMethods.has(request.method) && crossOrigin) || (isUpgrade && request.headers.get("Origin") !== url.origin)) {
       return new Response("Requests that change things must come from the Preview's own pages.", { status: 403 });
     }
-    return this.serve(request, slot, session);
+    return this.serve(request, slot, session.destination === "iframe");
   }
 
-  /** Sends the Preview a request for the Agent, as a browser would, and returns what came back. */
-  async requestPreview(init: { method: string; path: string; headers?: Record<string, string>; body?: string }): Promise<PreviewExchange> {
+  /**
+   * Sends the Preview a request for the Agent, as a browser would, and
+   * returns what came back: the start of the body only, read no further.
+   */
+  async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
     const label = this.ctx.storage.kv.get<string>("label");
-    if (!label) return { status: 503, headers: {}, body: "The Preview starts after the Workspace's first successful Build.", truncated: false };
+    if (!label) return { status: 503, headers: {}, body: notReady, truncated: false };
     const path = init.path.startsWith("/") ? init.path : `/${init.path}`;
-    const response = await this.serve(
-      new Request(`https://${label}-preview.${this.env.APPS_DOMAIN}${path}`, {
+    const deadline = Date.now() + previewWaitSeconds * 1000;
+    const response = await beforeDeadline(this.serve(
+      new Request(`https://${previewHost(label, this.env.APPS_DOMAIN)}${path}`, {
         method: init.method,
         headers: init.headers,
         body: init.body && init.method !== "GET" && init.method !== "HEAD" ? init.body : undefined,
       }),
       "preview",
-      null,
-    );
-    const text = await response.text();
+      false,
+    ), deadline);
+    if (!response) return { status: 504, headers: {}, body: `The Preview didn't answer within ${previewWaitSeconds} seconds.`, truncated: false };
     return {
       status: response.status,
       headers: Object.fromEntries(response.headers),
-      body: text.slice(0, previewBodyShown),
-      truncated: text.length > previewBodyShown,
+      ...(await readUpTo(response, previewBodyShown, deadline)),
     };
   }
 
@@ -197,8 +215,8 @@ export class AppHost extends DurableObject<Env> {
       this.ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS build_chunks (hash TEXT NOT NULL, part INTEGER NOT NULL, body TEXT NOT NULL, PRIMARY KEY (hash, part));
         CREATE TABLE IF NOT EXISTS logs (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL, slot TEXT NOT NULL, source TEXT NOT NULL, level TEXT NOT NULL, message TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS sign_ins (token TEXT PRIMARY KEY, email TEXT NOT NULL, destination TEXT NOT NULL, path TEXT NOT NULL, expires_at INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, email TEXT NOT NULL, destination TEXT NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sign_ins (token TEXT PRIMARY KEY, destination TEXT NOT NULL, path TEXT NOT NULL, expires_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, destination TEXT NOT NULL, expires_at INTEGER NOT NULL);
       `);
       this.tablesReady = true;
     }
@@ -211,12 +229,12 @@ export class AppHost extends DurableObject<Env> {
    * because browsers keep a cross-site frame's cookies apart; in a tab it's
    * the Preview's own (ADR 0013).
    */
-  private exchange(request: Request, url: URL): Response {
+  private signInWithLink(request: Request, url: URL): Response {
     const token = url.searchParams.get("t") ?? "";
     const sql = this.sql();
     const signIn = sql
-      .exec<{ email: string; destination: SignInDestination; path: string; expires_at: number }>(
-        "SELECT email, destination, path, expires_at FROM sign_ins WHERE token = ?",
+      .exec<{ destination: SignInDestination; path: string; expires_at: number }>(
+        "SELECT destination, path, expires_at FROM sign_ins WHERE token = ?",
         token,
       )
       .toArray()[0];
@@ -230,13 +248,7 @@ export class AppHost extends DurableObject<Env> {
     }
     const id = randomToken();
     sql.exec("DELETE FROM sessions WHERE expires_at <= ?", Date.now());
-    sql.exec(
-      "INSERT INTO sessions (id, email, destination, expires_at) VALUES (?, ?, ?, ?)",
-      id,
-      signIn.email,
-      signIn.destination,
-      Date.now() + sessionSeconds * 1000,
-    );
+    sql.exec("INSERT INTO sessions (id, destination, expires_at) VALUES (?, ?, ?)", id, signIn.destination, Date.now() + sessionSeconds * 1000);
     const attributes =
       signIn.destination === "iframe" ? "SameSite=None; Partitioned" : "SameSite=Lax";
     return new Response(null, {
@@ -249,15 +261,11 @@ export class AppHost extends DurableObject<Env> {
     });
   }
 
-  private sessionOf(request: Request): Session | null {
+  private sessionOf(request: Request): { destination: SignInDestination } | null {
     const id = cookieValue(request.headers.get("Cookie"), sessionCookie);
     if (!id) return null;
     const session = this.sql()
-      .exec<{ email: string; destination: SignInDestination }>(
-        "SELECT email, destination FROM sessions WHERE id = ? AND expires_at > ?",
-        id,
-        Date.now(),
-      )
+      .exec<{ destination: SignInDestination }>("SELECT destination FROM sessions WHERE id = ? AND expires_at > ?", id, Date.now())
       .toArray()[0];
     return session ?? null;
   }
@@ -290,13 +298,13 @@ export class AppHost extends DurableObject<Env> {
     return new Response("Open the Preview from the Workspace page to sign in.", { status: 401 });
   }
 
-  /** Runs the request through the slot's Build. `session` is null for the Agent's own requests. */
-  private async serve(request: Request, slot: Slot, session: Session | null): Promise<Response> {
+  /** Runs the request through the slot's Build. `inFrame` says it came from the Preview pane's frame. */
+  private async serve(request: Request, slot: Slot, inFrame: boolean): Promise<Response> {
     const { pathname } = new URL(request.url);
     if (pathname === browserErrorsPath) return this.receiveBrowserErrors(request, slot);
     if (pathname.startsWith(reservedPaths)) return new Response("Not found.", { status: 404 });
-    const build = this.previewBuildCode();
-    if (!build) return new Response("The Preview starts after the Workspace's first successful Build.", { status: 503 });
+    const build = this.previewBuild();
+    if (!build) return new Response(notReady, { status: 503 });
 
     const label = this.ctx.storage.kv.get<string>("label")!;
     const worker = this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({
@@ -316,11 +324,11 @@ export class AppHost extends DurableObject<Env> {
       this.log(slot, "server", [{ level: "exception", message }]);
       return new Response(`The app threw an error: ${message}`, { status: 500 });
     }
-    return this.fromApp(response, slot, session?.destination === "iframe");
+    return this.fromApp(response, slot, inFrame);
   }
 
-  private previewBuildCode(): RunnableBuild | null {
-    const hash = this.previewBuild();
+  private previewBuild(): RunnableBuild | null {
+    const hash = this.previewHash();
     if (!hash) return null;
     if (this.loaded?.hash !== hash) {
       const parts = this.sql().exec<{ body: string }>("SELECT body FROM build_chunks WHERE hash = ? ORDER BY part", hash).toArray();
@@ -363,13 +371,21 @@ export class AppHost extends DurableObject<Env> {
         }
       }
     }
-    if (slot === "preview") headers.append("Content-Security-Policy", `frame-ancestors ${this.env.PLATFORM_ORIGIN}`);
+    // A WebSocket's handshake keeps its socket, and the cookie rules above.
+    if (response.webSocket) return new Response(null, { status: 101, webSocket: response.webSocket, headers });
+    if (slot === "preview") headers.append("Content-Security-Policy", `frame-ancestors 'self' ${this.env.PLATFORM_ORIGIN}`);
     const result = new Response(response.body, { status: response.status, statusText: response.statusText, headers });
     if (!headers.get("Content-Type")?.includes("text/html")) return result;
+    // Ahead of the page's own scripts: at the start of its <head> or <body>,
+    // or before its first tag if it has neither.
+    let injected = false;
     return new HTMLRewriter()
-      .on("head", {
-        element: (head) => {
-          head.prepend(browserErrorScript, { html: true });
+      .on("*", {
+        element: (element) => {
+          if (injected || element.tagName === "html") return;
+          injected = true;
+          if (element.tagName === "head" || element.tagName === "body") element.prepend(browserErrorScript, { html: true });
+          else element.before(browserErrorScript, { html: true });
         },
       })
       .transform(result);
@@ -395,6 +411,11 @@ export class AppTail extends WorkerEntrypoint<Env, { label: string; slot: Slot }
 /** The Preview of `<label>-preview.<apps domain>`, otherwise the Deployment. */
 export function slotOf(hostname: string): Slot {
   return hostname.split(".", 1)[0]!.endsWith("-preview") ? "preview" : "deployment";
+}
+
+/** The Preview's hostname for an app's label: `<label>-preview.<apps domain>`. */
+export function previewHost(label: string, appsDomain: string): string {
+  return `${label}-preview.${appsDomain}`;
 }
 
 /** An app's label from its hostname, such as `notes-k3x9p2qa` from `notes-k3x9p2qa-preview.jigworks.app`. */
@@ -438,9 +459,46 @@ export function forApp(request: Request): Request {
   return new Request(request, { headers });
 }
 
+/**
+ * The start of a response's body, up to `characters` or whatever arrived by
+ * `deadline`, reading no further, so a long, endless or stalled body can't
+ * hold up the Agent.
+ */
+async function readUpTo(response: Response, characters: number, deadline: number): Promise<{ body: string; truncated: boolean }> {
+  if (!response.body) return { body: "", truncated: false };
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let body = "";
+  while (body.length <= characters) {
+    const chunk = await beforeDeadline(reader.read(), deadline);
+    if (!chunk) break;
+    if (chunk.done) return { body: body + decoder.decode(), truncated: false };
+    body += decoder.decode(chunk.value, { stream: true });
+  }
+  reader.cancel().catch(() => {});
+  return { body: body.slice(0, characters), truncated: true };
+}
+
+/** What `promise` gives, or null if `deadline` comes first. */
+async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const late = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));
+  });
+  try {
+    return await Promise.race([promise, late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** A path on the Preview to go to after signing in: never another site. */
 function safePath(to: string): string {
-  return to.startsWith("/") && !to.startsWith("//") && !to.startsWith("/\\") ? to : "/";
+  // Resolved as a browser would resolve the Location header, which ignores
+  // tabs and newlines and reads a backslash as a slash.
+  const base = "https://preview.invalid";
+  const url = URL.parse(to, base);
+  return to.startsWith("/") && url?.origin === base ? url.pathname + url.search + url.hash : "/";
 }
 
 /** A cookie made to work in a cross-site frame: partitioned, and sent with cross-site requests. */

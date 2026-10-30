@@ -4,10 +4,11 @@
   "main": "src/platform/worker.ts",
   "compatibility_date": "2026-10-01",
   "compatibility_flags": ["nodejs_compat"],
-  // Jack's Installation. It's served only at app.jigworks.dev, behind the
-  // platform's Access application. The custom domain makes Cloudflare create
-  // the DNS record and certificate.
-  // Apps answer on their own domain (ADR 0012), through the same Worker.
+  // Jack's Installation. The platform is served at app.jigworks.dev, behind
+  // its Access application; the custom domain makes Cloudflare create the DNS
+  // record and certificate. Apps answer on their own domain (ADR 0012),
+  // through the same Worker: Deployments behind the apps' Access application,
+  // Previews past it, signing their Developer in themselves (ADR 0013).
   "routes": [
     { "pattern": "app.jigworks.dev", "custom_domain": true },
     { "pattern": "*.jigworks.app/*", "zone_name": "jigworks.app" }

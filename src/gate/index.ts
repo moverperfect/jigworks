@@ -30,10 +30,11 @@ const safeMethods = new Set(["GET", "HEAD", "OPTIONS"]);
 /**
  * Decides whether a request may reach the platform. It must carry a valid
  * token from the platform's Access application for an email on the Developer
- * list, and must come from the platform's own pages. Apps live on a domain of
- * their own (ADR 0012), but the Access cookie's `SameSite` setting is the
- * Operator's choice. So the `Origin` and `Sec-Fetch-Site` headers are what stop
- * an app's page sending requests in a Developer's name.
+ * list, and, unless it's a `navigation`, must come from the platform's own
+ * pages. Apps live on a domain of their own (ADR 0012), but the Access
+ * cookie's `SameSite` setting is the Operator's choice. So the `Origin` and
+ * `Sec-Fetch-Site` headers are what stop an app's page sending requests in a
+ * Developer's name.
  */
 export async function gate(request: Request, config: GateConfig): Promise<GateDecision> {
   if (config.navigation) {

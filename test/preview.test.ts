@@ -1,12 +1,13 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { browserErrorsPath, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
+import { browserErrorsPath, labelOf, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
 import type { BuildReport } from "../src/shared/build-report";
 import { accessToken, testAccess } from "./helpers/access";
 import { call, create } from "./helpers/api";
 
-// The Preview, through the platform Worker as a browser sees it. Each good
-// Build goes to the Workspace's app host, which runs it on a Dynamic Worker
+// The Preview, through the platform Worker as a browser sees it. Each
+// successful Build goes to the Workspace's app host, which runs it on a Dynamic Worker
 // (ADR 0009) and signs its Developer in itself (ADR 0013).
 
 const build = async (id: string) => {
@@ -32,11 +33,18 @@ const logs = async (id: string) => {
   return (await response.json<{ logs: AppLogEntry[] }>()).logs;
 };
 
-/** A sign-in link for the Preview, as the Workspace page asks for one. */
-const signInLink = async (id: string, destination: "iframe" | "document", to = "/", email?: string) => {
-  const response = await call(`/api/workspaces/${id}/preview/sign-in`, { method: "POST", body: { destination, to }, email });
-  return response;
-};
+/** A sign-in link for the Preview pane's frame, as the Workspace page asks for one. */
+const signInLink = (id: string, to = "/", email?: string) =>
+  call(`/api/workspaces/${id}/preview/sign-in`, { method: "POST", body: { to }, email });
+
+/** The platform's page that signs a tab in to the Preview at `host`, once Access has let the Developer through. */
+const tabSignIn = async (host: string, to = "/", email = testAccess.developer) =>
+  exports.default.fetch(
+    new Request(`${testAccess.origin}/preview-sign-in?host=${host}&to=${encodeURIComponent(to)}`, {
+      headers: { "Cf-Access-Jwt-Assertion": await accessToken({ email }) },
+      redirect: "manual",
+    }),
+  );
 
 /** A request to an app's hostname, as a browser sends it. */
 const browse = (url: string, { dest = "iframe", cookie, ...init }: RequestInit & { dest?: string; cookie?: string } = {}) => {
@@ -46,9 +54,12 @@ const browse = (url: string, { dest = "iframe", cookie, ...init }: RequestInit &
   return exports.default.fetch(new Request(url, { ...init, headers, redirect: "manual" }));
 };
 
-/** Signs in to a Workspace's Preview through the pane's link, and returns the session cookie. */
+/** Signs in to a Workspace's Preview, in the pane's frame or a tab, and returns the session cookie. */
 const signIn = async (id: string, destination: "iframe" | "document" = "iframe") => {
-  const { url } = await (await signInLink(id, destination)).json<{ url: string }>();
+  const url =
+    destination === "iframe"
+      ? (await (await signInLink(id)).json<{ url: string }>()).url
+      : (await tabSignIn(new URL((await preview(id)).url).hostname)).headers.get("Location")!;
   const response = await browse(url, { dest: destination });
   expect(response.status).toBe(303);
   return response.headers.getSetCookie()[0]!.split(";", 1)[0]!;
@@ -84,7 +95,7 @@ describe("the Preview", () => {
     expect(await response.text()).toBe("Hello from your Worker");
   });
 
-  it("keeps the last good Build when a Build fails, and takes the next good one", async () => {
+  it("keeps the last successful Build when a Build fails, and takes the next one", async () => {
     const workspace = await create("Preview Builds");
     await build(workspace.id);
     await save(workspace.id, "src/index.ts", "export default {");
@@ -182,6 +193,53 @@ describe("the Preview", () => {
     );
   });
 
+  it("reports front-end errors from pages without a <head> too", async () => {
+    const workspace = await create("Preview Headless");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch: () => new Response("<h1>Hi</h1><script>boom()</script>", { headers: { "Content-Type": "text/html" } }),
+};
+`,
+    );
+    await build(workspace.id);
+    const page = await (await visit(workspace.id)).text();
+    expect(page).toContain(browserErrorsPath);
+    expect(page.indexOf(browserErrorsPath)).toBeLessThan(page.indexOf("<h1>"));
+  });
+
+  it("passes WebSockets through, from the Preview's own pages only", async () => {
+    const workspace = await create("Preview Sockets");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch: () => {
+    const [client, server] = Object.values(new WebSocketPair());
+    server.accept();
+    server.addEventListener("message", (event) => server.send(\`echo \${event.data}\`));
+    return new Response(null, { status: 101, webSocket: client });
+  },
+};
+`,
+    );
+    await build(workspace.id);
+    const { url } = await preview(workspace.id);
+    const cookie = await signIn(workspace.id, "document");
+    const upgrade = (origin: string) => browse(url, { dest: "empty", cookie, headers: { Upgrade: "websocket", Origin: origin } });
+    expect((await upgrade(`https://sibling-k3x9p2qa-preview.${testAccess.appsDomain}`)).status).toBe(403);
+
+    const response = await upgrade(new URL(url).origin);
+    expect(response.status).toBe(101);
+    const socket = response.webSocket!;
+    socket.accept();
+    const reply = new Promise((resolve) => socket.addEventListener("message", (event) => resolve(event.data)));
+    socket.send("hi");
+    expect(await reply).toBe("echo hi");
+    socket.close();
+  });
+
   it("keeps /__jigworks/ for the platform, so app code never sees it", async () => {
     const workspace = await create("Preview Reserved");
     await save(workspace.id, "src/index.ts", 'export default { fetch: () => new Response("app") };\n');
@@ -197,8 +255,65 @@ describe("the Preview", () => {
     const theirs = { email: testAccess.secondDeveloper };
     expect((await call(`/api/workspaces/${workspace.id}/preview`, theirs)).status).toBe(404);
     expect((await call(`/api/workspaces/${workspace.id}/preview/logs`, theirs)).status).toBe(404);
-    expect((await signInLink(workspace.id, "iframe", "/", testAccess.secondDeveloper)).status).toBe(404);
+    expect((await signInLink(workspace.id, "/", testAccess.secondDeveloper)).status).toBe(404);
   });
+
+  it("goes when its Workspace is deleted, sessions and all", async () => {
+    const workspace = await create("Preview Deleted");
+    await build(workspace.id);
+    const { url } = await preview(workspace.id);
+    const session = await signIn(workspace.id);
+    const deleted = await call(`/api/workspaces/${workspace.id}`, { method: "DELETE", body: { confirmName: workspace.name } });
+    expect(deleted.status).toBe(204);
+    const after = await browse(url, { dest: "empty", cookie: session });
+    expect(after.status).toBe(404);
+    expect(await after.text()).not.toBe("Hello from your Worker");
+  });
+
+  it("comes with the first look for a Workspace whose successful Build predates its app host", async () => {
+    const workspace = await create("Preview Older");
+    await build(workspace.id);
+    // As a Workspace built before ticket 08: no label, nothing sent to an app host.
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (_instance, state) => {
+      state.storage.kv.delete("app:label");
+      state.storage.kv.delete("app:sent");
+    });
+    expect((await preview(workspace.id)).ready).toBe(true);
+    expect(await (await visit(workspace.id)).text()).toBe("Hello from your Worker");
+  });
+
+  it("gives the Agent at most the start of a long or endless response", async () => {
+    const workspace = await create("Preview Endless");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch: (request: Request) => {
+    const path = new URL(request.url).pathname;
+    if (path === "/long") return new Response("x".repeat(100_000));
+    const chunk = new TextEncoder().encode("y".repeat(1_000));
+    if (path === "/endless") return new Response(new ReadableStream({ pull: (controller) => controller.enqueue(chunk) }));
+    const never = () => new Promise((resolve) => setTimeout(resolve, 120_000));
+    if (path === "/stalled") {
+      return new Response(new ReadableStream({ start: (controller) => controller.enqueue(chunk), pull: never }));
+    }
+    return never().then(() => new Response("too late"));
+  },
+};
+`,
+    );
+    await build(workspace.id);
+    const agent = env.WORKSPACES.getByName(workspace.id);
+    const long = await agent.requestPreview({ method: "GET", path: "/long" });
+    expect(long).toMatchObject({ status: 200, truncated: true });
+    expect(long.body.length).toBe(20_000);
+    const endless = await agent.requestPreview({ method: "GET", path: "/endless" });
+    expect(endless).toMatchObject({ status: 200, truncated: true });
+    const stalled = await agent.requestPreview({ method: "GET", path: "/stalled" });
+    expect(stalled).toMatchObject({ status: 200, body: "y".repeat(1_000), truncated: true });
+    const silent = await agent.requestPreview({ method: "GET", path: "/silent" });
+    expect(silent).toMatchObject({ status: 504, truncated: false });
+  }, 60_000);
 
   it("lets the Agent send the Preview requests", async () => {
     const workspace = await create("Preview Tools");
@@ -234,7 +349,7 @@ describe("signing in to the Preview", () => {
   it("lets the pane in with a link that works once, then only with the session it gives", async () => {
     const workspace = await create("Sign In Pane");
     await build(workspace.id);
-    const { url } = await (await signInLink(workspace.id, "iframe", "/api/hello/Pane")).json<{ url: string }>();
+    const { url } = await (await signInLink(workspace.id, "/api/hello/Pane")).json<{ url: string }>();
     expect(new URL(url).pathname).toBe(signInPath);
 
     const exchanged = await browse(url, { dest: "iframe" });
@@ -246,18 +361,18 @@ describe("signing in to the Preview", () => {
     expect((await browse(url, { dest: "iframe" })).status).toBe(403);
     const page = await browse(new URL("/api/hello/Pane", url).href, { dest: "iframe", cookie: cookie!.split(";", 1)[0] });
     expect(await page.json()).toEqual({ message: "Hello, Pane" });
-    expect(page.headers.get("Content-Security-Policy")).toBe(`frame-ancestors ${testAccess.origin}`);
+    expect(page.headers.get("Content-Security-Policy")).toBe(`frame-ancestors 'self' ${testAccess.origin}`);
   });
 
   it("refuses a link opened the wrong way, or on another app's hostname", async () => {
     const workspace = await create("Sign In Wrong");
     const other = await create("Sign In Other");
-    const { url } = await (await signInLink(workspace.id, "iframe")).json<{ url: string }>();
+    const { url } = await (await signInLink(workspace.id)).json<{ url: string }>();
     expect((await browse(url, { dest: "document" })).status).toBe(403);
 
-    const { url: second } = await (await signInLink(workspace.id, "iframe")).json<{ url: string }>();
+    const { url: second } = await (await signInLink(workspace.id)).json<{ url: string }>();
     const { url: otherPreview } = await preview(other.id);
-    await signInLink(other.id, "iframe");
+    await signInLink(other.id);
     const elsewhere = new URL(second);
     elsewhere.hostname = new URL(otherPreview).hostname;
     expect((await browse(elsewhere.href, { dest: "iframe" })).status).toBe(403);
@@ -307,18 +422,13 @@ describe("signing in to the Preview", () => {
     const workspace = await create("Sign In Theirs");
     await build(workspace.id);
     const host = new URL((await preview(workspace.id)).url).hostname;
-    const signInAs = async (email: string, to: string) =>
-      exports.default.fetch(
-        new Request(`${testAccess.origin}/preview-sign-in?host=${host}&to=${encodeURIComponent(to)}`, {
-          headers: { "Cf-Access-Jwt-Assertion": await accessToken({ email }) },
-          redirect: "manual",
-        }),
-      );
-    expect((await signInAs(testAccess.secondDeveloper, "/")).status).toBe(404);
+    expect((await tabSignIn(host, "/", testAccess.secondDeveloper)).status).toBe(404);
 
-    const link = (await signInAs(testAccess.developer, "//elsewhere.example/steal")).headers.get("Location")!;
-    const exchanged = await browse(link, { dest: "document" });
-    expect(exchanged.headers.get("Location")).toBe("/");
+    for (const elsewhere of ["//elsewhere.example/steal", "/\\elsewhere.example/steal", "/\t/elsewhere.example/steal", "https://elsewhere.example/", "//[oops"]) {
+      const link = (await tabSignIn(host, elsewhere)).headers.get("Location")!;
+      const exchanged = await browse(link, { dest: "document" });
+      expect(exchanged.headers.get("Location")).toBe("/");
+    }
   });
 
   it("refuses changes sent from other apps on the apps domain", async () => {
@@ -333,7 +443,7 @@ describe("Deployments", () => {
   it("need a token from the apps' own Access application", async () => {
     const workspace = await create("Deployment Gate");
     await build(workspace.id);
-    const label = await env.WORKSPACES.getByName(workspace.id).appLabel();
+    const label = labelOf(new URL((await preview(workspace.id)).url).hostname);
     const deployment = `https://${label}.${testAccess.appsDomain}/`;
     expect((await browse(deployment, { dest: "document" })).status).toBe(401);
     const platformToken = await accessToken({ email: testAccess.developer });

@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { verifyAccess } from "../access";
-import { isAppLabel, labelOf, slotOf } from "../apphost";
+import { isAppLabel, labelOf, previewHost, slotOf } from "../apphost";
 import { gate, type GateConfig } from "../gate";
 import { api, type Platform } from "./api";
 
@@ -69,9 +69,9 @@ async function previewSignIn(request: Request, env: Env): Promise<Response> {
   const host = url.searchParams.get("host") ?? "";
   const label = labelOf(host);
   const notYours = new Response("There's no Preview of yours at that address.", { status: 404 });
-  if (host !== `${label}-preview.${env.APPS_DOMAIN}` || !isAppLabel(label)) return notYours;
+  if (host !== previewHost(label, env.APPS_DOMAIN) || !isAppLabel(label)) return notYours;
   const workspaceId = await env.APP_HOSTS.getByName(label).workspaceId();
   if (!workspaceId || !(await env.DEVELOPERS.getByName(decision.email).get(workspaceId))) return notYours;
-  const link = await env.WORKSPACES.getByName(workspaceId).previewSignIn(decision.email, "document", url.searchParams.get("to") ?? "/");
+  const link = await env.WORKSPACES.getByName(workspaceId).previewSignIn("document", url.searchParams.get("to") ?? "/");
   return new Response(null, { status: 303, headers: { Location: link, "Cache-Control": "no-store" } });
 }
