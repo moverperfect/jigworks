@@ -393,7 +393,9 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 
 ## Stage 5: Hosting (Deployments)
 
-**No verdict yet:** stage 5 also covers app data (ticket 11). **Publishing works.** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
+**Verdict: yes.** Publishing and app data both work on the deployed platform.
+- **Publishing:** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
+- **App data:** an app's Durable Object instances kept their data across new Builds and publishes, with the Preview's apart from the Deployment's. A call through the binding took about 20–40 ms on Cloudflare's side.
 
 ### Publishing a Deployment (ticket 10)
 
@@ -425,3 +427,33 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 - **Later Builds:** the Developer changed the page's heading to "version 2" and published, then to "version 3" and built. The Preview showed "version 3"; the Deployment stayed on "version 2", and its script still came back 304.
 - **Publishing again:** it asked first, naming the Deployment's hostname and when the Build it would replace was published.
 - **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
+
+### App data (ticket 11)
+
+- **Platform:** the deployed platform, measured on 2026-10-30 after ticket 11's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:**
+  - **Browser:** each request's round trip, timed in the page.
+  - **Platform Worker:** its wall time for the request, from Cloudflare's trace, leaving out the network.
+  - **`AppData`:** the wall time of each call through the binding, from `AppData` to the app host and the instance, from the trace.
+- **Workspace:** a fresh one from the Worker Template.
+- **The app:** a Hono Worker with one binding, `COUNTER`, to a `Counter` class. Each instance counted clicks in its own SQLite table. `/api/count/:name` added one to the instance of that name and answered with the count and the code's version.
+- **Check and Build:** the Check was clean, and the Build succeeded.
+
+| Step | Browser | Platform Worker | `AppData` |
+| --- | ---: | ---: | ---: |
+| First count in the Preview, starting the instance | 660 ms | | |
+| Later counts, the Preview and the Deployment (12) | 53–92 ms | 28–46 ms | 17–44 ms |
+| First request to the Preview after a new Build | | 907 ms | 36 ms |
+| First request to the Deployment after publishing again | | 105 ms | 34 ms |
+
+- **Instances by name:** "a" counted 1 to 5 in the Preview while "b" started at 1. Each instance had its own `ctx.id`, and `ctx.id.name` was its name.
+- **The Preview and the Deployment apart:** after publishing, the Deployment's "a" started at 1 while the Preview's stood at 5.
+- **New code:**
+  - After a new Build answering "version 2", the Preview's "a" carried on from 5 to 6, as version 2.
+  - The Deployment, not yet published again, stayed on version 1 and carried on from 3 to 4.
+  - After publishing again, the Deployment answered as version 2 and carried on from 4 to 5.
+- **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
+
+### Found along the way
+
+- **The trace's CPU for app data is near zero:** 0–2 ms per `AppData` and app host call. The instance's own work wasn't reported as a separate event.
