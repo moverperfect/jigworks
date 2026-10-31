@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { build, type Build, type BuildFailure } from "../src/builder";
 import type { BuildReport } from "../src/shared/build-report";
+import type { TestReport } from "../src/shared/test-report";
 import type { CheckReport } from "../src/workspace";
 import { registryPackages } from "./fixtures/registry-data";
 import { call, create } from "./helpers/api";
@@ -211,5 +212,13 @@ describe("the Worker + React Template", () => {
     const api = await preview.requestPreview({ method: "GET", path: "/api/hello/React" });
     expect(JSON.parse(api.body)).toEqual({ message: "Hello, React" });
     expect((await preview.requestPreview({ method: "GET", path: "/favicon.svg" })).body).toContain("<svg");
+
+    // Its tests: App rendered to HTML, and the Worker's routes.
+    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`, { method: "POST" })).json<TestReport>();
+    expect(tests.bundleErrors).toEqual([]);
+    expect(tests.files.map(({ file, tests, errors }) => [file, tests.map(({ state }) => state), errors])).toEqual([
+      ["src/client/App.test.tsx", ["passed"], []],
+      ["src/server/index.test.ts", ["passed"], []],
+    ]);
   });
 });

@@ -4,6 +4,7 @@ import { generateText, tool, type LanguageModel, type ToolSet, type UIMessage } 
 import { z } from "zod";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
 import type { CheckReport, Problem } from "../shared/check-report";
+import { testFailures, type TestFailure, type TestReport } from "../shared/test-report";
 import { maxRetries, type MessageMetadata } from "../shared/conversation";
 import type { Workspace } from "../workspace";
 
@@ -34,6 +35,7 @@ export const instructions = `You are the Agent on a development platform where a
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
+- Write tests in files named like src/index.test.ts, with vitest's API: describe, it, expect, vi.fn, vi.spyOn and fake timers. vi.mock and snapshots aren't supported, and there's no DOM. Run them with the test tool. Every Turn ends with the tests as well, after the Build; failing tests don't use up your retries, but the Developer sees them.
 - Each successful Build becomes the Preview. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.
@@ -104,12 +106,54 @@ function describeProblem(problem: Problem): string {
   return `${where} ${problem.severity}${code}: ${problem.message}`;
 }
 
+const failuresShown = 30;
+const consoleShown = 20;
+
+/** A test report as text for the Agent: each failure, with what its file logged, then the counts. */
+export function describeTests(report: TestReport): string {
+  if (report.bundleErrors.length > 0) {
+    return ["The tests couldn't be bundled, so none ran:", ...report.bundleErrors.map(describeBuildProblem)].join("\n");
+  }
+  if (report.files.length === 0) return "There are no test files. Name them like src/index.test.ts.";
+  const lines: string[] = [];
+  let shown = 0;
+  for (const file of report.files) {
+    const failures: [name: string, failure: TestFailure][] = [
+      ...file.errors.map((error): [string, TestFailure] => [`/${file.file}`, error]),
+      ...file.tests.flatMap((test): [string, TestFailure][] =>
+        test.state === "failed" && test.failure ? [[`/${file.file} > ${test.name.join(" > ")}`, test.failure]] : [],
+      ),
+    ];
+    for (const [name, failure] of failures) {
+      if (shown++ >= failuresShown) continue;
+      const where = failure.file === null ? "" : ` (at /${failure.file}:${failure.line}:${failure.column})`;
+      lines.push(`FAILED ${name}${where}: ${failure.message}`);
+      if (failure.diff) lines.push(failure.diff.replace(/^/gm, "  "));
+    }
+    if (failures.length > 0 && file.console.length > 0) {
+      lines.push(`/${file.file} logged:`, ...file.console.slice(0, consoleShown).map((line) => `  ${line}`));
+    }
+  }
+  if (shown > failuresShown) lines.push(`…and ${shown - failuresShown} more failures.`);
+  const { passed, failed, skipped, todo } = report.counts;
+  const fileErrors = testFailures(report) - failed;
+  lines.push(
+    `${plural(report.files.length, "test file")}: ${passed} passed, ${failed} failed` +
+      (skipped + todo > 0 ? `, ${skipped + todo} skipped or to do` : "") +
+      (fileErrors > 0 ? `, and ${plural(fileErrors, "error")} outside tests` : "") +
+      ".",
+  );
+  return lines.join("\n");
+}
+
 /** The Agent's own tools. Think adds its file tools and bash. */
 export function agentTools(workspace: {
   /** A Check, after the step's other tools have finished. */
   check: () => Promise<CheckReport>;
   /** A Build, after the step's other tools have finished. */
   build: () => Promise<BuildReport>;
+  /** A test run, of every test file or only `files`, after the step's other tools have finished. */
+  test: (files?: string[]) => Promise<TestReport>;
   addPackageForAgent: Workspace["addPackageForAgent"];
   requestPreview: Workspace["requestPreview"];
   previewLogs: Workspace["previewLogs"];
@@ -130,6 +174,16 @@ export function agentTools(workspace: {
       inputSchema: z.object({}),
       execute: async () => {
         return describeBuild(await workspace.build());
+      },
+    }),
+    test: tool({
+      description:
+        "Runs the Workspace's tests, files named like *.test.ts or *.spec.tsx, each file on its own with the platform's vitest, and returns which tests failed and why, with what their files logged. Installs Packages first if package.json changed. It sees the changes made by tools called in the same step.",
+      inputSchema: z.object({
+        files: z.array(z.string()).optional().describe("The test files to run, such as /src/index.test.ts. Every test file if left out."),
+      }),
+      execute: async ({ files }) => {
+        return describeTests(await workspace.test(files?.map((path) => path.replace(/^\/+/, ""))));
       },
     }),
     add_package: tool({

@@ -1,8 +1,10 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { bundleTests, type TestBundle } from "../src/builder";
-import type { TestFileReport } from "../src/shared/test-report";
-import { isTestFile, runTests, vitestModule } from "../src/tester";
+import type { TestFileReport, TestReport } from "../src/shared/test-report";
+import { isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
+import { call, create } from "./helpers/api";
 
 // Tests a Workspace's own tests: they run in Dynamic Workers on a runner
 // built from vitest's parts (ADR 0017).
@@ -23,7 +25,7 @@ async function run(files: Record<string, string>): Promise<TestFileReport[]> {
   const testFiles = [...snapshot.keys()].filter(isTestFile).sort();
   const bundle = await bundleTests(snapshot, testFiles, { vitest: vitestModule });
   if (!bundle.ok) throw new Error(`The tests didn't bundle: ${JSON.stringify(bundle.errors)}`);
-  return runTests(env.LOADER, bundle as TestBundle, testFiles);
+  return testInDynamicWorkers(env.LOADER, bundle as TestBundle, testFiles);
 }
 
 const only = async (files: Record<string, string>) => (await run(files))[0]!;
@@ -203,6 +205,35 @@ describe("the Tester", () => {
       ].join("\n"),
     });
     expect(report.tests[0]!.state).toBe("passed");
+  });
+});
+
+describe("a Workspace's tests", () => {
+  it("run from the API, where the latest run of them all is kept, starting with the Worker Template's", async () => {
+    const workspace = await create("Tested");
+    expect(await (await call(`/api/workspaces/${workspace.id}/tests`)).json()).toBeNull();
+    const response = await call(`/api/workspaces/${workspace.id}/tests`, { method: "POST" });
+    expect(response.status).toBe(200);
+    const report = await response.json<TestReport>();
+    expect(report).toMatchObject({
+      bundleErrors: [],
+      counts: { passed: 1, failed: 0, skipped: 0, todo: 0 },
+      files: [{ file: "src/index.test.ts", tests: [{ name: ["the app", "greets by name"], state: "passed", line: 8 }], errors: [] }],
+    });
+    expect(await (await call(`/api/workspaces/${workspace.id}/tests`)).json()).toEqual(report);
+  });
+
+  it("report why they couldn't be bundled, and nothing when there are none", async () => {
+    const workspace = await create("Untestable");
+    const save = (path: string, text: string) => call(`/api/workspaces/${workspace.id}/files/${path}`, { method: "PUT", text });
+    await save("src/index.test.ts", 'import { it } from "vitest";\nimport { gone } from "@fake/missing";\nit("x", () => gone());\n');
+    const failed = await (await call(`/api/workspaces/${workspace.id}/tests`, { method: "POST" })).json<TestReport>();
+    expect(failed.files).toEqual([]);
+    expect(failed.bundleErrors).toEqual([expect.objectContaining({ message: expect.stringContaining("@fake/missing") })]);
+
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (instance) => instance.workspace.rm("/src/index.test.ts"));
+    const none = await (await call(`/api/workspaces/${workspace.id}/tests`, { method: "POST" })).json<TestReport>();
+    expect(none).toMatchObject({ files: [], bundleErrors: [], counts: { passed: 0, failed: 0 } });
   });
 });
 

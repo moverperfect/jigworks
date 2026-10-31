@@ -42,6 +42,7 @@ export const registryPackages: FakePackage[] = [
             "    }",
             "    return new Response('Not Found', { status: 404 });",
             "  };",
+            "  request = (input, init, env) => this.fetch(new Request(new URL(input, 'http://localhost'), init), env);",
             "}",
             "",
           ].join("\n"),
@@ -57,6 +58,7 @@ export const registryPackages: FakePackage[] = [
             "  get(path: string, handler: (c: Context<E>) => Response | Promise<Response>): this;",
             "  post(path: string, handler: (c: Context<E>) => Response | Promise<Response>): this;",
             "  fetch(request: Request): Response | Promise<Response>;",
+            '  request(input: string, init?: RequestInit, env?: E["Bindings"]): Promise<Response>;',
             "}",
             "",
           ].join("\n"),
@@ -97,8 +99,31 @@ export const registryPackages: FakePackage[] = [
       "19.3.1": {
         ageHours: 240,
         files: {
-          "package.json": JSON.stringify({ name: "react-dom", version: "19.3.1", exports: { "./client": "./client.js" } }),
+          "package.json": JSON.stringify({
+            name: "react-dom",
+            version: "19.3.1",
+            // As React's own, which has a build for Node too.
+            exports: { "./client": "./client.js", "./server": { browser: "./server.browser.js", default: "./server.node.js" } },
+          }),
           "client.js": "export const createRoot = (element) => ({ render: (node) => { element.textContent = String(node.type); } });\n",
+          // Renders the fake React's elements, calling function components with their props.
+          "server.browser.js": [
+            "const escape = (text) => String(text).replace(/[&<>\"]/g, (char) => `&#${char.charCodeAt(0)};`);",
+            "export function renderToString(node) {",
+            "  if (node == null || typeof node === 'boolean') return '';",
+            "  if (Array.isArray(node)) return node.map(renderToString).join('');",
+            "  if (typeof node !== 'object') return escape(node);",
+            "  const { type, props } = node;",
+            "  if (typeof type === 'function') return renderToString(type(props));",
+            "  const attributes = Object.entries(props)",
+            "    .filter(([name, value]) => name !== 'children' && typeof value !== 'function')",
+            "    .map(([name, value]) => ` ${name === 'className' ? 'class' : name}=\"${escape(value)}\"`)",
+            "    .join('');",
+            "  return `<${type}${attributes}>${renderToString(props.children)}</${type}>`;",
+            "}",
+            "",
+          ].join("\n"),
+          "server.node.js": 'export const renderToString = () => {\n  throw new Error("The Node build");\n};\n',
         },
       },
     },
@@ -147,8 +172,9 @@ export const registryPackages: FakePackage[] = [
           "package.json": JSON.stringify({
             name: "@types/react-dom",
             version: "19.3.0",
-            exports: { "./client": { types: "./client.d.ts" } },
+            exports: { "./client": { types: "./client.d.ts" }, "./server": { types: "./server.d.ts" } },
           }),
+          "server.d.ts": 'import type { ReactNode } from "react";\nexport declare function renderToString(element: ReactNode): string;\n',
           "client.d.ts": [
             'import type { ReactNode } from "react";',
             "export interface Root { render(children: ReactNode): void }",

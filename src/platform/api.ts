@@ -156,6 +156,17 @@ api.post("/workspaces/:id/build", async (c) => {
   return c.json(report);
 });
 
+// Runs every test file (ADR 0017). The Workspace logs each run.
+api.post("/workspaces/:id/tests", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).runTests()) : noSuchWorkspace(c);
+});
+
+api.get("/workspaces/:id/tests", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).latestTests()) : noSuchWorkspace(c);
+});
+
 api.get("/workspaces/:id/build", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json(await workspace(c, record.id).latestBuild()) : noSuchWorkspace(c);

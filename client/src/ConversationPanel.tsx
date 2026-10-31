@@ -344,6 +344,7 @@ function describeLastTurn(lastTurn: LastTurn): string | null {
   const left = [
     lastTurn.checkErrors ? plural(lastTurn.checkErrors, "error") : null,
     lastTurn.buildErrors ? "a failed Build" : null,
+    lastTurn.testFailures ? plural(lastTurn.testFailures, "test failure") : null,
   ].filter((part) => part !== null);
   if (left.length > 0) {
     const retries = lastTurn.retries > 0 ? ` after ${plural(lastTurn.retries, "retry", "retries")}` : "";

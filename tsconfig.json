@@ -23,5 +23,8 @@
     "test",
     "worker-configuration.d.ts",
     "vitest.config.ts"
+  ],
+  "exclude": [
+    "src/tester/types"
   ]
 }

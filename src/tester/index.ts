@@ -1,4 +1,5 @@
 import testerWorker from "../generated/tester-worker.txt";
+import packedTypes from "../generated/vitest-types.txt";
 import type { TestBundle } from "../builder";
 import type { TestFileReport } from "../shared/test-report";
 import { sourceMapModule, testsModule, vitestGlobal } from "./names";
@@ -14,6 +15,12 @@ export const { describe, suite, it, test, beforeAll, afterAll, beforeEach, after
 export { vi as vitest };
 `;
 
+let types: Map<string, string> | null = null;
+
+/** The declarations of the platform's `vitest`, by their paths under node_modules/, for the Check. */
+export const vitestTypes = (): Map<string, string> =>
+  (types ??= new Map(Object.entries(JSON.parse(packedTypes) as Record<string, string>)));
+
 const testerModule = "tester.js";
 // Used when an app's wrangler.jsonc has no compatibility date, as for the app host.
 const fallbackCompatibilityDate = "2026-10-01";
@@ -27,7 +34,7 @@ const fileTimeoutMs = 60_000;
  * another, and reports each. A file that fails to finish, because it went
  * over its limits or crashed the isolate, is reported as an error.
  */
-export async function runTests(loader: WorkerLoader, bundle: TestBundle, files: string[]): Promise<TestFileReport[]> {
+export async function testInDynamicWorkers(loader: WorkerLoader, bundle: TestBundle, files: string[]): Promise<TestFileReport[]> {
   const reports: TestFileReport[] = [];
   for (const file of files) {
     const worker = loader.load({

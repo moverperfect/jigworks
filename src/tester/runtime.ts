@@ -305,9 +305,11 @@ const vitest = {
   vitest: vi,
 };
 
-// The console lines kept for each file, and how long each may be.
-const consoleLines = 200;
-const consoleLineLength = 1000;
+// How much of what the tests logged is kept for each file, and of each failure.
+const consoleLines = 100;
+const consoleLineLength = 500;
+const messageLength = 2000;
+const diffLength = 4000;
 
 /**
  * Runs one test file, which `load` imports, and reports each test. The
@@ -394,8 +396,8 @@ function report(path: string, file: File, locate: Locate, console: string[], unh
   const failureOf = (error: { message?: string; name?: string; stack?: string; diff?: string }): TestFailure => {
     const place = locate.stack(error.stack);
     return {
-      message: plain(error.name && error.name !== "Error" ? `${error.name}: ${error.message}` : String(error.message)),
-      diff: error.diff ? plain(error.diff) : null,
+      message: cut(plain(error.name && error.name !== "Error" ? `${error.name}: ${error.message}` : String(error.message)), messageLength),
+      diff: error.diff ? cut(plain(error.diff), diffLength) : null,
       file: place?.file ?? null,
       line: place?.line ?? null,
       column: place?.column ?? null,
@@ -455,6 +457,7 @@ function locator(bundlePath: string, sourceMap: string): Locate {
 
 // eslint-disable-next-line no-control-regex
 const plain = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
+const cut = (text: string, length: number) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
 
 /** Keeps what the tests write to the console, as well as writing it. */
 function captureConsole(): { lines: string[]; restore(): void } {
@@ -464,7 +467,7 @@ function captureConsole(): { lines: string[]; restore(): void } {
   for (const level of levels) {
     const original = console[level];
     console[level] = (...args: unknown[]) => {
-      if (lines.length < consoleLines) lines.push(plain(`${level}: ${format(...args)}`).slice(0, consoleLineLength));
+      if (lines.length < consoleLines) lines.push(cut(plain(`${level}: ${format(...args)}`), consoleLineLength));
       original.apply(console, args);
     };
   }

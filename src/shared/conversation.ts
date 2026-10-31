@@ -22,6 +22,8 @@ export interface LastTurn {
   checkErrors: number | null;
   /** How many errors the Turn's last Build had, or null if no Build ran. */
   buildErrors: number | null;
+  /** How many failures the Turn's tests had, or null if they didn't run. Missing from Turns before tests. */
+  testFailures?: number | null;
   /** How many of the retries the Turn used. */
   retries: number;
   /** Whether the Turn stopped because it used all its model steps. */
