@@ -30,7 +30,8 @@ const testerModule = "tester.js";
 const bundlerModule = "bundler.js";
 const bundlerCompatibilityDate = "2026-10-01";
 // One bundler, reused, so esbuild starts once per isolate, as the Checker
-// does. The ID follows the bundler's code, so a deploy that changes it gets a
+// does. The ID follows the bundler's code, which records esbuild's module's
+// hash (see scripts/pack-tester.mjs), so a deploy that changes either gets a
 // new isolate.
 const bundlerId = `test-bundler-${fnv1a(testBundlerWorker + bundlerCompatibilityDate)}`;
 // Package files a bundle never takes in. Leaving them out keeps the call to

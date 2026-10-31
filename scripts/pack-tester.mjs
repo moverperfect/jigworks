@@ -5,7 +5,9 @@
 //
 // Also bundles the Test bundler's Dynamic Worker (src/tester/bundler.ts),
 // with worker-bundler, into src/generated/test-bundler.txt. esbuild's
-// compiled module is passed alongside it, as `esbuild.wasm`.
+// compiled module is passed alongside it, as `esbuild.wasm`. As for the
+// Checker, the bundle's first line records the module's SHA-256, so the
+// bundle, and the Dynamic Worker ID made from it, change whenever esbuild does.
 //
 // Also packs the types the Check gives the tests' `vitest`, as JSON in
 // src/generated/vitest-types.txt: each path under node_modules/, to its text.
@@ -13,6 +15,7 @@
 // declarations of the parts it's built from and their dependencies.
 // usage: node scripts/pack-tester.mjs
 import { build } from "esbuild";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,7 +41,9 @@ await build({
 console.log(`wrote src/generated/tester-worker.txt (${(statSync(outfile).size / 1e3).toFixed(1)} kB)`);
 
 const bundlerFile = fileURLToPath(new URL("../src/generated/test-bundler.txt", import.meta.url));
+const esbuildWasm = readFileSync(join(repo, "node_modules/@cloudflare/worker-bundler/dist/esbuild.wasm"));
 await build({
+  banner: { js: `// esbuild.wasm sha256 ${createHash("sha256").update(esbuildWasm).digest("hex")}` },
   absWorkingDir: repo,
   entryPoints: ["src/tester/bundler.ts"],
   outfile: bundlerFile,
