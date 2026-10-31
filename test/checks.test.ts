@@ -30,6 +30,7 @@ describe("a Workspace's files", () => {
     expect(files).toEqual([
       "AGENTS.md",
       "package.json",
+      "src/index.test.ts",
       "src/index.ts",
       "tsconfig.json",
       "worker-configuration.d.ts",
@@ -79,6 +80,19 @@ describe("Checks", () => {
       packages: { state: "installed", packages: [{ name: "hono", version: "4.13.13" }] },
     });
     expect(await (await call(`/api/workspaces/${workspace.id}/check`)).json()).toEqual(report);
+  });
+
+  it("type-checks tests against the platform's vitest", async () => {
+    const workspace = await create("Typed tests");
+    await save(
+      workspace.id,
+      "src/typed.test.ts",
+      'import { expect, it, vi } from "vitest";\nit("spies", () => {\n  const spy = vi.fn((n: number) => n);\n  expect(spy(1)).toBeTheAnswer();\n});\n',
+    );
+    const report = await check(workspace.id);
+    expect(report.problems).toEqual([
+      expect.objectContaining({ file: "src/typed.test.ts", line: 4, code: 2339, message: expect.stringContaining("toBeTheAnswer") }),
+    ]);
   });
 
   it("reports a type error in a saved file", async () => {

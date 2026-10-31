@@ -344,10 +344,12 @@ function describeLastTurn(lastTurn: LastTurn): string | null {
   const left = [
     lastTurn.checkErrors ? plural(lastTurn.checkErrors, "error") : null,
     lastTurn.buildErrors ? "a failed Build" : null,
+    lastTurn.testFailures ? plural(lastTurn.testFailures, "test failure") : null,
   ].filter((part) => part !== null);
   if (left.length > 0) {
     const retries = lastTurn.retries > 0 ? ` after ${plural(lastTurn.retries, "retry", "retries")}` : "";
-    said.push(`${said.length > 0 ? "the" : "The"} Turn ended with ${left.join(" and ")}${retries}`);
+    const listed = left.length > 1 ? `${left.slice(0, -1).join(", ")} and ${left.at(-1)}` : left[0];
+    said.push(`${said.length > 0 ? "the" : "The"} Turn ended with ${listed}${retries}`);
   }
   return said.length > 0 ? said.join(", and ") : null;
 }

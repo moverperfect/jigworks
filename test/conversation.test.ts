@@ -1,7 +1,9 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { CheckReport } from "../src/workspace";
-import { brokenCount, buildableIndex, fixedCount } from "./fixtures/agent-scripts";
+import type { TestReport } from "../src/shared/test-report";
+import { brokenCount, buildableIndex, failingTest, fixedCount } from "./fixtures/agent-scripts";
 import { summaryReply } from "./fixtures/fake-anthropic";
 import { call, create } from "./helpers/api";
 import { testAccess } from "./helpers/access";
@@ -49,7 +51,7 @@ describe("a Turn", () => {
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
     expect(sent.latest).toContain("the Developer changed /src/notes.md");
     expect(sent.tools).toEqual(
-      expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "preview_logs", "read", "request_preview", "write"]),
+      expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "preview_logs", "read", "request_preview", "test", "write"]),
     );
 
     // The note is for the Turn after the change only.
@@ -84,6 +86,61 @@ describe("a Turn", () => {
     expect(textOf(fromCheck[0]!)).toContain('imports "left-pad"');
     const report = await (await call(`/api/workspaces/${workspace.id}/build`)).json<{ ok: boolean }>();
     expect(report.ok).toBe(true);
+  });
+
+  it("ends with the tests, whose failures don't ask for a retry but stay in the problems list", async () => {
+    const workspace = await create("Failing test");
+    const conversation = await connect(workspace.id);
+    const ended = await runTurn(workspace.id, conversation, "[script:write-failing-test] Add a test");
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 1, retries: 0 });
+    expect(await fileText(workspace.id, "src/sum.test.ts")).toBe(failingTest);
+    expect((await history(workspace.id)).filter((message) => message.metadata?.from === "check")).toEqual([]);
+
+    const report = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(report.counts).toEqual({ passed: 1, failed: 1, skipped: 0, todo: 0 });
+    expect(report.files.map(({ file }) => file)).toEqual(["src/index.test.ts", "src/sum.test.ts"]);
+    expect(report.files[1]!.tests).toEqual([
+      {
+        name: ["adds"],
+        state: "failed",
+        line: 3,
+        failure: expect.objectContaining({ message: "AssertionError: expected 2 to be 3 // Object.is equality", file: "src/sum.test.ts", line: 4 }),
+      },
+    ]);
+  });
+
+  it("ends without an error, having checked and built once, when its tests can't run", async () => {
+    const workspace = await create("Tests can't run");
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (instance) => {
+      instance.runTests = async () => {
+        throw new Error("The tests broke");
+      };
+    });
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:say-hello] Hi");
+    expect(ended).toMatchObject({ status: "completed", error: null, checkErrors: 0, buildErrors: 0, testFailures: null });
+  });
+
+  it("runs the tests with the test tool, all of them or the files it names", async () => {
+    const [all, one] = [await create("Test tool"), await create("Test tool, one file")];
+    await call(`/api/workspaces/${one.id}/files/src/sum.test.ts`, { method: "PUT", text: failingTest });
+    await runTurn(all.id, await connect(all.id), "[script:use-test] Run the tests");
+    expect(textOf((await history(all.id))[1]!)).toBe(
+      "The tool said: /src/index.test.ts: 1 passed, 0 failed.\n1 test file: 1 passed, 0 failed.",
+    );
+
+    await runTurn(one.id, await connect(one.id), "[script:use-test-file] Run that test");
+    expect(textOf((await history(one.id))[1]!)).toBe(
+      [
+        "The tool said: /src/sum.test.ts: 0 passed, 1 failed.",
+        "  FAILED adds (at /src/sum.test.ts:4:17): AssertionError: expected 2 to be 3 // Object.is equality",
+        "    - Expected",
+        "    + Received",
+        "    ",
+        "    - 3",
+        "    + 2",
+        "1 test file: 0 passed, 1 failed.",
+      ].join("\n"),
+    );
   });
 
   it("stops after three more tries, leaving the errors in the problems list", async () => {

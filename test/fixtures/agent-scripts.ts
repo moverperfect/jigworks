@@ -8,9 +8,12 @@ export const fixedCount = "export const count: number = 3;\n";
 const checkFound = "After your Turn, the Check found";
 const buildFailed = "the Build failed";
 // Type-checks, but the Build fails: the bundle still requires a package that isn't installed.
+// Both are Hono apps, as the Template's test expects.
 export const unbuildableIndex =
-  'declare function require(name: string): unknown;\nrequire("left-pad");\nexport default { fetch: () => new Response("hi") };\n';
-export const buildableIndex = 'export default { fetch: () => new Response("hi") };\n';
+  'import { Hono } from "hono";\ndeclare function require(name: string): unknown;\nrequire("left-pad");\nexport default new Hono();\n';
+export const buildableIndex = 'import { Hono } from "hono";\nexport default new Hono().get("/", (c) => c.text("hi"));\n';
+// A test that fails, beside the Template's, which passes.
+export const failingTest = 'import { expect, it } from "vitest";\n\nit("adds", () => {\n  expect(1 + 1).toBe(3);\n});\n';
 
 export const agentScripts: Record<string, Script> = {
   // Answers once, with no tools.
@@ -61,6 +64,14 @@ export const agentScripts: Record<string, Script> = {
   "request-preview": echoTool("request_preview", { method: "get", path: "/api/hello/Agent" }),
   "read-preview-logs": echoTool("preview_logs", {}),
   "list-secrets": echoTool("list_secrets", {}),
+  "use-test": echoTool("test", {}),
+  "use-test-file": echoTool("test", { files: ["/src/sum.test.ts"] }),
+
+  // Writes a failing test, and does nothing more when the tests fail.
+  "write-failing-test": (request) =>
+    afterToolResult(request)
+      ? { text: "Wrote a test." }
+      : { toolCalls: [{ name: "write", input: { path: "/src/sum.test.ts", content: failingTest } }] },
 
   // Writes a file with a type error and runs check in the same step, as the model often does.
   "write-and-check": (request) =>

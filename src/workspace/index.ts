@@ -42,9 +42,11 @@ import type { BuildReport } from "../shared/build-report";
 import type { Deployment } from "../shared/deployment";
 import type { Secret } from "../shared/secret";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
+import { testFailures, testReportWithin, type TestCounts, type TestFileReport, type TestReport } from "../shared/test-report";
+import { isTestFile, testInDynamicWorkers, vitestModule, vitestTypes } from "../tester";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
 
-export type { CheckReport };
+export type { CheckReport, TestReport };
 
 /** A Workspace file for the editor: its text, or word that it isn't text. */
 export type OpenedFile = { text: string } | { binary: true };
@@ -57,6 +59,7 @@ export type PackageAdded = DeveloperChange<{ version: string; status: PackageSta
 
 const checkKey = "check:latest";
 const buildKey = "build:latest";
+const testKey = "test:latest";
 // The app's label, which names its app host and its hostnames (ADR 0012).
 const appLabelKey = "app:label";
 // The hash of the last Build the app host took, so a cached Build isn't sent again.
@@ -78,7 +81,7 @@ const turnSteps = 40;
 // start over HTTP, so the platform runs each Turn's lock, Check and retries.
 const watchingFrames = new Set(["cf_agent_stream_resume_request", "cf_agent_stream_resume_ack"]);
 // The Agent's tools that read the files, and so wait for the others in their step.
-const waitingTools = new Set(["check", "build"]);
+const waitingTools = new Set(["check", "build", "test"]);
 
 // Records how far esbuild's memory grows during each Build, for the findings.
 // ts-rust runs in its own Dynamic Worker, so only esbuild shows here.
@@ -127,6 +130,10 @@ export class Workspace extends Think<Env, ConversationState> {
   // what's waiting for them to finish (see `otherToolsFinished`).
   private toolsRunning = 0;
   private toolsFinished: (() => void)[] = [];
+  // Test runs in the order they read the files, and the latest run kept, so
+  // a slow run can't replace the report of one that read the files after it.
+  private testRunsStarted = 0;
+  private testRunKept = 0;
 
   /**
    * A Turn or Start fresh can't outlive the isolate it ran in (see
@@ -142,6 +149,7 @@ export class Workspace extends Think<Env, ConversationState> {
       error: "The Workspace restarted during the Turn.",
       checkErrors: null,
       buildErrors: null,
+      testFailures: null,
       retries: 0,
       outOfSteps: false,
     };
@@ -194,6 +202,10 @@ export class Workspace extends Think<Env, ConversationState> {
       build: async () => {
         await this.otherToolsFinished();
         return this.buildInItsOwnCall("agent");
+      },
+      test: async (files) => {
+        await this.otherToolsFinished();
+        return this.runTests("agent", files);
       },
       addPackageForAgent: (name, options) => this.addPackageForAgent(name, options),
       requestPreview: (init) => this.requestPreview(init),
@@ -297,7 +309,8 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.exclusive(async () => {
       const ranAt = new Date().toISOString();
       const packages = await this.install({ retryFailed: false });
-      const snapshot = new Map([...this.files.snapshot(), ...this.packages.declarations()]);
+      // The platform's `vitest` comes last, so a Package can't stand in for it (ADR 0017).
+      const snapshot = new Map([...this.files.snapshot(), ...this.packages.declarations(), ...vitestTypes()]);
       const { problems, projects } = await checkInDynamicWorker(this.env.LOADER, tsRust, snapshot);
       const report: CheckReport = {
         ranAt,
@@ -369,6 +382,55 @@ export class Workspace extends Think<Env, ConversationState> {
   /** The latest Build's report, or null before the first. */
   async latestBuild(): Promise<BuildReport | null> {
     return this.ctx.storage.kv.get<BuildReport>(buildKey) ?? null;
+  }
+
+  /**
+   * Runs the Workspace's tests, or only those in `only`, each test file in a
+   * Dynamic Worker of its own (ADR 0017), after installing Packages if
+   * `package.json` changed. The tests are bundled as a Build is. A run of
+   * every test file is kept as the latest, for the problems list. Every run
+   * goes to Workers Logs, with what asked for it.
+   */
+  async runTests(by: RequestedBy = "developer", only?: string[]): Promise<TestReport> {
+    const ranAt = new Date().toISOString();
+    // The files are read in line with saves, and the tests run after.
+    const { run, testFiles, bundle } = await this.exclusive(async () => {
+      const run = ++this.testRunsStarted;
+      await this.install({ retryFailed: false });
+      const testFiles = this.files
+        .list()
+        .filter((path) => isTestFile(path) && (!only || only.includes(path)))
+        .sort();
+      if (testFiles.length === 0) return { run, testFiles, bundle: null };
+      const snapshot = new Map([...this.files.snapshot(), ...this.packages.snapshot()]);
+      // The bundler is the Build's, loaded on first use.
+      const { bundleTests } = await import("../builder");
+      return { run, testFiles, bundle: await bundleTests(snapshot, testFiles, { vitest: vitestModule }) };
+    });
+    const files = bundle?.ok ? await testInDynamicWorkers(this.env.LOADER, bundle, testFiles) : [];
+    const report: TestReport = { ranAt, files, bundleErrors: bundle && !bundle.ok ? bundle.errors : [], counts: countTests(files) };
+    if (!only && run > this.testRunKept) {
+      this.testRunKept = run;
+      this.ctx.storage.kv.put(testKey, testReportWithin(report, reportBudgetBytes));
+    }
+    console.log(
+      JSON.stringify({
+        event: "test",
+        workspace: this.name,
+        by,
+        isolate: isolateName(),
+        files: testFiles.length,
+        only: only !== undefined,
+        counts: report.counts,
+        failures: testFailures(report),
+      }),
+    );
+    return report;
+  }
+
+  /** The latest run of every test file, or null before the first. */
+  async latestTests(): Promise<TestReport | null> {
+    return this.ctx.storage.kv.get<TestReport>(testKey) ?? null;
   }
 
   private appHost() {
@@ -647,6 +709,7 @@ export class Workspace extends Think<Env, ConversationState> {
       error: null,
       checkErrors: null,
       buildErrors: null,
+      testFailures: null,
       retries: 0,
       outOfSteps: false,
     };
@@ -673,6 +736,10 @@ export class Workspace extends Think<Env, ConversationState> {
         buildErrors: ended.build.errors.length,
         outOfSteps: usage.steps >= turnSteps,
       };
+      // Once, after the last Check and Build: failing tests don't ask for a
+      // retry, and tests that can't run don't fail the Turn.
+      const tests = await this.runTests("turn").catch(() => null);
+      lastTurn.testFailures = tests && testFailures(tests);
     } catch (error) {
       lastTurn.error = error instanceof Error ? error.message : String(error);
       // The Agent may have changed files before the failure, and every Turn
@@ -680,6 +747,8 @@ export class Workspace extends Think<Env, ConversationState> {
       const ended = await this.endOfTurn().catch(() => null);
       lastTurn.checkErrors = ended?.check.counts.error ?? null;
       lastTurn.buildErrors = ended?.build.errors.length ?? null;
+      const tests = ended && (await this.runTests("turn").catch(() => null));
+      lastTurn.testFailures = tests ? testFailures(tests) : null;
     } finally {
       this.turnUsage = null;
       lastTurn.endedAt = new Date().toISOString();
@@ -689,7 +758,7 @@ export class Workspace extends Think<Env, ConversationState> {
     }
   }
 
-  /** A Turn's Check, then its Build, which goes ahead whatever the Check found. */
+  /** A Turn's Check, then its Build, which goes ahead whatever the Check found. The Turn's tests come once, after the last. */
   private async endOfTurn(): Promise<{ check: CheckReport; build: BuildReport }> {
     const check = await this.check("turn");
     return { check, build: await this.buildInItsOwnCall("turn") };
@@ -745,6 +814,12 @@ function withinBudget(problems: Problem[]): Problem[] {
     kept.push(problem);
   }
   return kept;
+}
+
+function countTests(files: TestFileReport[]): TestCounts {
+  const counts: TestCounts = { passed: 0, failed: 0, skipped: 0, todo: 0 };
+  for (const file of files) for (const test of file.tests) counts[test.state] += 1;
+  return counts;
 }
 
 function countBySeverity(problems: Problem[]): Record<Severity, number> {

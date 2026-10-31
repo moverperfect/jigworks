@@ -40,6 +40,10 @@ _Avoid_: Typecheck, lint, compile
 The runnable form of a Workspace's code, made from its files as they were at one moment. A Build can be made while the Check still shows errors.
 _Avoid_: Bundle, artifact, compile
 
+**Test**:
+Code in a Workspace file named like `src/index.test.ts` that runs the app's code and says whether it behaves, written with vitest's API. The platform runs a Workspace's tests with its own vitest (ADR 0017), when the Agent or the Developer asks and at the end of every Turn. Failing tests show in the problems list, but don't make the Agent retry.
+_Avoid_: Spec, test suite
+
 **Front end**:
 The part of a Workspace's app that runs in the browser: `index.html` and the scripts and stylesheets it links (ADR 0014). A Workspace without `index.html` has none.
 _Avoid_: Client, SPA, frontend

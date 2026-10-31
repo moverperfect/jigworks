@@ -26,6 +26,16 @@ The platform serves the front end and `public/` in front of the Worker, as Cloud
 - `@theme`, `@utility`, `@variant`, `@apply` and `@import` of your own stylesheets all work. `@plugin` and `@config` fail the Build: there are no Tailwind plugins, such as typography or forms, and no `tailwind.config.js`.
 - A stylesheet that doesn't import `tailwindcss` is plain CSS. The Build combines it with its `@import`s.
 
+## Tests
+
+- Write tests in files named like `src/index.test.ts`, beside the code they test, and import from `vitest`. The platform provides `vitest`, so it isn't a Package: don't add it.
+- Run them with the `test` tool. They also run at the end of every Turn, after the Build. Failing tests show in the Developer's problems list, but don't ask you to retry.
+- Each test file runs on its own, in a fresh Worker. Supported: `describe`, `it` and `test` (with `skip`, `only`, `todo` and `each`), the hooks, `expect` with vitest's matchers, `vi.fn`, `vi.spyOn`, `vi.stubGlobal` and fake timers.
+- Not supported: `vi.mock` and anything else that replaces a module, snapshots, and coverage. Pass fakes in, or spy on an object the code calls, and compare with `toEqual`.
+- Test the Worker's routes end to end with `app.request(path, init, env)`, as `src/server/index.test.ts` does. Pass the `env` the test needs: tests don't get the app's vars, secrets or Durable Object bindings.
+- There's no DOM in tests, so `@testing-library/react` and its kin don't work. Render components to HTML with `renderToString` from `react-dom/server`, as `src/client/App.test.tsx` does, and test their logic as plain functions.
+- Tests have no network: `fetch` to another site fails. Replace it with `vi.spyOn(globalThis, "fetch")`.
+
 ## Code the Build understands
 
 - Link stylesheets from `index.html`. Don't import CSS from code, and don't use CSS modules (`*.module.css`): the Build drops CSS imported from code.

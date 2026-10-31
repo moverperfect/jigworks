@@ -11,6 +11,7 @@ import { ProblemsPanel } from "./ProblemsPanel";
 import { Link } from "./router";
 import { foldersOf } from "./tree";
 import { useChecks } from "./useChecks";
+import { useTests } from "./useTests";
 import { useConversation } from "./useConversation";
 import { useOpenFile, type CursorTarget } from "./useOpenFile";
 
@@ -65,6 +66,7 @@ function WorkspaceView({ id }: { id: string }) {
   const headingId = useId();
   const files = useLoad(() => listFiles(id));
   const checks = useChecks(id);
+  const tests = useTests(id);
   const conversation = useConversation(id);
   const { state } = conversation;
   // Only the Agent may change files while a Turn runs.
@@ -78,7 +80,7 @@ function WorkspaceView({ id }: { id: string }) {
   const [problemsExpanded, setProblemsExpanded] = useState(true);
   const [view, setView] = useState<View>("editor");
 
-  // When a Turn ends, show what the Agent changed: the files, the open file and the Turn's Check and Build.
+  // When a Turn ends, show what the Agent changed: the files, the open file and the Turn's Check, Build and tests.
   // A Turn that ran while the socket was closed shows as a new `lastTurn`.
   const turnKey = state && `${state.turn?.startedAt ?? ""} ${state.lastTurn?.endedAt ?? ""}`;
   const seenTurnKey = useRef<string | null>(null);
@@ -90,6 +92,7 @@ function WorkspaceView({ id }: { id: string }) {
     const lastTurn = state?.lastTurn;
     if (lastTurn?.checkErrors == null || lastTurn.buildErrors == null) checks.checkNow();
     else checks.showLatest();
+    tests.showLatest();
   });
   useEffect(() => {
     const previous = seenTurnKey.current;
@@ -240,6 +243,7 @@ function WorkspaceView({ id }: { id: string }) {
 
       <ProblemsPanel
         checks={checks}
+        tests={tests}
         expanded={problemsExpanded}
         onToggle={() => setProblemsExpanded((expanded) => !expanded)}
         canOpen={(path) => knownPaths.has(path)}

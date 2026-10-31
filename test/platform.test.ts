@@ -153,7 +153,7 @@ describe("Exporting a Workspace", () => {
     );
     const files = unzipSync(new Uint8Array(await response.arrayBuffer()));
     expect(Object.keys(files).sort()).toEqual(
-      ["AGENTS.md", "package.json", "src/index.ts", "tsconfig.json", "worker-configuration.d.ts", "wrangler.jsonc"].sort(),
+      ["AGENTS.md", "package.json", "src/index.test.ts", "src/index.ts", "tsconfig.json", "worker-configuration.d.ts", "wrangler.jsonc"].sort(),
     );
     expect(JSON.parse(strFromU8(files["package.json"]!))).toMatchObject({ dependencies: { hono: "4.13.13" } });
   });
