@@ -195,6 +195,31 @@ describe("the Tester", () => {
     expect(reports[2]!.tests).toEqual([expect.objectContaining({ state: "passed" })]);
   });
 
+  it("has each, only and a fetch that tests can replace", async () => {
+    const report = await only({
+      "src/more.test.ts": [
+        'import { describe, expect, it, vi } from "vitest";',
+        "",
+        'describe("each", () => {',
+        '  it.each([[1, 2], [2, 4]])("doubles %i", (n, doubled) => expect(n * 2).toBe(doubled));',
+        "});",
+        "",
+        'describe.only("only", () => {',
+        '  it("fetches a fake", async () => {',
+        '    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("faked"));',
+        '    expect(await (await fetch("https://example.com/")).text()).toBe("faked");',
+        "  });",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    expect(report.tests.map(({ name, state }) => [name.join(" > "), state])).toEqual([
+      ["each > doubles 1", "skipped"],
+      ["each > doubles 2", "skipped"],
+      ["only > fetches a fake", "passed"],
+    ]);
+  });
+
   it("can't reach the network", async () => {
     const report = await only({
       "src/fetch.test.ts": [

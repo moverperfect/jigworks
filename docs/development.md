@@ -4,7 +4,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
 
 ## Running it
 
-- **Generated files:** `pnpm generate` packs the Templates, the Checker's bundle and Tailwind's stylesheets into `src/generated/`, which the typecheck, the tests and deploys need. Run it after changing `templates/`, `src/checker/worker.ts` or the Tailwind version. Run `pnpm types` after editing `wrangler.jsonc`.
+- **Generated files:** `pnpm generate` packs the Templates, the Checker's bundle, Tailwind's stylesheets, and the Tester's bundle and `vitest` types into `src/generated/`, which the typecheck, the tests and deploys need. Run it after changing `templates/`, `src/checker/worker.ts`, `src/tester/` or the Tailwind or vitest versions. Run `pnpm types` after editing `wrangler.jsonc`.
 - **Locally:** `pnpm platform:dev` serves http://127.0.0.1:8787. `.dev.vars` (gitignored) needs `DEV_SIGNED_IN_AS` and `DEVELOPER_LIST`, both `developer@example.com`, and `PLATFORM_ORIGIN=http://127.0.0.1:8787`. The gate honours `DEV_SIGNED_IN_AS` only for localhost.
 - **Turns without the real model:**
   1. Start the scripted model with `pnpm agent:fake`, which serves 127.0.0.1:8788.
@@ -72,4 +72,5 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
   - nothing documents alarms in a facet, so apps aren't told they can use them.
 - **worker-bundler:** it runs its own npm installer for any Package missing from `node_modules/`, which would skip the one-day rule. The Builder strips `dependencies` before handing over `package.json`.
 - **Tailwind** (ADRs 0007 and 0014): the platform has one version, `tailwindcss` in its own `package.json`. To upgrade, change that exact version and run `pnpm generate`, which packs its stylesheets. The version goes into every Build's hash, so each Workspace's next Build uses it.
-- **Size:** with Tailwind and the Worker + React Template, the Worker is 7,941 KiB compressed (`npx wrangler deploy --dry-run`), against Cloudflare's 10 MiB limit. Ticket 13 (the test runner) has about 2.2 MiB. The Templates' runtime types, 623 KB, are packed once for all of them.
+- **The Tester's vitest** (ADR 0017) is `@vitest/runner`, `@vitest/expect`, `@vitest/spy` and `@vitest/utils` at the platform's own vitest version, with `@sinonjs/fake-timers`. Upgrade them together with vitest, run `pnpm generate`, and run `test/tests.test.ts`. Recheck `src/tester/runtime.ts` against vitest's own `createExpect`, `TestRunner` and `FakeTimers` in `vitest/dist/chunks/`, which it copies in part, and `src/tester/types/vitest.d.ts` against vitest's `vi`.
+- **Size:** with Tailwind, the Worker + React Template and the Tester, the Worker is 8,075 KiB compressed (`npx wrangler deploy --dry-run`), against Cloudflare's 10 MiB limit. The Tester and its `vitest` types took 134 KiB of that. The Templates' runtime types, 623 KB, are packed once for all of them.

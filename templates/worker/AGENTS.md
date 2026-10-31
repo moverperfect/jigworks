@@ -10,6 +10,15 @@ This Workspace runs only inside the platform. There is no local machine and noth
 - **Checks:** a Check (a type-check with TypeScript 7 rules) runs automatically at the end of every Turn. Call the `check` tool to see the errors sooner, for example after a large change.
 - **Build:** the Build uses esbuild (through `@cloudflare/worker-bundler`), starting from `src/index.ts`, and reads `wrangler.jsonc` for the compatibility date, flags and `vars`. A Build runs after the Check at the end of every Turn, and type errors don't stop it. Call the `build` tool to see Build errors sooner.
 
+## Tests
+
+- Write tests in files named like `src/index.test.ts`, beside the code they test, and import from `vitest`. The platform provides `vitest`, so it isn't a Package: don't add it.
+- Run them with the `test` tool. They also run at the end of every Turn, after the Build. Failing tests show in the Developer's problems list, but don't ask you to retry.
+- Each test file runs on its own, in a fresh Worker. Supported: `describe`, `it` and `test` (with `skip`, `only`, `todo` and `each`), the hooks, `expect` with vitest's matchers, `vi.fn`, `vi.spyOn`, `vi.stubGlobal` and fake timers.
+- Not supported: `vi.mock` and anything else that replaces a module, snapshots, and coverage. Pass fakes in, or spy on an object the code calls, and compare with `toEqual`.
+- Test the app's routes end to end with `app.request(path, init, env)`, as `src/index.test.ts` does. Pass the `env` the test needs: tests don't get the app's vars, secrets or Durable Object bindings.
+- Tests have no network: `fetch` to another site fails. Replace it with `vi.spyOn(globalThis, "fetch")`.
+
 ## Code the Build understands
 
 - Import your own files by relative path (`./routes/users`). The Build ignores `paths` in `tsconfig.json`, so `@/` aliases don't resolve.
