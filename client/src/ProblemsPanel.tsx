@@ -1,6 +1,7 @@
 import { useId, type ReactNode } from "react";
 import type { BuildReport } from "../../src/shared/build-report.ts";
 import type { CheckReport, Severity } from "../../src/shared/check-report.ts";
+import type { TestReport } from "../../src/shared/test-report.ts";
 import { ErrorMessage } from "./ErrorMessage";
 import {
   buildProblems,
@@ -10,8 +11,11 @@ import {
   problemPath,
   problemTotal,
   summarise,
+  summariseTests,
+  testProblems,
 } from "./problems";
 import type { Checks } from "./useChecks";
+import type { Tests } from "./useTests";
 
 const severityLabel: Record<Severity, string> = {
   error: "Error",
@@ -34,15 +38,17 @@ const formatDuration = (ms: number) => (ms < 1000 ? `${Math.round(ms)} ms` : `${
 /** Opens a file at a line and column, both from 1. */
 type OpenAt = (path: string, line: number | null, column: number | null) => void;
 
-/** The problems list: the Package warnings, the Build's errors and warnings, then the latest Check's problems by file. */
+/** The problems list: the Package warnings, the Build's errors and warnings, the tests' failures, then the latest Check's problems by file. */
 export function ProblemsPanel({
   checks,
+  tests,
   expanded,
   onToggle,
   canOpen,
   onOpen,
 }: {
   checks: Checks;
+  tests: Tests;
   expanded: boolean;
   onToggle(): void;
   /** Whether a file can be opened from the list: Package files and TypeScript's own files can't. */
@@ -70,6 +76,17 @@ export function ProblemsPanel({
   else if (!checking && build) {
     buildStatus = build.ok ? `Built${buildTookMs === null ? "" : ` in ${formatDuration(buildTookMs)}`}` : "Build failed";
   }
+  // Tests run only when asked, and at the end of each Turn, so their time matters.
+  let testStatus: ReactNode = null;
+  if (tests.running) testStatus = "Testing…";
+  else if (tests.error) testStatus = "The tests didn't run";
+  else if (tests.report) {
+    testStatus = (
+      <>
+        Tested at <time dateTime={tests.report.ranAt}>{formatTime(tests.report.ranAt)}</time>: {summariseTests(tests.report)}
+      </>
+    );
+  }
 
   return (
     <section className="workspace-problems" aria-labelledby={`${id}-heading`}>
@@ -86,18 +103,27 @@ export function ProblemsPanel({
               {expanded ? "▾" : "▸"}
             </span>
             Problems{" "}
-            {(report || build) && <span className="problems-summary">{summarise(countProblems(report, build))}</span>}
+            {(report || build || tests.report) && (
+              <span className="problems-summary">{summarise(countProblems(report, build, tests.report))}</span>
+            )}
           </button>
         </h2>
         <p className="problems-status" role="status">
           {status}
           {buildStatus && ` · ${buildStatus}`}
+          {testStatus && <> · {testStatus}</>}
         </p>
+        <button type="button" className="link-button" onClick={tests.run} disabled={tests.running}>
+          Run tests
+        </button>
       </div>
       <div id={`${id}-body`} className="problems-body" hidden={!expanded}>
         {error && <ErrorMessage error={error} retry={checks.checkNow} />}
         {buildError && !error && <ErrorMessage error={buildError} retry={checks.checkNow} />}
-        {(report || build) && <ReportProblems report={report} build={build} canOpen={canOpen} onOpen={onOpen} />}
+        {tests.error && <ErrorMessage error={tests.error} retry={tests.run} />}
+        {(report || build || tests.report) && (
+          <ReportProblems report={report} build={build} tests={tests.report} canOpen={canOpen} onOpen={onOpen} />
+        )}
       </div>
     </section>
   );
@@ -106,11 +132,13 @@ export function ProblemsPanel({
 function ReportProblems({
   report,
   build,
+  tests,
   canOpen,
   onOpen,
 }: {
   report: CheckReport | null;
   build: BuildReport | null;
+  tests: TestReport | null;
   canOpen(path: string): boolean;
   onOpen: OpenAt;
 }) {
@@ -122,10 +150,11 @@ function ReportProblems({
     ...(packages?.warnings ?? []).map((message) => ({ severity: "warning" as const, message })),
   ];
   const buildList = build ? buildProblems(build) : [];
+  const testList = tests ? testProblems(tests) : [];
   const groups = report ? groupProblems(report.problems) : [];
   const total = report ? problemTotal(report) : 0;
 
-  if (packageProblems.length === 0 && buildList.length === 0 && groups.length === 0 && total === 0) {
+  if (packageProblems.length === 0 && buildList.length === 0 && testList.length === 0 && groups.length === 0 && total === 0) {
     return <p className="problems-empty">No problems.</p>;
   }
 
@@ -159,6 +188,23 @@ function ReportProblems({
           })}
         </ProblemGroup>
       )}
+      {testList.length > 0 && (
+        <ProblemGroup heading="Tests" count={testList.length}>
+          {testList.map((problem, index) => {
+            const { file, line, column } = problem;
+            return (
+              <ProblemItem
+                key={index}
+                severity="error"
+                location={file === null ? undefined : [file, line, column].filter((part) => part !== null).join(":")}
+                message={problem.message}
+                detail={problem.diff ?? undefined}
+                open={file !== null && canOpen(file) ? () => onOpen(file, line, column) : undefined}
+              />
+            );
+          })}
+        </ProblemGroup>
+      )}
       {groups.map((group) => (
         <ProblemGroup key={group.path} heading={group.path} count={group.problems.length}>
           {group.problems.map((problem, index) => (
@@ -180,24 +226,27 @@ function ReportProblems({
   );
 }
 
-/** One problem, which opens its file at the problem when `open` is given. */
+/** One problem, which opens its file at the problem when `open` is given. `detail` is preformatted, such as a test's diff. */
 function ProblemItem({
   severity,
   location,
   message,
   code,
+  detail,
   open,
 }: {
   severity: Severity;
   location?: string;
   message: string;
   code?: string;
+  detail?: string;
   open?: () => void;
 }) {
   const details = (
     <>
       <SeverityLabel severity={severity} /> {location && <span className="problem-location">{location}</span>}{" "}
       <span className="problem-message">{message}</span> {code && <span className="problem-code">{code}</span>}
+      {detail && <span className="problem-detail">{detail}</span>}
     </>
   );
   return (

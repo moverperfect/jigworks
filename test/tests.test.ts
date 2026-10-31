@@ -1,6 +1,7 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
+import { countProblems, summariseTests, testProblems } from "../client/src/problems";
 import { bundleTests, type TestBundle } from "../src/builder";
 import type { TestFileReport, TestReport } from "../src/shared/test-report";
 import { isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
@@ -250,5 +251,38 @@ describe("bundling the tests", () => {
   it("finds test files as vitest does", () => {
     const paths = ["src/a.test.ts", "src/b.spec.tsx", "test/c.test.mjs", "src/d.ts", "src/test.ts", "node_modules/x/e.test.js"];
     expect(paths.filter(isTestFile)).toEqual(["src/a.test.ts", "src/b.spec.tsx", "test/c.test.mjs"]);
+  });
+});
+
+describe("the problems list's tests", () => {
+  const failure = { message: "AssertionError: expected 2 to be 3", diff: "- 3\n+ 2", file: "src/sum.ts", line: 4, column: 3 };
+  const report: TestReport = {
+    ranAt: "2026-10-31T12:00:00.000Z",
+    bundleErrors: [],
+    counts: { passed: 1, failed: 2, skipped: 1, todo: 0 },
+    files: [
+      {
+        file: "src/sum.test.ts",
+        tests: [
+          { name: ["sum", "adds"], state: "failed", line: 5, failure },
+          { name: ["sum", "adds again"], state: "failed", line: 9, failure: { ...failure, diff: null, file: null, line: null, column: null } },
+          { name: ["passes"], state: "passed", line: 12, failure: null },
+          { name: ["skips"], state: "skipped", line: 13, failure: null },
+        ],
+        errors: [{ message: "Unhandled rejection: boom", diff: null, file: null, line: null, column: null }],
+        console: [],
+      },
+    ],
+  };
+
+  it("lists each failure where it happened, or else where its test or file is, and counts them as errors", () => {
+    expect(testProblems(report)).toEqual([
+      { message: "Unhandled rejection: boom", diff: null, file: "src/sum.test.ts", line: null, column: null },
+      { message: "sum › adds: AssertionError: expected 2 to be 3", diff: "- 3\n+ 2", file: "src/sum.ts", line: 4, column: 3 },
+      { message: "sum › adds again: AssertionError: expected 2 to be 3", diff: null, file: "src/sum.test.ts", line: 9, column: null },
+    ]);
+    expect(countProblems(null, null, report).error).toBe(3);
+    expect(summariseTests(report)).toBe("1 passed, 2 failed, 1 skipped");
+    expect(summariseTests({ ...report, files: [] })).toBe("No tests");
   });
 });

@@ -928,6 +928,16 @@ button.problem:hover {
   overflow-wrap: anywhere;
 }
 
+.problem-detail {
+  flex: 1 0 100%;
+  padding-left: 6.25rem;
+  font-family: var(--monospace);
+  font-size: 0.8125rem;
+  color: var(--muted);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .conversation-header {
   display: flex;
   align-items: center;

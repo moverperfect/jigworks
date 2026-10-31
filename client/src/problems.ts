@@ -1,5 +1,6 @@
 import type { BuildProblem, BuildReport } from "../../src/shared/build-report.ts";
 import type { CheckReport, Problem, Severity } from "../../src/shared/check-report.ts";
+import { testFailures, type TestReport } from "../../src/shared/test-report.ts";
 
 /** One file's problems. Problems with no file are under their tsconfig. */
 export interface FileProblems {
@@ -35,10 +36,10 @@ export const problemTotal = (report: CheckReport): number =>
 
 /**
  * How many of each severity the problems list shows: every problem the Check
- * found, its Package warnings and a failed install, then the Build's errors
- * and warnings.
+ * found, its Package warnings and a failed install, the Build's errors and
+ * warnings, then the tests' failures.
  */
-export function countProblems(report: CheckReport | null, build: BuildReport | null): Record<Severity, number> {
+export function countProblems(report: CheckReport | null, build: BuildReport | null, tests: TestReport | null): Record<Severity, number> {
   const counts = report ? { ...report.counts } : { error: 0, warning: 0, suggestion: 0, message: 0 };
   if (report) {
     counts.warning += report.packages.warnings.length;
@@ -48,16 +49,58 @@ export function countProblems(report: CheckReport | null, build: BuildReport | n
     counts.error += build.errors.length;
     counts.warning += build.warnings.length;
   }
+  if (tests) counts.error += testFailures(tests);
   return counts;
 }
 
-/** An error or warning from a Build, with the place it's about if it gave one. */
 /** The Build's errors, then its warnings, each with its severity for the list. */
 export function buildProblems(build: BuildReport): (BuildProblem & { severity: Severity })[] {
   return [
     ...build.errors.map((problem) => ({ ...problem, severity: "error" as const })),
     ...build.warnings.map((problem) => ({ ...problem, severity: "warning" as const })),
   ];
+}
+
+/** A failure from the tests, at the place it failed, or where its test or file is. */
+export interface TestProblem extends BuildProblem {
+  diff: string | null;
+}
+
+/** Why the tests couldn't be bundled, then each test file's errors and failed tests. */
+export function testProblems(report: TestReport): TestProblem[] {
+  return [
+    ...report.bundleErrors.map((problem) => ({ ...problem, diff: null })),
+    ...report.files.flatMap(({ file, errors, tests }) => [
+      ...errors.map((failure) => ({
+        message: failure.message,
+        diff: failure.diff,
+        file: failure.file ?? file,
+        line: failure.file ? failure.line : null,
+        column: failure.file ? failure.column : null,
+      })),
+      ...tests.flatMap(({ name, state, line, failure }) =>
+        state === "failed" && failure
+          ? [
+              {
+                message: `${name.join(" › ")}: ${failure.message}`,
+                diff: failure.diff,
+                file: failure.file ?? file,
+                line: failure.file ? failure.line : line,
+                column: failure.file ? failure.column : null,
+              },
+            ]
+          : [],
+      ),
+    ]),
+  ];
+}
+
+/** For example "3 passed, 1 failed", or "No tests". */
+export function summariseTests({ files, counts }: TestReport): string {
+  if (files.length === 0) return "No tests";
+  const parts = [`${counts.passed} passed`, `${counts.failed} failed`];
+  if (counts.skipped + counts.todo > 0) parts.push(`${counts.skipped + counts.todo} skipped`);
+  return parts.join(", ");
 }
 
 const severities: Severity[] = ["error", "warning", "suggestion", "message"];

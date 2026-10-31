@@ -3,6 +3,7 @@ import type { AppLogEntry } from "../../src/shared/app-logs.ts";
 import type { CheckReport } from "../../src/shared/check-report.ts";
 import type { Deployment } from "../../src/shared/deployment.ts";
 import type { Secret } from "../../src/shared/secret.ts";
+import type { TestReport } from "../../src/shared/test-report.ts";
 
 export interface Template {
   id: string;
@@ -146,6 +147,16 @@ export async function runBuild(id: string): Promise<BuildReport> {
 /** The latest Build's report, or null if no Build has run yet. */
 export async function getLatestBuild(id: string): Promise<BuildReport | null> {
   return request("GET", `${workspaceApiPath(id)}/build`);
+}
+
+/** Runs every test file and returns the report. */
+export async function runTests(id: string): Promise<TestReport> {
+  return request("POST", `${workspaceApiPath(id)}/tests`);
+}
+
+/** The latest run of every test file, or null if the tests haven't run yet. */
+export async function getLatestTests(id: string): Promise<TestReport | null> {
+  return request("GET", `${workspaceApiPath(id)}/tests`);
 }
 
 /** Where the Preview answers, and whether it has a Build to run yet. Until then it answers 503. */
