@@ -1,6 +1,8 @@
-// PROTOTYPE, throwaway. Four chat-first variants of the whole journey, for people who aren't developers:
+// PROTOTYPE, throwaway. Verdict (2026-10-31): E, "On the bench": A's start page for a new app, then B's split,
+// in Direction 1 of DESIGN-DIRECTIONS.md. The rest stay here as the primary source.
+// Chat-first variants of the whole journey, for people who aren't developers:
 // describe an app, the Agent picks the Template and builds it, change it by asking, then publish it.
-// Switchable via `?variant=A|B|C|D` on `/prototype/chat-first`, served only by the dev server (`pnpm prototype`).
+// Switchable via `?variant=A` to `G` on `/prototype/chat-first`, served only by the dev server (`pnpm prototype`).
 // One scripted Agent (simulation.ts) drives every variant, so they're compared on the same moments and data.
 import { useState } from "react";
 import { PrototypeSwitcher, type VariantInfo } from "./PrototypeSwitcher";
@@ -31,7 +33,7 @@ const retired: VariantInfo[] = [
 
 function readVariant(): string {
   const key = new URLSearchParams(window.location.search).get("variant")?.toUpperCase();
-  return [...variants, ...retired].some((v) => v.key === key) ? key! : "A";
+  return [...variants, ...retired].some((v) => v.key === key) ? key! : "E";
 }
 
 export function ChatFirstPrototypePage() {

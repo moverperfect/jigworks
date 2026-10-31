@@ -1,5 +1,7 @@
 # Design directions for the chat-first journey
 
+**Verdict (2026-10-31):** Jack chose Direction 1, "On the bench" (Variant E). Screenshots: `screenshots/E-desktop.png` and `screenshots/E-phone.png`.
+
 Three visual directions for one decided structure. Each is built by a different designer, in parallel, from this file alone: read **Shared constraints**, then your direction's section. The sections stand alone; don't read the other two for guidance (do read them if you want to make sure yours looks nothing like them).
 
 | Variant | Direction | File | CSS prefix |
