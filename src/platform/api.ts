@@ -156,20 +156,26 @@ api.post("/workspaces/:id/build", async (c) => {
   return c.json(report);
 });
 
-// Runs every test file (ADR 0017). The Workspace logs each run.
+api.get("/workspaces/:id/build", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).latestBuild()) : noSuchWorkspace(c);
+});
+
+// Runs every test file (ADR 0017). As for a Check, the Workspace logs each
+// run, and this times it.
 api.post("/workspaces/:id/tests", async (c) => {
   const record = await ownWorkspace(c);
-  return record ? c.json(await workspace(c, record.id).runTests()) : noSuchWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  const started = Date.now();
+  const report = await workspace(c, record.id).runTests();
+  const log = { event: "test-request", workspace: record.id, files: report.files.length, durationMs: Date.now() - started };
+  console.log(JSON.stringify(log));
+  return c.json(report);
 });
 
 api.get("/workspaces/:id/tests", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json(await workspace(c, record.id).latestTests()) : noSuchWorkspace(c);
-});
-
-api.get("/workspaces/:id/build", async (c) => {
-  const record = await ownWorkspace(c);
-  return record ? c.json(await workspace(c, record.id).latestBuild()) : noSuchWorkspace(c);
 });
 
 api.get("/workspaces/:id/preview", async (c) => {

@@ -44,8 +44,7 @@ import { format } from "@vitest/utils/display";
 import { DecodedMap, getOriginalPosition, parseSingleStack } from "@vitest/utils/source-map";
 import { setSafeTimers } from "@vitest/utils/timers";
 import type { TestCase, TestFailure, TestFileReport } from "../shared/test-report";
-import { vitestGlobal } from "./names";
-
+import { testsModule, vitestGlobal } from "./names";
 
 const notSupported = (what: string, instead: string) => () => {
   throw new Error(`${what} isn't supported here. ${instead}`);
@@ -54,7 +53,8 @@ const noModuleMocks = notSupported(
   "Replacing modules (vi.mock and its kin)",
   "Pass a fake in to the code under test, or use vi.spyOn on an object it calls.",
 );
-const noSnapshots = (name: string) => notSupported(`${name}: snapshots`, "Compare with toEqual, toContain or toMatch instead.");
+const noSnapshots = (name: string) =>
+  notSupported(name, "There's nowhere to keep snapshots. Compare with toEqual, toContain or toMatch instead.");
 
 chai.use(JestExtend);
 chai.use(JestChaiExpect);
@@ -72,14 +72,14 @@ chai.use((chai, utils) => {
   }
 });
 
-/** A test's name after the describe blocks it's in. The file, which holds them all, isn't one. */
-function names(task: Task): string[] {
+/** A test's name, after those of the describe blocks it's in. The file, which holds them all, isn't one. */
+function fullName(task: Task): string[] {
   const path: string[] = [];
   for (let current: Task | undefined = task; current && !("filepath" in current); current = current.suite) path.unshift(current.name);
   return path;
 }
 
-const testName = (test: Test) => names(test).join(" > ");
+const testName = (test: Test) => fullName(test).join(" > ");
 
 const freshState = () => ({
   assertionCalls: 0,
@@ -115,6 +115,7 @@ function createExpect(test?: Test): Expect {
   (expect as unknown as Record<string, unknown>).addEqualityTesters = addCustomEqualityTesters;
   expect.soft = (actual, message) => (expect(actual, message) as unknown as { withContext(context: object): never }).withContext({ soft: true });
   expect.unreachable = (message) => chai.assert.fail(`expected${message ? ` "${message}" ` : " "}not to be reached`);
+  (expect as unknown as Record<string, unknown>).addSnapshotSerializer = noSnapshots("expect.addSnapshotSerializer");
   chai.util.addMethod(expect, "assertions", (expected: number) => {
     expect.setState({
       expectedAssertionsNumber: expected,
@@ -176,103 +177,72 @@ class FakeTimers {
   }
 }
 
-let timers: FakeTimers;
+const timers = new FakeTimers();
+const realNow = Date.now;
 const stubbedGlobals = new Map<PropertyKey, PropertyDescriptor | undefined>();
+
+// `vi`'s methods that change something return `vi`, so calls chain.
+const chain =
+  <A extends unknown[]>(change: (...args: A) => unknown) =>
+  (...args: A): object => {
+    change(...args);
+    return vi;
+  };
+const chainAsync =
+  <A extends unknown[]>(change: (...args: A) => Promise<unknown>) =>
+  async (...args: A): Promise<object> => {
+    await change(...args);
+    return vi;
+  };
 
 export const vi = {
   fn,
   spyOn,
   isMockFunction,
   mocked: <T>(item: T): T => item,
-  clearAllMocks() {
-    clearAllMocks();
-    return vi;
-  },
-  resetAllMocks() {
-    resetAllMocks();
-    return vi;
-  },
-  restoreAllMocks() {
-    restoreAllMocks();
-    return vi;
-  },
-  useFakeTimers(config?: Config) {
-    timers.use(config);
-    return vi;
-  },
-  useRealTimers() {
-    timers.restore();
-    return vi;
-  },
+  clearAllMocks: chain(clearAllMocks),
+  resetAllMocks: chain(resetAllMocks),
+  restoreAllMocks: chain(restoreAllMocks),
+  useFakeTimers: chain((config?: Config) => timers.use(config)),
+  useRealTimers: chain(() => timers.restore()),
   isFakeTimers: () => timers.faking,
-  advanceTimersByTime(ms: number) {
-    timers.clock().tick(ms);
-    return vi;
-  },
-  async advanceTimersByTimeAsync(ms: number) {
-    await timers.clock().tickAsync(ms);
-    return vi;
-  },
-  advanceTimersToNextTimer(steps = 1) {
+  advanceTimersByTime: chain((ms: number) => timers.clock().tick(ms)),
+  advanceTimersByTimeAsync: chainAsync((ms: number) => timers.clock().tickAsync(ms)),
+  advanceTimersToNextTimer: chain((steps: number = 1) => {
     const clock = timers.clock();
     for (let step = 0; step < steps && clock.countTimers() > 0; step++) {
       clock.next();
       clock.tick(0);
     }
-    return vi;
-  },
-  async advanceTimersToNextTimerAsync(steps = 1) {
+  }),
+  advanceTimersToNextTimerAsync: chainAsync(async (steps: number = 1) => {
     const clock = timers.clock();
     for (let step = 0; step < steps && clock.countTimers() > 0; step++) {
       await clock.nextAsync();
       clock.tick(0);
     }
-    return vi;
-  },
-  runAllTimers() {
-    timers.clock().runAll();
-    return vi;
-  },
-  async runAllTimersAsync() {
-    await timers.clock().runAllAsync();
-    return vi;
-  },
-  runOnlyPendingTimers() {
-    timers.clock().runToLast();
-    return vi;
-  },
-  async runOnlyPendingTimersAsync() {
-    await timers.clock().runToLastAsync();
-    return vi;
-  },
-  runAllTicks() {
-    timers.clock().runMicrotasks();
-    return vi;
-  },
-  clearAllTimers() {
-    if (timers.faking) timers.clock().reset();
-    return vi;
-  },
+  }),
+  runAllTimers: chain(() => timers.clock().runAll()),
+  runAllTimersAsync: chainAsync(() => timers.clock().runAllAsync()),
+  runOnlyPendingTimers: chain(() => timers.clock().runToLast()),
+  runOnlyPendingTimersAsync: chainAsync(() => timers.clock().runToLastAsync()),
+  runAllTicks: chain(() => timers.clock().runMicrotasks()),
+  clearAllTimers: chain(() => timers.faking && timers.clock().reset()),
   getTimerCount: () => (timers.faking ? timers.clock().countTimers() : 0),
-  setSystemTime(time?: number | string | Date) {
-    timers.setSystemTime(time);
-    return vi;
-  },
+  setSystemTime: chain((time?: number | string | Date) => timers.setSystemTime(time)),
   getMockedSystemTime: () => timers.mockedTime(),
   getRealSystemTime: () => realNow(),
-  stubGlobal(name: PropertyKey, value: unknown) {
+  stubGlobal: chain((name: PropertyKey, value: unknown) => {
     if (!stubbedGlobals.has(name)) stubbedGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
     Object.defineProperty(globalThis, name, { value, writable: true, configurable: true, enumerable: true });
-    return vi;
-  },
-  unstubAllGlobals() {
+  }),
+  unstubAllGlobals: chain(() => {
     for (const [name, original] of stubbedGlobals) {
       if (original) Object.defineProperty(globalThis, name, original);
       else Reflect.deleteProperty(globalThis, name);
     }
     stubbedGlobals.clear();
-    return vi;
-  },
+  }),
   mock: noModuleMocks,
   doMock: noModuleMocks,
   unmock: noModuleMocks,
@@ -282,8 +252,6 @@ export const vi = {
   importMock: noModuleMocks,
   resetModules: noModuleMocks,
 };
-
-let realNow: () => number;
 
 /** What the tests' `vitest` module exports. */
 const vitest = {
@@ -302,7 +270,6 @@ const vitest = {
   expect,
   assert: chai.assert,
   vi,
-  vitest: vi,
 };
 
 // How much of what the tests logged is kept for each file, and of each failure.
@@ -312,22 +279,15 @@ const messageLength = 2000;
 const diffLength = 4000;
 
 /**
- * Runs one test file, which `load` imports, and reports each test. The
- * tests' bundle and its source map name `bundleFile`, which is how stack
- * frames in it are recognised and mapped back to the Workspace's files.
+ * Runs one test file, which `load` imports, and reports each test. Stack
+ * frames in the tests' bundle are mapped back to the Workspace's files with
+ * its source map.
  */
-export async function runFile(
-  path: string,
-  load: (() => Promise<unknown>) | undefined,
-  bundleFile: string,
-  sourceMap: string,
-): Promise<TestFileReport> {
+export async function runFile(path: string, load: (() => Promise<unknown>) | undefined, sourceMap: string): Promise<TestFileReport> {
   setSafeTimers();
-  realNow = Date.now;
-  timers = new FakeTimers();
   (globalThis as Record<symbol, unknown>)[Symbol.for(vitestGlobal)] = vitest;
   // The bundle's name as parsed stack frames give it, which resolves it to a path.
-  const bundlePath = parseSingleStack(`    at ${bundleFile}:1:1`)!.file;
+  const bundlePath = parseSingleStack(`    at ${testsModule}:1:1`)!.file;
   const locate = locator(bundlePath, sourceMap);
   const output = captureConsole();
   const unhandled: unknown[] = [];
@@ -388,13 +348,13 @@ export async function runFile(
 }
 
 type Place = { file: string; line: number; column: number };
-type Locate = { stack(stack: string | undefined): Place | null; bundle(line: number, column: number): Place | null };
+type Locate = { fromStack(stack: string | undefined): Place | null; fromBundle(line: number, column: number): Place | null };
 
 function report(path: string, file: File, locate: Locate, console: string[], unhandled: unknown[]): TestFileReport {
   const tests: TestCase[] = [];
   const errors: TestFailure[] = [];
   const failureOf = (error: { message?: string; name?: string; stack?: string; diff?: string }): TestFailure => {
-    const place = locate.stack(error.stack);
+    const place = locate.fromStack(error.stack);
     return {
       message: cut(plain(error.name && error.name !== "Error" ? `${error.name}: ${error.message}` : String(error.message)), messageLength),
       diff: error.diff ? cut(plain(error.diff), diffLength) : null,
@@ -406,23 +366,23 @@ function report(path: string, file: File, locate: Locate, console: string[], unh
   const visit = (task: Task) => {
     if (task.type === "test") {
       const state = task.result?.state;
-      const declared = task.location ? locate.bundle(task.location.line, task.location.column) : null;
+      const declared = task.location ? locate.fromBundle(task.location.line, task.location.column) : null;
       tests.push({
-        name: names(task),
+        name: fullName(task),
         state: task.mode === "todo" ? "todo" : state === "pass" ? "passed" : state === "fail" ? "failed" : "skipped",
         line: declared?.file === path ? declared.line : null,
         failure: task.result?.errors?.[0] ? failureOf(task.result.errors[0]) : null,
       });
       return;
     }
-    // A suite's own errors: it failed to collect, or a beforeAll or afterAll threw.
+    // The file's or a describe block's own errors: it threw as it loaded, or a beforeAll or afterAll threw.
     for (const error of task.result?.errors ?? []) errors.push(failureOf(error));
     for (const child of task.tasks) visit(child);
   };
   visit(file);
   for (const reason of unhandled) {
-    const error = reason instanceof Error ? reason : new Error(String(reason));
-    errors.push({ ...failureOf(error), message: `Unhandled rejection: ${failureOf(error).message}` });
+    const failure = failureOf(reason instanceof Error ? reason : new Error(String(reason)));
+    errors.push({ ...failure, message: `Unhandled rejection: ${failure.message}` });
   }
   return { file: path, tests, errors, console };
 }
@@ -434,7 +394,7 @@ function report(path: string, file: File, locate: Locate, console: string[], unh
  */
 function locator(bundlePath: string, sourceMap: string): Locate {
   let map: DecodedMap | null = null;
-  const bundle = (line: number, column: number): Place | null => {
+  const fromBundle = (line: number, column: number): Place | null => {
     map ??= new DecodedMap(JSON.parse(sourceMap), "/");
     // Stack frames count columns from 1, and source maps from 0.
     const original = getOriginalPosition(map, { line, column: column - 1 });
@@ -443,11 +403,11 @@ function locator(bundlePath: string, sourceMap: string): Locate {
     return { file, line: original.line, column: original.column + 1 };
   };
   return {
-    bundle,
-    stack(stack) {
+    fromBundle,
+    fromStack(stack) {
       for (const line of stack?.split("\n") ?? []) {
         const frame = parseSingleStack(line);
-        const place = frame && frame.file === bundlePath ? bundle(frame.line, frame.column) : null;
+        const place = frame && frame.file === bundlePath ? fromBundle(frame.line, frame.column) : null;
         if (place) return place;
       }
       return null;
@@ -455,7 +415,6 @@ function locator(bundlePath: string, sourceMap: string): Locate {
   };
 }
 
-// eslint-disable-next-line no-control-regex
 const plain = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
 const cut = (text: string, length: number) => (text.length > length ? `${text.slice(0, length - 1)}…` : text);
 

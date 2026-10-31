@@ -130,6 +130,10 @@ export class Workspace extends Think<Env, ConversationState> {
   // what's waiting for them to finish (see `otherToolsFinished`).
   private toolsRunning = 0;
   private toolsFinished: (() => void)[] = [];
+  // Test runs in the order they read the files, and the latest run kept, so
+  // a slow run can't replace the report of one that read the files after it.
+  private testRunsStarted = 0;
+  private testRunKept = 0;
 
   /**
    * A Turn or Start fresh can't outlive the isolate it ran in (see
@@ -390,21 +394,25 @@ export class Workspace extends Think<Env, ConversationState> {
   async runTests(by: RequestedBy = "developer", only?: string[]): Promise<TestReport> {
     const ranAt = new Date().toISOString();
     // The files are read in line with saves, and the tests run after.
-    const { testFiles, bundle } = await this.exclusive(async () => {
+    const { run, testFiles, bundle } = await this.exclusive(async () => {
+      const run = ++this.testRunsStarted;
       await this.install({ retryFailed: false });
       const testFiles = this.files
         .list()
         .filter((path) => isTestFile(path) && (!only || only.includes(path)))
         .sort();
-      if (testFiles.length === 0) return { testFiles, bundle: null };
+      if (testFiles.length === 0) return { run, testFiles, bundle: null };
       const snapshot = new Map([...this.files.snapshot(), ...this.packages.snapshot()]);
       // The bundler is the Build's, loaded on first use.
       const { bundleTests } = await import("../builder");
-      return { testFiles, bundle: await bundleTests(snapshot, testFiles, { vitest: vitestModule }) };
+      return { run, testFiles, bundle: await bundleTests(snapshot, testFiles, { vitest: vitestModule }) };
     });
     const files = bundle?.ok ? await testInDynamicWorkers(this.env.LOADER, bundle, testFiles) : [];
     const report: TestReport = { ranAt, files, bundleErrors: bundle && !bundle.ok ? bundle.errors : [], counts: countTests(files) };
-    if (!only) this.ctx.storage.kv.put(testKey, testsWithinBudget(report));
+    if (!only && run > this.testRunKept) {
+      this.testRunKept = run;
+      this.ctx.storage.kv.put(testKey, testsWithinBudget(report));
+    }
     console.log(
       JSON.stringify({
         event: "test",
@@ -414,8 +422,7 @@ export class Workspace extends Think<Env, ConversationState> {
         files: testFiles.length,
         only: only !== undefined,
         counts: report.counts,
-        fileErrors: files.reduce((total, file) => total + file.errors.length, 0),
-        bundleErrors: report.bundleErrors.length,
+        failures: testFailures(report),
       }),
     );
     return report;
@@ -729,8 +736,10 @@ export class Workspace extends Think<Env, ConversationState> {
         buildErrors: ended.build.errors.length,
         outOfSteps: usage.steps >= turnSteps,
       };
-      // Once, after the last Check and Build: failing tests don't ask for a retry.
-      lastTurn.testFailures = testFailures(await this.runTests("turn"));
+      // Once, after the last Check and Build: failing tests don't ask for a
+      // retry, and tests that can't run don't fail the Turn.
+      const tests = await this.runTests("turn").catch(() => null);
+      lastTurn.testFailures = tests && testFailures(tests);
     } catch (error) {
       lastTurn.error = error instanceof Error ? error.message : String(error);
       // The Agent may have changed files before the failure, and every Turn
@@ -813,21 +822,30 @@ function countTests(files: TestFileReport[]): TestCounts {
   return counts;
 }
 
-/** A test report that fits its key-value row: without what the tests logged if it's too large, then without diffs. */
+/**
+ * A test report that fits its key-value row, losing detail until it does:
+ * what the tests logged, then diffs, then the tests that didn't fail, then
+ * the last files. The counts stay whole.
+ */
 function testsWithinBudget(report: TestReport): TestReport {
-  const fits = (candidate: TestReport) => JSON.stringify(candidate).length <= reportBudgetBytes;
-  if (fits(report)) return report;
-  const quiet = { ...report, files: report.files.map((file) => ({ ...file, console: [] })) };
-  if (fits(quiet)) return quiet;
   const noDiff = <T extends { diff: string | null }>(failure: T): T => ({ ...failure, diff: null });
-  return {
-    ...quiet,
-    files: quiet.files.map((file) => ({
+  const lighter: ((file: TestFileReport) => TestFileReport)[] = [
+    (file) => ({ ...file, console: [] }),
+    (file) => ({
       ...file,
       errors: file.errors.map(noDiff),
       tests: file.tests.map((test) => ({ ...test, failure: test.failure && noDiff(test.failure) })),
-    })),
-  };
+    }),
+    (file) => ({ ...file, tests: file.tests.filter((test) => test.state === "failed") }),
+  ];
+  const fits = (candidate: TestReport) => JSON.stringify(candidate).length <= reportBudgetBytes;
+  let kept = report;
+  for (const lighten of lighter) {
+    if (fits(kept)) return kept;
+    kept = { ...kept, files: kept.files.map(lighten) };
+  }
+  while (!fits(kept)) kept = { ...kept, files: kept.files.slice(0, -1) };
+  return kept;
 }
 
 function countBySeverity(problems: Problem[]): Record<Severity, number> {

@@ -1,5 +1,6 @@
 import testerWorker from "../generated/tester-worker.txt";
 import packedTypes from "../generated/vitest-types.txt";
+import { appLimits, beforeDeadline, fallbackCompatibilityDate } from "../apphost";
 import type { TestBundle } from "../builder";
 import type { TestFileReport } from "../shared/test-report";
 import { sourceMapModule, testsModule, vitestGlobal } from "./names";
@@ -22,10 +23,6 @@ export const vitestTypes = (): Map<string, string> =>
   (types ??= new Map(Object.entries(JSON.parse(packedTypes) as Record<string, string>)));
 
 const testerModule = "tester.js";
-// Used when an app's wrangler.jsonc has no compatibility date, as for the app host.
-const fallbackCompatibilityDate = "2026-10-01";
-// Limits on each test file, as on the app's own code. Tests have no network.
-const fileLimits = { cpuMs: 10_000, subRequests: 50 };
 // Each test has its own timeout (5 s), so a file this slow is stuck elsewhere.
 const fileTimeoutMs = 60_000;
 
@@ -42,11 +39,14 @@ export async function testInDynamicWorkers(loader: WorkerLoader, bundle: TestBun
       compatibilityFlags: bundle.compatibilityFlags,
       mainModule: testerModule,
       modules: { [testerModule]: testerWorker, [testsModule]: bundle.code, [sourceMapModule]: { text: bundle.sourceMap } },
+      // The app's own limits, and no network.
       globalOutbound: null,
-      limits: fileLimits,
+      limits: appLimits,
     });
     try {
-      reports.push(await withTimeout(worker.getEntrypoint<Tester>("Tester").run(file), fileTimeoutMs));
+      const report = await beforeDeadline(worker.getEntrypoint<Tester>("Tester").run(file), Date.now() + fileTimeoutMs);
+      if (!report) throw new Error(`it ran for more than ${fileTimeoutMs / 1000} seconds.`);
+      reports.push(report);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       reports.push({
@@ -58,11 +58,4 @@ export async function testInDynamicWorkers(loader: WorkerLoader, bundle: TestBun
     }
   }
   return reports;
-}
-
-async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
-  const timeout = scheduler.wait(ms).then(() => {
-    throw new Error(`it ran for more than ${ms / 1000} seconds.`);
-  });
-  return Promise.race([work, timeout]);
 }

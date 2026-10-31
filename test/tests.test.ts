@@ -2,6 +2,7 @@ import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { countProblems, summariseTests, testProblems } from "../client/src/problems";
+import { describeTests } from "../src/agent";
 import { bundleTests, type TestBundle } from "../src/builder";
 import type { TestFileReport, TestReport } from "../src/shared/test-report";
 import { isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
@@ -143,6 +144,7 @@ describe("the Tester", () => {
         'import { expect, it } from "vitest";',
         'it("matches", () => expect({ a: 1 }).toMatchSnapshot());',
         'it("matches inline", () => expect("text").toMatchInlineSnapshot());',
+        'it("serialises", () => expect.addSnapshotSerializer({}));',
         "",
       ].join("\n"),
     });
@@ -154,8 +156,9 @@ describe("the Tester", () => {
       }),
     ]);
     expect(snapshot!.tests.map(({ state, failure }) => [state, failure?.message, failure?.line])).toEqual([
-      ["failed", expect.stringMatching(/^toMatchSnapshot: snapshots isn't supported here\. Compare with toEqual/), 2],
-      ["failed", expect.stringMatching(/^toMatchInlineSnapshot: snapshots isn't supported here/), 3],
+      ["failed", "toMatchSnapshot isn't supported here. There's nowhere to keep snapshots. Compare with toEqual, toContain or toMatch instead.", 2],
+      ["failed", expect.stringMatching(/^toMatchInlineSnapshot isn't supported here\. There's nowhere to keep snapshots/), 3],
+      ["failed", expect.stringMatching(/^expect\.addSnapshotSerializer isn't supported here/), 4],
     ]);
   });
 
@@ -249,6 +252,43 @@ describe("a Workspace's tests", () => {
     expect(await (await call(`/api/workspaces/${workspace.id}/tests`)).json()).toEqual(report);
   });
 
+  it("keep the run that read the files last, whichever finishes last", async () => {
+    const workspace = await create("Overlapping runs");
+    // One stub, so the calls arrive in order.
+    const stub = env.WORKSPACES.getByName(workspace.id);
+    const save = (text: string) => stub.writeFile("src/index.test.ts", text);
+    await save('import { it } from "vitest";\nit("is slow", () => new Promise((resolve) => setTimeout(resolve, 1_500)));\n');
+    const slow = stub.runTests();
+    // The save waits for the slow run to read the files, and the quick run for the save.
+    const saved = save('import { it } from "vitest";\nit("is quick", () => {});\n');
+    const quick = await stub.runTests();
+    expect((await saved).ok).toBe(true);
+    expect((await slow).files[0]!.tests[0]!.name).toEqual(["is slow"]);
+    const kept = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(kept.files[0]!.tests[0]!.name).toEqual(["is quick"]);
+    expect(kept.ranAt).toBe(quick.ranAt);
+  });
+
+  it("keep a run too large to keep whole, without the passing tests' detail but with every count", async () => {
+    const workspace = await create("Many failures");
+    // About 2.4 MB of failures, more than a stored report can hold.
+    const failing = [
+      'import { it } from "vitest";',
+      'it.each(Array.from({ length: 1_200 }, (_, n) => n))("fails %i", () => {',
+      '  throw new Error("x".repeat(1_990));',
+      "});",
+      'it("passes", () => {});',
+      "",
+    ].join("\n");
+    await call(`/api/workspaces/${workspace.id}/files/src/index.test.ts`, { method: "PUT", text: failing });
+    const response = await call(`/api/workspaces/${workspace.id}/tests`, { method: "POST" });
+    expect(response.status).toBe(200);
+    expect((await response.json<TestReport>()).counts).toEqual({ passed: 1, failed: 1_200, skipped: 0, todo: 0 });
+    const kept = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(kept.counts).toEqual({ passed: 1, failed: 1_200, skipped: 0, todo: 0 });
+    expect(JSON.stringify(kept).length).toBeLessThanOrEqual(1_000_000);
+  });
+
   it("report why they couldn't be bundled, and nothing when there are none", async () => {
     const workspace = await create("Untestable");
     const save = (path: string, text: string) => call(`/api/workspaces/${workspace.id}/files/${path}`, { method: "PUT", text });
@@ -269,7 +309,7 @@ describe("bundling the tests", () => {
     const result = await bundleTests(snapshot, ["src/index.test.ts"], { vitest: vitestModule });
     expect(result).toEqual({
       ok: false,
-      errors: [{ file: null, line: null, column: null, message: 'The tests import "./missing", which isn\'t in the Workspace or its Packages' }],
+      errors: [{ file: "src/index.test.ts", line: 2, column: 25, message: 'The tests import "./missing", which isn\'t in the Workspace or its Packages' }],
     });
   });
 
@@ -300,14 +340,23 @@ describe("the problems list's tests", () => {
     ],
   };
 
+  it("tells the Agent which of the files it named aren't test files", () => {
+    const none: TestReport = { ...report, files: [], counts: { passed: 0, failed: 0, skipped: 0, todo: 0 } };
+    expect(describeTests(none, ["src/sum.ts"])).toBe(
+      "Not test files, so not run: /src/sum.ts. Test files are named like /src/index.test.ts.\nThere are no test files to run.",
+    );
+  });
+
   it("lists each failure where it happened, or else where its test or file is, and counts them as errors", () => {
     expect(testProblems(report)).toEqual([
-      { message: "Unhandled rejection: boom", diff: null, file: "src/sum.test.ts", line: null, column: null },
-      { message: "sum › adds: AssertionError: expected 2 to be 3", diff: "- 3\n+ 2", file: "src/sum.ts", line: 4, column: 3 },
-      { message: "sum › adds again: AssertionError: expected 2 to be 3", diff: null, file: "src/sum.test.ts", line: 9, column: null },
+      { severity: "error", message: "Unhandled rejection: boom", diff: null, file: "src/sum.test.ts", line: null, column: null },
+      { severity: "error", message: "sum > adds: AssertionError: expected 2 to be 3", diff: "- 3\n+ 2", file: "src/sum.ts", line: 4, column: 3 },
+      { severity: "error", message: "sum > adds again: AssertionError: expected 2 to be 3", diff: null, file: "src/sum.test.ts", line: 9, column: null },
     ]);
     expect(countProblems(null, null, report).error).toBe(3);
     expect(summariseTests(report)).toBe("1 passed, 2 failed, 1 skipped");
     expect(summariseTests({ ...report, files: [] })).toBe("No tests");
+    const unbundled = { ...report, files: [], bundleErrors: [{ message: "x", file: null, line: null, column: null }] };
+    expect(summariseTests(unbundled)).toBe("The tests couldn't be bundled");
   });
 });

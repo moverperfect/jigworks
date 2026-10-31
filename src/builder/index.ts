@@ -1,4 +1,5 @@
 import { createApp, createWorker, type Modules } from "@cloudflare/worker-bundler";
+import { DecodedMap, getOriginalPosition } from "@vitest/utils/source-map";
 import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
@@ -250,16 +251,20 @@ export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtu
     return { ok: false, errors: esbuildProblems(error) };
   }
   await initLexer();
+  const at = code.lastIndexOf(inlineSourceMap);
+  const sourceMap = at === -1 ? "{}" : new TextDecoder().decode(Uint8Array.from(atob(code.slice(at + inlineSourceMap.length).trim()), (char) => char.charCodeAt(0)));
   // The bundle is one module, so a relative import left in it wasn't found either.
   const missing = missingImports(code, { relative: true });
   if (missing.length > 0) {
+    const map = new DecodedMap(JSON.parse(sourceMap), "/");
     return {
       ok: false,
-      errors: missing.map((specifier) => unplaced(`The tests import "${specifier}", which isn't in the Workspace or its Packages`)),
+      errors: missing.map((specifier) => ({
+        message: `The tests import "${specifier}", which isn't in the Workspace or its Packages`,
+        ...placeInBundle(code, code.indexOf(JSON.stringify(specifier)), map),
+      })),
     };
   }
-  const at = code.lastIndexOf(inlineSourceMap);
-  const sourceMap = at === -1 ? "{}" : new TextDecoder().decode(Uint8Array.from(atob(code.slice(at + inlineSourceMap.length).trim()), (char) => char.charCodeAt(0)));
   return {
     ok: true,
     code: at === -1 ? code : code.slice(0, at),
@@ -267,6 +272,17 @@ export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtu
     compatibilityDate: config.compatibility_date,
     compatibilityFlags: config.compatibility_flags ?? [],
   };
+}
+
+/** Which Workspace file, and where in it, the bundle's text at `offset` came from, by its source map. */
+function placeInBundle(code: string, offset: number, map: DecodedMap): Pick<BuildProblem, "file" | "line" | "column"> {
+  const before = code.slice(0, Math.max(offset, 0));
+  const lineStart = before.lastIndexOf("\n") + 1;
+  const original = offset < 0 ? null : getOriginalPosition(map, { line: before.split("\n").length, column: offset - lineStart });
+  const file = original?.source?.replace(/^.*virtual:\/?/, "");
+  return original && file && original.line !== null
+    ? { file, line: original.line, column: original.column + 1 }
+    : { file: null, line: null, column: null };
 }
 
 type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };

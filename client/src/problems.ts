@@ -1,6 +1,6 @@
 import type { BuildProblem, BuildReport } from "../../src/shared/build-report.ts";
 import type { CheckReport, Problem, Severity } from "../../src/shared/check-report.ts";
-import { testFailures, type TestReport } from "../../src/shared/test-report.ts";
+import { failuresOf, testFailures, type TestReport } from "../../src/shared/test-report.ts";
 
 /** One file's problems. Problems with no file are under their tsconfig. */
 export interface FileProblems {
@@ -54,49 +54,39 @@ export function countProblems(report: CheckReport | null, build: BuildReport | n
 }
 
 /** The Build's errors, then its warnings, each with its severity for the list. */
-export function buildProblems(build: BuildReport): (BuildProblem & { severity: Severity })[] {
+export function buildProblems(build: BuildReport): PlacedProblem[] {
   return [
     ...build.errors.map((problem) => ({ ...problem, severity: "error" as const })),
     ...build.warnings.map((problem) => ({ ...problem, severity: "warning" as const })),
   ];
 }
 
-/** A failure from the tests, at the place it failed, or where its test or file is. */
-export interface TestProblem extends BuildProblem {
-  diff: string | null;
+/** A problem at a place in a file, if it has one, such as the Build's and the tests'. `diff` is a failed comparison's. */
+export interface PlacedProblem extends BuildProblem {
+  severity: Severity;
+  diff?: string | null;
 }
 
-/** Why the tests couldn't be bundled, then each test file's errors and failed tests. */
-export function testProblems(report: TestReport): TestProblem[] {
+/** Why the tests couldn't be bundled, then each test file's failures, at the place each failed, or where its test or file is. */
+export function testProblems(report: TestReport): PlacedProblem[] {
   return [
-    ...report.bundleErrors.map((problem) => ({ ...problem, diff: null })),
-    ...report.files.flatMap(({ file, errors, tests }) => [
-      ...errors.map((failure) => ({
-        message: failure.message,
+    ...report.bundleErrors.map((problem) => ({ ...problem, severity: "error" as const })),
+    ...report.files.flatMap((file) =>
+      failuresOf(file).map(({ test, failure }) => ({
+        severity: "error" as const,
+        message: test ? `${test.name.join(" > ")}: ${failure.message}` : failure.message,
         diff: failure.diff,
-        file: failure.file ?? file,
-        line: failure.file ? failure.line : null,
+        file: failure.file ?? file.file,
+        line: failure.file ? failure.line : (test?.line ?? null),
         column: failure.file ? failure.column : null,
       })),
-      ...tests.flatMap(({ name, state, line, failure }) =>
-        state === "failed" && failure
-          ? [
-              {
-                message: `${name.join(" › ")}: ${failure.message}`,
-                diff: failure.diff,
-                file: failure.file ?? file,
-                line: failure.file ? failure.line : line,
-                column: failure.file ? failure.column : null,
-              },
-            ]
-          : [],
-      ),
-    ]),
+    ),
   ];
 }
 
 /** For example "3 passed, 1 failed", or "No tests". */
-export function summariseTests({ files, counts }: TestReport): string {
+export function summariseTests({ files, counts, bundleErrors }: TestReport): string {
+  if (bundleErrors.length > 0) return "The tests couldn't be bundled";
   if (files.length === 0) return "No tests";
   const parts = [`${counts.passed} passed`, `${counts.failed} failed`];
   if (counts.skipped + counts.todo > 0) parts.push(`${counts.skipped + counts.todo} skipped`);

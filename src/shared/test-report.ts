@@ -46,6 +46,14 @@ export interface TestReport {
   counts: TestCounts;
 }
 
+/** A file's failures: its errors outside any test, with no test, then its failed tests'. */
+export function failuresOf(file: TestFileReport): { test: TestCase | null; failure: TestFailure }[] {
+  return [
+    ...file.errors.map((failure) => ({ test: null, failure })),
+    ...file.tests.flatMap((test) => (test.state === "failed" && test.failure ? [{ test, failure: test.failure }] : [])),
+  ];
+}
+
 /** How many failures a report has: failed tests, errors outside tests, and bundling errors. */
 export const testFailures = (report: TestReport): number =>
   report.counts.failed + report.bundleErrors.length + report.files.reduce((total, file) => total + file.errors.length, 0);

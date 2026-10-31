@@ -61,9 +61,9 @@ interface PublishedBuild {
 
 // Limits on app code, so a runaway app can't burn through the account's
 // quota. Outbound requests are otherwise unrestricted (ticket 08).
-const appLimits = { cpuMs: 10_000, subRequests: 50 };
+export const appLimits = { cpuMs: 10_000, subRequests: 50 };
 // Used when an app's wrangler.jsonc has no compatibility date.
-const fallbackCompatibilityDate = "2026-10-01";
+export const fallbackCompatibilityDate = "2026-10-01";
 const logsKept = 500;
 const logLineLength = 2_000;
 const previewBodyShown = 20_000;
@@ -771,7 +771,7 @@ async function readUpTo(response: Response, characters: number, deadline: number
 }
 
 /** What `promise` gives, or null if `deadline` comes first. */
-async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | null> {
+export async function beforeDeadline<T>(promise: Promise<T>, deadline: number): Promise<T | null> {
   let timer: ReturnType<typeof setTimeout> | null = null;
   const late = new Promise<null>((resolve) => {
     timer = setTimeout(() => resolve(null), Math.max(0, deadline - Date.now()));

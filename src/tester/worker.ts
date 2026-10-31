@@ -20,7 +20,7 @@ export class Tester extends WorkerEntrypoint {
       importModule(`./${testsModule}`) as Promise<{ files: Record<string, () => Promise<unknown>> }>,
       importModule(`./${sourceMapModule}`) as Promise<{ default: string }>,
     ]);
-    return runFile(path, Object.hasOwn(files, path) ? files[path] : undefined, testsModule, sourceMap);
+    return runFile(path, Object.hasOwn(files, path) ? files[path] : undefined, sourceMap);
   }
 }
 

@@ -1,3 +1,4 @@
+import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { CheckReport } from "../src/workspace";
@@ -108,21 +109,35 @@ describe("a Turn", () => {
     ]);
   });
 
+  it("ends without an error, having checked and built once, when its tests can't run", async () => {
+    const workspace = await create("Tests can't run");
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (instance) => {
+      instance.runTests = async () => {
+        throw new Error("The tests broke");
+      };
+    });
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:say-hello] Hi");
+    expect(ended).toMatchObject({ status: "completed", error: null, checkErrors: 0, buildErrors: 0, testFailures: null });
+  });
+
   it("runs the tests with the test tool, all of them or the files it names", async () => {
     const [all, one] = [await create("Test tool"), await create("Test tool, one file")];
     await call(`/api/workspaces/${one.id}/files/src/sum.test.ts`, { method: "PUT", text: failingTest });
     await runTurn(all.id, await connect(all.id), "[script:use-test] Run the tests");
-    expect(textOf((await history(all.id))[1]!)).toBe("The tool said: 1 test file: 1 passed, 0 failed.");
+    expect(textOf((await history(all.id))[1]!)).toBe(
+      "The tool said: /src/index.test.ts: 1 passed, 0 failed.\n1 test file: 1 passed, 0 failed.",
+    );
 
     await runTurn(one.id, await connect(one.id), "[script:use-test-file] Run that test");
     expect(textOf((await history(one.id))[1]!)).toBe(
       [
-        "The tool said: FAILED /src/sum.test.ts > adds (at /src/sum.test.ts:4:17): AssertionError: expected 2 to be 3 // Object.is equality",
-        "  - Expected",
-        "  + Received",
-        "  ",
-        "  - 3",
-        "  + 2",
+        "The tool said: /src/sum.test.ts: 0 passed, 1 failed.",
+        "  FAILED adds (at /src/sum.test.ts:4:17): AssertionError: expected 2 to be 3 // Object.is equality",
+        "    - Expected",
+        "    + Received",
+        "    ",
+        "    - 3",
+        "    + 2",
         "1 test file: 0 passed, 1 failed.",
       ].join("\n"),
     );

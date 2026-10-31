@@ -2,10 +2,11 @@ import { createAnthropic } from "@ai-sdk/anthropic";
 import type { TurnConfig } from "@cloudflare/think";
 import { generateText, tool, type LanguageModel, type ToolSet, type UIMessage } from "ai";
 import { z } from "zod";
+import { normalisePath } from "../files";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
 import type { CheckReport, Problem } from "../shared/check-report";
-import { testFailures, type TestFailure, type TestReport } from "../shared/test-report";
 import { maxRetries, type MessageMetadata } from "../shared/conversation";
+import { failuresOf, testFailures, type TestCounts, type TestReport } from "../shared/test-report";
 import type { Workspace } from "../workspace";
 
 /** The Agent's model: `AGENT_MODEL` on the Anthropic API, or on the scripted model at `AGENT_BASE_URL`. */
@@ -109,41 +110,54 @@ function describeProblem(problem: Problem): string {
 const failuresShown = 30;
 const consoleShown = 20;
 
-/** A test report as text for the Agent: each failure, with what its file logged, then the counts. */
-export function describeTests(report: TestReport): string {
+/**
+ * A test report as text for the Agent: each file's counts and failures, with
+ * what it logged if it failed, then the totals. `requested` is the files the
+ * Agent asked for, if it named any.
+ */
+export function describeTests(report: TestReport, requested?: string[]): string {
   if (report.bundleErrors.length > 0) {
     return ["The tests couldn't be bundled, so none ran:", ...report.bundleErrors.map(describeBuildProblem)].join("\n");
   }
-  if (report.files.length === 0) return "There are no test files. Name them like src/index.test.ts.";
   const lines: string[] = [];
+  const unknown = (requested ?? []).filter((path) => !report.files.some(({ file }) => file === path));
+  if (unknown.length > 0) {
+    lines.push(`Not test files, so not run: ${unknown.map((path) => `/${path}`).join(", ")}. Test files are named like /src/index.test.ts.`);
+  }
+  if (report.files.length === 0) return [...lines, "There are no test files to run."].join("\n");
   let shown = 0;
   for (const file of report.files) {
-    const failures: [name: string, failure: TestFailure][] = [
-      ...file.errors.map((error): [string, TestFailure] => [`/${file.file}`, error]),
-      ...file.tests.flatMap((test): [string, TestFailure][] =>
-        test.state === "failed" && test.failure ? [[`/${file.file} > ${test.name.join(" > ")}`, test.failure]] : [],
-      ),
-    ];
-    for (const [name, failure] of failures) {
+    const counts = countBy(file.tests.map(({ state }) => state));
+    const failures = failuresOf(file);
+    const outside = file.errors.length > 0 ? `, and ${plural(file.errors.length, "error")} outside tests` : "";
+    lines.push(`/${file.file}: ${describeCounts(counts)}${outside}.`);
+    for (const { test, failure } of failures) {
       if (shown++ >= failuresShown) continue;
       const where = failure.file === null ? "" : ` (at /${failure.file}:${failure.line}:${failure.column})`;
-      lines.push(`FAILED ${name}${where}: ${failure.message}`);
-      if (failure.diff) lines.push(failure.diff.replace(/^/gm, "  "));
+      lines.push(`  FAILED ${test ? test.name.join(" > ") : "outside any test"}${where}: ${failure.message}`);
+      if (failure.diff) lines.push(failure.diff.replace(/^/gm, "    "));
     }
     if (failures.length > 0 && file.console.length > 0) {
-      lines.push(`/${file.file} logged:`, ...file.console.slice(0, consoleShown).map((line) => `  ${line}`));
+      lines.push("  It logged:", ...file.console.slice(0, consoleShown).map((line) => `    ${line}`));
     }
   }
   if (shown > failuresShown) lines.push(`…and ${shown - failuresShown} more failures.`);
-  const { passed, failed, skipped, todo } = report.counts;
-  const fileErrors = testFailures(report) - failed;
+  const outside = testFailures(report) - report.counts.failed;
   lines.push(
-    `${plural(report.files.length, "test file")}: ${passed} passed, ${failed} failed` +
-      (skipped + todo > 0 ? `, ${skipped + todo} skipped or to do` : "") +
-      (fileErrors > 0 ? `, and ${plural(fileErrors, "error")} outside tests` : "") +
-      ".",
+    `${plural(report.files.length, "test file")}: ${describeCounts(report.counts)}${outside > 0 ? `, and ${plural(outside, "error")} outside tests` : ""}.`,
   );
   return lines.join("\n");
+}
+
+/** For example "3 passed, 1 failed, 2 skipped or to do". */
+function describeCounts({ passed = 0, failed = 0, skipped = 0, todo = 0 }: Partial<TestCounts>): string {
+  return `${passed} passed, ${failed} failed${skipped + todo > 0 ? `, ${skipped + todo} skipped or to do` : ""}`;
+}
+
+function countBy<T extends string>(values: T[]): Partial<Record<T, number>> {
+  const counts: Partial<Record<T, number>> = {};
+  for (const value of values) counts[value] = (counts[value] ?? 0) + 1;
+  return counts;
 }
 
 /** The Agent's own tools. Think adds its file tools and bash. */
@@ -183,7 +197,14 @@ export function agentTools(workspace: {
         files: z.array(z.string()).optional().describe("The test files to run, such as /src/index.test.ts. Every test file if left out."),
       }),
       execute: async ({ files }) => {
-        return describeTests(await workspace.test(files?.map((path) => path.replace(/^\/+/, ""))));
+        const requested = files?.map((path) => {
+          try {
+            return normalisePath(path);
+          } catch {
+            return path;
+          }
+        });
+        return describeTests(await workspace.test(requested), requested);
       },
     }),
     add_package: tool({

@@ -13,6 +13,7 @@ import {
   summarise,
   summariseTests,
   testProblems,
+  type PlacedProblem,
 } from "./problems";
 import type { Checks } from "./useChecks";
 import type { Tests } from "./useTests";
@@ -172,39 +173,8 @@ function ReportProblems({
           ))}
         </ProblemGroup>
       )}
-      {buildList.length > 0 && (
-        <ProblemGroup heading="Build" count={buildList.length}>
-          {buildList.map((problem, index) => {
-            const { file, line, column } = problem;
-            return (
-              <ProblemItem
-                key={index}
-                severity={problem.severity}
-                location={file === null ? undefined : `${file}:${line}:${column}`}
-                message={problem.message}
-                open={file !== null && canOpen(file) ? () => onOpen(file, line, column) : undefined}
-              />
-            );
-          })}
-        </ProblemGroup>
-      )}
-      {testList.length > 0 && (
-        <ProblemGroup heading="Tests" count={testList.length}>
-          {testList.map((problem, index) => {
-            const { file, line, column } = problem;
-            return (
-              <ProblemItem
-                key={index}
-                severity="error"
-                location={file === null ? undefined : [file, line, column].filter((part) => part !== null).join(":")}
-                message={problem.message}
-                detail={problem.diff ?? undefined}
-                open={file !== null && canOpen(file) ? () => onOpen(file, line, column) : undefined}
-              />
-            );
-          })}
-        </ProblemGroup>
-      )}
+      <PlacedGroup heading="Build" problems={buildList} canOpen={canOpen} onOpen={onOpen} />
+      <PlacedGroup heading="Tests" problems={testList} canOpen={canOpen} onOpen={onOpen} />
       {groups.map((group) => (
         <ProblemGroup key={group.path} heading={group.path} count={group.problems.length}>
           {group.problems.map((problem, index) => (
@@ -223,6 +193,38 @@ function ReportProblems({
         </ProblemGroup>
       ))}
     </>
+  );
+}
+
+/** The Build's or the tests' problems, if there are any, each opening its file at its place. */
+function PlacedGroup({
+  heading,
+  problems,
+  canOpen,
+  onOpen,
+}: {
+  heading: string;
+  problems: PlacedProblem[];
+  canOpen(path: string): boolean;
+  onOpen: OpenAt;
+}) {
+  if (problems.length === 0) return null;
+  return (
+    <ProblemGroup heading={heading} count={problems.length}>
+      {problems.map((problem, index) => {
+        const { file, line, column } = problem;
+        return (
+          <ProblemItem
+            key={index}
+            severity={problem.severity}
+            location={file === null ? undefined : [file, line, column].filter((part) => part !== null).join(":")}
+            message={problem.message}
+            detail={problem.diff ?? undefined}
+            open={file !== null && canOpen(file) ? () => onOpen(file, line, column) : undefined}
+          />
+        );
+      })}
+    </ProblemGroup>
   );
 }
 
