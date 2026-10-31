@@ -24,6 +24,21 @@ importers:
       '@cloudflare/worker-bundler':
         specifier: 0.2.6
         version: 0.2.6
+      '@sinonjs/fake-timers':
+        specifier: 15.4.0
+        version: 15.4.0
+      '@vitest/expect':
+        specifier: 4.1.12
+        version: 4.1.12
+      '@vitest/runner':
+        specifier: 4.1.12
+        version: 4.1.12
+      '@vitest/spy':
+        specifier: 4.1.12
+        version: 4.1.12
+      '@vitest/utils':
+        specifier: 4.1.12
+        version: 4.1.12
       agents:
         specifier: 0.28.1
         version: 0.28.1(@ai-sdk/provider@4.0.27)(@ai-sdk/react@4.0.141(react@19.3.0)(zod@4.6.7))(@babel/core@8.0.7)(@babel/runtime@7.29.10)(@cloudflare/codemode@0.5.4(@modelcontextprotocol/sdk@1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7))(ai@7.0.138(zod@4.6.7))(zod@4.6.7))(@modelcontextprotocol/client@2.3.1)(@modelcontextprotocol/sdk@1.32.1(@cfworker/json-schema@4.1.1)(zod@4.6.7))(@modelcontextprotocol/server@2.3.1)(ai@7.0.138(zod@4.6.7))(chat@4.41.1(ai@7.0.138(zod@4.6.7))(zod@4.6.7))(just-bash@3.6.0)(react@19.3.0)(rolldown@1.2.13)(vite@8.3.4(esbuild@0.28.2)(yaml@2.9.1))(zod@4.6.7)
@@ -959,6 +974,12 @@ packages:
   '@sindresorhus/is@7.2.0':
     resolution: {integrity: sha512-P1Cz1dWaFfR4IR+U13mqqiGsLFf1KbayybWwdd2vfctdV6hDpUkgCY0nKOLLTMSoRd/jJNjtbqzf13K8DCCXQw==}
     engines: {node: '>=18'}
+
+  '@sinonjs/commons@3.0.1':
+    resolution: {integrity: sha512-K3mCHKQ9sVh8o1C9cxkwxaOmXoAMlDxC1mYyHrjqOWEcBjYr76t96zL2zlj5dUGZ3HSw240X1qgH3Mjf1yJWpQ==}
+
+  '@sinonjs/fake-timers@15.4.0':
+    resolution: {integrity: sha512-DsG+8/LscQIQg68J6Ef3dv10u6nVyetYn923s3/sus5eaGfTo1of5WMZSLf0UJc9KDuKPilPH0UDJCjvNbDNCA==}
 
   '@speed-highlight/core@1.2.24':
     resolution: {integrity: sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw==}
@@ -2488,6 +2509,10 @@ packages:
     resolution: {integrity: sha512-I8yFsfRzmzK0WV1pNNOA4A7y4RDfFxPRxb3t+e3ui14qSGOxGtiSP6GjeX+Y6CHb7HYaFj7ECUD7VE5kQMZWGQ==}
     engines: {node: '>=18', npm: '>=9'}
 
+  type-detect@4.0.8:
+    resolution: {integrity: sha512-0fr/mIH1dlO+x7TlcMy+bIDqKPsw/70tVyeHW787goQjhmqaZe10uwLujubK9q9Lg6Fiho1KUKDYz0Z7k7g5/g==}
+    engines: {node: '>=4'}
+
   type-is@2.1.0:
     resolution: {integrity: sha512-faYHw0anBbc/kWF3zFTEnxSFOAGUX9GFbOBthvDdLsIlEoWOFOtS0zgCiQYwIskL9iGXZL3kAXD8OoZ4GmMATA==}
     engines: {node: '>= 18'}
@@ -3515,6 +3540,14 @@ snapshots:
   '@rolldown/pluginutils@1.0.1': {}
 
   '@sindresorhus/is@7.2.0': {}
+
+  '@sinonjs/commons@3.0.1':
+    dependencies:
+      type-detect: 4.0.8
+
+  '@sinonjs/fake-timers@15.4.0':
+    dependencies:
+      '@sinonjs/commons': 3.0.1
 
   '@speed-highlight/core@1.2.24': {}
 
@@ -5187,6 +5220,8 @@ snapshots:
   turndown@7.2.4:
     dependencies:
       '@mixmark-io/domino': 2.2.0
+
+  type-detect@4.0.8: {}
 
   type-is@2.1.0:
     dependencies:

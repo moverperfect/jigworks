@@ -204,6 +204,71 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
   };
 }
 
+/** The tests' bundle, for the Tester (ADR 0017). */
+export interface TestBundle {
+  ok: true;
+  /** One ES module that exports `files`: each test file's path, to a function that imports it. */
+  code: string;
+  /** The bundle's source map, which takes errors back to the Workspace's files. */
+  sourceMap: string;
+  compatibilityDate: string | undefined;
+  compatibilityFlags: string[];
+}
+
+export type TestBundleResult = TestBundle | { ok: false; errors: BuildProblem[] };
+
+// The bundle's entry, made by the platform.
+const testsEntry = "__jigworks-tests.js";
+const inlineSourceMap = "\n//# sourceMappingURL=data:application/json;base64,";
+
+/**
+ * Bundles a snapshot's test files into one module, as a Build bundles the
+ * app. Each file is imported only when the Tester asks for it, inside its
+ * call, where Workers allow timers and randomness. `virtualModules` gives the
+ * tests the platform's `vitest`.
+ */
+export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtualModules: Record<string, string>): Promise<TestBundleResult> {
+  const files = Object.fromEntries(snapshot);
+  if (files["package.json"] !== undefined) files["package.json"] = withoutDependencies(files["package.json"]);
+  files[testsEntry] = `export const files = {\n${testFiles
+    .map((path) => `  ${JSON.stringify(path)}: () => import(${JSON.stringify(`./${path}`)}),`)
+    .join("\n")}\n};\n`;
+  const config = (parseJsonc(snapshot.get("wrangler.jsonc") ?? "{}") ?? {}) as { compatibility_date?: string; compatibility_flags?: string[] };
+  let code: string;
+  try {
+    const worker = await createWorker({
+      files,
+      entryPoint: testsEntry,
+      virtualModules,
+      jsx: "automatic",
+      jsxImportSource: "react",
+      sourcemap: true,
+    });
+    const main = worker.modules[worker.mainModule];
+    code = typeof main === "string" ? main : (main?.js ?? "");
+  } catch (error) {
+    return { ok: false, errors: esbuildProblems(error) };
+  }
+  await initLexer();
+  // The bundle is one module, so a relative import left in it wasn't found either.
+  const missing = missingImports(code, { relative: true });
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      errors: missing.map((specifier) => unplaced(`The tests import "${specifier}", which isn't in the Workspace or its Packages`)),
+    };
+  }
+  const at = code.lastIndexOf(inlineSourceMap);
+  const sourceMap = at === -1 ? "{}" : new TextDecoder().decode(Uint8Array.from(atob(code.slice(at + inlineSourceMap.length).trim()), (char) => char.charCodeAt(0)));
+  return {
+    ok: true,
+    code: at === -1 ? code : code.slice(0, at),
+    sourceMap,
+    compatibilityDate: config.compatibility_date,
+    compatibilityFlags: config.compatibility_flags ?? [],
+  };
+}
+
 type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };
 
 // What `wrangler.jsonc` can ask for that the platform doesn't have: apps get
@@ -296,8 +361,8 @@ const nodeBuiltins = new Set(
   ),
 );
 
-/** Bare specifiers a bundle still imports or requires, other than the runtime's own. */
-function missingImports(code: string, { browser = false } = {}): string[] {
+/** Bare specifiers a bundle still imports or requires, other than the runtime's own, and relative ones if asked. */
+function missingImports(code: string, { browser = false, relative = false } = {}): string[] {
   const specifiers = new Set<string>();
   try {
     const [imports] = parse(code);
@@ -307,7 +372,8 @@ function missingImports(code: string, { browser = false } = {}): string[] {
   }
   for (const match of code.matchAll(/\b__require\(\s*["']([^"']+)["']\s*\)/g)) specifiers.add(match[1]!);
   return [...specifiers].filter((specifier) => {
-    if (/^(\.|\/|[a-z][a-z0-9+.-]*:\/\/|data:)/i.test(specifier)) return false;
+    if (/^(\.|\/)/.test(specifier)) return relative;
+    if (/^([a-z][a-z0-9+.-]*:\/\/|data:)/i.test(specifier)) return false;
     if (browser) return true;
     if (specifier.startsWith("cloudflare:") || specifier.startsWith("node:")) return false;
     return !nodeBuiltins.has(specifier.split("/")[0]!);
