@@ -1,3 +1,4 @@
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { BuildReport } from "../src/shared/build-report";
@@ -169,6 +170,10 @@ export default {
     expect(await inPreview(workspace.id, "/")).toBe("first-value");
     await setSecret(workspace.id, "API_KEY", "second-value");
     expect(await inPreview(workspace.id, "/")).toBe("second-value");
+    // A binding's name isn't free for a secret, which the app couldn't read.
+    const taken = await setSecret(workspace.id, "KEEPER", "value-1234");
+    expect(taken.status).toBe(400);
+    expect(await taken.json()).toEqual({ error: expect.stringContaining("KEEPER") });
     // Nothing of the platform's own, in the app's env or an instance's.
     expect(JSON.parse(await inPreview(workspace.id, "/names"))).toEqual({ app: ["API_KEY", "KEEPER"], keeper: ["API_KEY", "KEEPER"] });
   });
@@ -226,6 +231,22 @@ describe("hiding a secret's value", () => {
     expect(answer.truncated).toBe(true);
     // Hidden first, then cut: what's left of the value is the start of its placeholder.
     expect(answer.body).toBe("x".repeat(19_990) + "[secret API_KEY]".slice(0, 10));
+  });
+
+  it("forgets a replaced value after an hour, whether or not anything happens meanwhile", async () => {
+    const workspace = await envWorkspace("Secrets Forgotten");
+    await setSecret(workspace.id, "API_KEY", "the-old-value");
+    await setSecret(workspace.id, "API_KEY", "the-new-value");
+    const host = env.APP_HOSTS.getByName(await env.WORKSPACES.getByName(workspace.id).appLabel());
+    const retired = () =>
+      runInDurableObject(host, (_instance, state) => state.storage.sql.exec<{ value: string }>("SELECT value FROM retired_secrets").toArray());
+    expect(await retired()).toEqual([{ value: "the-old-value" }]);
+    // An hour on.
+    await runInDurableObject(host, (_instance, state) => {
+      state.storage.sql.exec("UPDATE retired_secrets SET retired_at = retired_at - 3600001");
+    });
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+    expect(await retired()).toEqual([]);
   });
 
   it("drops the start of a value from the end of a log line cut short in the browser", async () => {

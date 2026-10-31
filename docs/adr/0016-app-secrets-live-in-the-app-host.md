@@ -15,9 +15,9 @@ The Developer gives a Workspace secrets, such as API keys, which its app reads f
 
 - **This keeps values out of the Agent's sight, not out of its reach.** The Agent writes the app's code, so code that encodes a value, or sends it to another site, can still get it out. The platform doesn't pretend otherwise.
 - **The Deployment isn't frozen against secrets.** Changing a secret changes what the Deployment runs with, as `wrangler secret put` does on Cloudflare. Publishing copies a Build, not secrets.
-- **A secret overrides an entry of the same name in `vars`.**
+- **A secret overrides an entry of the same name in `vars`.** A Durable Object binding's name can't be a secret's, since the binding takes it in `env`. A binding added later takes it from the secret.
 - **A value is at least 6 characters,** because hiding a shorter one would mangle ordinary text. Short settings that aren't secret belong in `vars`.
-- **A removed value stays stored for an hour,** for hiding only, then goes.
+- **A removed value stays stored for an hour,** for hiding only. An alarm in the app host then deletes it.
 - **None of the platform Worker's own secrets reach an app:** an app's `env` holds its `vars`, its secrets and, with Durable Object bindings, `AppData` (ADR 0015).
 - **Limits follow Cloudflare's:** up to 64 secrets, each up to 5,120 bytes. A name starts with a letter or `_`, then has only letters, digits and `_`.
 - **Deleting the Workspace deletes its secrets** with the app host.

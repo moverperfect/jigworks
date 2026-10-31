@@ -170,24 +170,28 @@ export class AppHost extends DurableObject<Env> {
    * Adds or replaces one of the app's secrets, which reaches its env in the
    * Preview and the Deployment at once (ADR 0016).
    */
-  setSecret(workspaceId: string, label: string, name: string, value: unknown): { ok: true } | { ok: false; error: string } {
+  async setSecret(workspaceId: string, label: string, name: string, value: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
     const problem = secretProblem(name, value);
     if (problem) return { ok: false, error: problem };
     if (!this.claim(workspaceId, label)) return { ok: false, error: "The app's label belongs to another Workspace." };
+    // The binding's stand-in would take the name in env, so the app couldn't read the secret.
+    if ((["preview", "deployment"] as const).some((slot) => Object.hasOwn(this.buildIn(slot)?.durableObjects ?? {}, name))) {
+      return { ok: false, error: `The app has a Durable Object binding named ${name}. Give the secret another name.` };
+    }
     const sql = this.sql();
     if (sql.exec<{ others: number }>("SELECT COUNT(*) AS others FROM secrets WHERE name != ?", name).one().others >= maxSecrets) {
       return { ok: false, error: `A Workspace can have up to ${maxSecrets} secrets.` };
     }
-    this.retireSecret(name);
+    await this.retireSecret(name);
     sql.exec("INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)", name, value, new Date().toISOString());
     this.secretsChanged();
     return { ok: true };
   }
 
   /** Removes one of the app's secrets, from the Preview's env and the Deployment's at once. */
-  removeSecret(workspaceId: string, name: string): void {
+  async removeSecret(workspaceId: string, name: string): Promise<void> {
     if (this.workspaceId() !== workspaceId) return;
-    this.retireSecret(name);
+    await this.retireSecret(name);
     this.sql().exec("DELETE FROM secrets WHERE name = ?", name);
     this.secretsChanged();
   }
@@ -546,8 +550,18 @@ export class AppHost extends DurableObject<Env> {
     ];
   }
 
-  private retireSecret(name: string): void {
+  private async retireSecret(name: string): Promise<void> {
     this.sql().exec("INSERT INTO retired_secrets (name, value, retired_at) SELECT name, value, ? FROM secrets WHERE name = ?", Date.now(), name);
+    // So the value goes after an hour even if nothing else happens.
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + retiredSecretsKeptMs);
+  }
+
+  /** Forgets the retired values past their hour, and wakes again for the rest. */
+  override async alarm(): Promise<void> {
+    const sql = this.sql();
+    sql.exec("DELETE FROM retired_secrets WHERE retired_at <= ?", Date.now() - retiredSecretsKeptMs);
+    const next = sql.exec<{ oldest: number | null }>("SELECT MIN(retired_at) AS oldest FROM retired_secrets").one().oldest;
+    if (next !== null) await this.ctx.storage.setAlarm(next + retiredSecretsKeptMs);
   }
 
   /** Counts changes of secrets, so each change loads a new Worker with the new env. */
