@@ -93,6 +93,7 @@ describe("a Workspace's secrets", () => {
       ["has-dash", "x"],
       ["__jigworks_app_data", "x"],
       ["EMPTY", ""],
+      ["SHORT", "12345"],
       ["NOT_TEXT", 42],
       ["TOO_LONG", "x".repeat(5121)],
     ] as const) {
@@ -125,6 +126,7 @@ describe("an app's secrets", () => {
     expect(await inDeployment(url, "/API_KEY")).toBe("second-value");
     await call(`/api/workspaces/${workspace.id}/secrets/API_KEY`, { method: "DELETE" });
     expect(await inPreview(workspace.id, "/API_KEY")).toBe("(none)");
+    expect(await inDeployment(url, "/API_KEY")).toBe("(none)");
   });
 
   it("are all the app's env holds, with its vars: none of the platform's own secrets", async () => {
@@ -151,10 +153,13 @@ describe("an app's secrets", () => {
       `import { DurableObject } from "cloudflare:workers";
 export class Keeper extends DurableObject<{ API_KEY?: string }> {
   key() { return this.env.API_KEY ?? "(none)"; }
+  names() { return Object.keys(this.env).sort(); }
 }
 export default {
-  async fetch(_request: Request, env: { KEEPER: DurableObjectNamespace<Keeper> }) {
-    return new Response(await env.KEEPER.getByName("x").key());
+  async fetch(request: Request, env: { KEEPER: DurableObjectNamespace<Keeper> }) {
+    const keeper = env.KEEPER.getByName("x");
+    if (new URL(request.url).pathname === "/names") return Response.json({ app: Object.keys(env).sort(), keeper: await keeper.names() });
+    return new Response(await keeper.key());
   },
 };
 `,
@@ -164,6 +169,100 @@ export default {
     expect(await inPreview(workspace.id, "/")).toBe("first-value");
     await setSecret(workspace.id, "API_KEY", "second-value");
     expect(await inPreview(workspace.id, "/")).toBe("second-value");
+    // Nothing of the platform's own, in the app's env or an instance's.
+    expect(JSON.parse(await inPreview(workspace.id, "/names"))).toEqual({ app: ["API_KEY", "KEEPER"], keeper: ["API_KEY", "KEEPER"] });
+  });
+});
+
+describe("hiding a secret's value", () => {
+  it("hides the longer of two values that overlap, whole", async () => {
+    const workspace = await envWorkspace("Secrets Overlap");
+    await setSecret(workspace.id, "SHORT", "secret-123");
+    await setSecret(workspace.id, "LONG", "secret-12345");
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/LONG" });
+    expect(answer.body).toBe("[secret LONG]");
+  });
+
+  it("hides a value escaped as JSON, in an answer and in a logged object", async () => {
+    const workspace = await create("Secrets Escaped");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch(_request: Request, env: { PEM: string }) {
+    console.log({ pem: env.PEM });
+    return Response.json({ pem: env.PEM });
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "PEM", '-----BEGIN KEY-----\nabc"def\\ghi\n-----END KEY-----');
+    const agent = env.WORKSPACES.getByName(workspace.id);
+    expect((await agent.requestPreview({ method: "GET", path: "/" })).body).toBe('{"pem":"[secret PEM]"}');
+    let logs: { message: string }[] = [];
+    for (let attempt = 0; attempt < 50 && logs.length === 0; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      logs = await agent.previewLogs();
+    }
+    expect(logs.map(({ message }) => message)).toEqual(['{"pem":"[secret PEM]"}']);
+  });
+
+  it("hides the part of a value left at the end of an answer cut short", async () => {
+    const workspace = await create("Secrets Cut");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch(_request: Request, env: { API_KEY: string }) {
+    return new Response("x".repeat(19_990) + env.API_KEY);
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "abcdefghijklmnopqrstuvwxyz");
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" });
+    expect(answer.truncated).toBe(true);
+    // Hidden first, then cut: what's left of the value is the start of its placeholder.
+    expect(answer.body).toBe("x".repeat(19_990) + "[secret API_KEY]".slice(0, 10));
+  });
+
+  it("drops the start of a value from the end of a log line cut short in the browser", async () => {
+    const workspace = await envWorkspace("Secrets Cut Logs");
+    await setSecret(workspace.id, "API_KEY", "abcdefghijklmnopqrstuvwxyz");
+    const label = await env.WORKSPACES.getByName(workspace.id).appLabel();
+    await env.APP_HOSTS.getByName(label).log("preview", "browser", [{ level: "error", message: "failed with abcdefgh" }]);
+    expect((await env.WORKSPACES.getByName(workspace.id).previewLogs()).map(({ message }) => message)).toEqual(["failed with "]);
+  });
+
+  it("hides a value in an error from the Preview's answer", async () => {
+    const workspace = await create("Secrets Broken");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch(_request: Request, env: { API_KEY: string }) {
+    return new Response(new ReadableStream({ pull(controller) { controller.error(new Error("broke with " + env.API_KEY)); } }));
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "abcdefghijklmnopqrstuvwxyz");
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" });
+    expect(JSON.stringify(answer)).not.toContain("abcdefghij");
+  });
+
+  it("hides a value in a log line that arrives after the secret changed", async () => {
+    const workspace = await envWorkspace("Secrets Late");
+    await setSecret(workspace.id, "API_KEY", "the-old-value");
+    await setSecret(workspace.id, "API_KEY", "the-new-value");
+    // As a request that started before the change would log, once it ends.
+    const label = await env.WORKSPACES.getByName(workspace.id).appLabel();
+    await env.APP_HOSTS.getByName(label).log("preview", "server", [{ level: "log", message: "the key was the-old-value" }]);
+    const logs = await env.WORKSPACES.getByName(workspace.id).previewLogs();
+    expect(logs.map(({ message }) => message)).toEqual(["the key was [secret API_KEY]"]);
   });
 });
 

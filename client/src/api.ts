@@ -2,6 +2,7 @@ import type { BuildReport } from "../../src/shared/build-report.ts";
 import type { AppLogEntry } from "../../src/shared/app-logs.ts";
 import type { CheckReport } from "../../src/shared/check-report.ts";
 import type { Deployment } from "../../src/shared/deployment.ts";
+import type { Secret } from "../../src/shared/secret.ts";
 
 export interface Template {
   id: string;
@@ -165,12 +166,7 @@ export function previewTabUrl(host: string, to: string): string {
 
 export type { AppLogEntry, Deployment };
 
-/** A secret, by name: its value never comes back from the platform (ADR 0016). */
-export interface Secret {
-  name: string;
-  /** ISO 8601. */
-  updatedAt: string;
-}
+export type { Secret };
 
 export async function listSecrets(id: string): Promise<Secret[]> {
   const { secrets } = await request<{ secrets: Secret[] }>("GET", `${workspaceApiPath(id)}/secrets`);

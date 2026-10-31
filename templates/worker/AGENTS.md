@@ -30,4 +30,4 @@ This Workspace runs only inside the platform. There is no local machine and noth
 
   The Preview's data and the Deployment's are kept apart. Both survive new code, and the Preview's isn't copied when the Developer publishes. Renaming a binding starts it afresh.
 - **Outbound requests:** `fetch` to any external URL works.
-- **Secrets:** each secret the Developer sets appears in `env` under its name, for example `c.env.API_KEY`, in the Preview and the Deployment. `list_secrets` gives their names; add each to `__BaseEnv_Env` as `string`. You never see their values: in what the Preview answers or logs, a value shows as `[secret NAME]`. Never log a secret or send it anywhere but the service it's for.
+- **Secrets:** each secret the Developer sets appears in `env` under its name, for example `c.env.API_KEY`, in the Preview and the Deployment. Never log a secret or send it anywhere but the service it's for.

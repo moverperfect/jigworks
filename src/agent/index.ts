@@ -179,7 +179,7 @@ export function agentTools(workspace: {
     }),
     list_secrets: tool({
       description:
-        "Lists the names of the secrets the Developer gave the Workspace. Each appears in the app's env under its name. Their values are never shown.",
+        "Lists the names of the Workspace's secrets.",
       inputSchema: z.object({}),
       execute: async () => {
         const secrets = await workspace.secretNames();

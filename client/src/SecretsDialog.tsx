@@ -25,7 +25,6 @@ export function SecretsButton({ id }: { id: string }) {
 function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) {
   const headingId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
-  const nameField = useRef<HTMLInputElement>(null);
   const loaded = useLoad(() => listSecrets(id));
   const [name, setName] = useState("");
   const [value, setValue] = useState("");
@@ -72,7 +71,7 @@ function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) {
         <h2 id={`${headingId}-title`}>Secrets</h2>
         <p className="hint">
           Your app reads each secret from <code>env</code> by its name, in the Preview and the Deployment. The Agent sees
-          only the names. A value is never shown again once saved.
+          only the names. A value is never shown again once saved. To replace one, add it again under its name.
         </p>
         {loaded.state.status === "failed" && <ErrorMessage error={loaded.state.error} retry={loaded.retry} />}
         {loaded.state.status === "ready" && secrets.length === 0 && <p className="hint">No secrets yet.</p>}
@@ -82,17 +81,6 @@ function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) {
               <li key={secret.name} className="secret">
                 <span className="secret-name">{secret.name}</span>
                 <span className="hint">set {formatTime(secret.updatedAt)}</span>
-                <button
-                  type="button"
-                  className="button button-small"
-                  onClick={() => {
-                    setName(secret.name);
-                    setValue("");
-                    nameField.current?.focus();
-                  }}
-                >
-                  Replace
-                </button>
                 <button type="button" className="button button-small" onClick={() => setRemoving(secret)}>
                   Remove
                 </button>
@@ -105,7 +93,6 @@ function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) {
           <div className="field">
             <label htmlFor={`${headingId}-name`}>Name</label>
             <input
-              ref={nameField}
               id={`${headingId}-name`}
               type="text"
               value={name}

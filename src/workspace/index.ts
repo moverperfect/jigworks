@@ -40,6 +40,7 @@ import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
 import type { BuildReport } from "../shared/build-report";
 import type { Deployment } from "../shared/deployment";
+import type { Secret } from "../shared/secret";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
 
@@ -370,6 +371,10 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.ctx.storage.kv.get<BuildReport>(buildKey) ?? null;
   }
 
+  private appHost() {
+    return this.env.APP_HOSTS.getByName(this.appLabel());
+  }
+
   /** The app's label, which names its app host and hostnames. Workspaces made before ticket 08 get one now. */
   appLabel(): string {
     let label = this.ctx.storage.kv.get<string>(appLabelKey);
@@ -395,7 +400,7 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   private async previewReady(): Promise<boolean> {
-    return (await this.env.APP_HOSTS.getByName(this.appLabel()).previewHash()) !== null;
+    return (await this.appHost().previewHash()) !== null;
   }
 
   /** A single-use link that signs the Developer in to the Preview and shows `to` (ADR 0013). The caller checks ownership first. */
@@ -408,7 +413,7 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** Sends the Preview a request for the Agent's `request_preview` tool. */
   async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
-    return this.env.APP_HOSTS.getByName(this.appLabel()).requestPreview(init);
+    return this.appHost().requestPreview(init);
   }
 
   /** Where the Deployment answers, and what it runs. */
@@ -433,7 +438,7 @@ export class Workspace extends Think<Env, ConversationState> {
     // meanwhile is seen.
     const result = await this.exclusive(async () => {
       if (this.state.turn) return null;
-      return this.env.APP_HOSTS.getByName(this.appLabel()).publish(this.name, replaces);
+      return this.appHost().publish(this.name, replaces);
     });
     if (!result) return busy;
     const label = this.appLabel();
@@ -453,8 +458,8 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /** The names of the secrets the Developer gave the Workspace (ADR 0016). */
-  async secretNames(): Promise<{ name: string; updatedAt: string }[]> {
-    return this.env.APP_HOSTS.getByName(this.appLabel()).secretNames();
+  async secretNames(): Promise<Secret[]> {
+    return this.appHost().secretNames();
   }
 
   /** Adds or replaces a secret, which reaches the app's env at once. */
@@ -463,8 +468,9 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.env.APP_HOSTS.getByName(label).setSecret(this.name, label, name, value);
   }
 
+  /** Removes a secret from the app's env at once. */
   async removeSecret(name: string): Promise<void> {
-    await this.env.APP_HOSTS.getByName(this.appLabel()).removeSecret(this.name, name);
+    await this.appHost().removeSecret(this.name, name);
   }
 
   /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */
@@ -475,7 +481,7 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** The Preview's newest server logs and front-end errors, for the Agent's `preview_logs` tool. */
   async previewLogs(limit?: number): Promise<AppLogEntry[]> {
-    return this.env.APP_HOSTS.getByName(this.appLabel()).logs("preview", limit);
+    return this.appHost().logs("preview", limit);
   }
 
   /**
