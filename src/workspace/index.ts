@@ -42,7 +42,7 @@ import type { BuildReport } from "../shared/build-report";
 import type { Deployment } from "../shared/deployment";
 import type { Secret } from "../shared/secret";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
-import { testFailures, type TestCounts, type TestFileReport, type TestReport } from "../shared/test-report";
+import { testFailures, testReportWithin, type TestCounts, type TestFileReport, type TestReport } from "../shared/test-report";
 import { isTestFile, testInDynamicWorkers, vitestModule, vitestTypes } from "../tester";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
 
@@ -411,7 +411,7 @@ export class Workspace extends Think<Env, ConversationState> {
     const report: TestReport = { ranAt, files, bundleErrors: bundle && !bundle.ok ? bundle.errors : [], counts: countTests(files) };
     if (!only && run > this.testRunKept) {
       this.testRunKept = run;
-      this.ctx.storage.kv.put(testKey, testsWithinBudget(report));
+      this.ctx.storage.kv.put(testKey, testReportWithin(report, reportBudgetBytes));
     }
     console.log(
       JSON.stringify({
@@ -820,32 +820,6 @@ function countTests(files: TestFileReport[]): TestCounts {
   const counts: TestCounts = { passed: 0, failed: 0, skipped: 0, todo: 0 };
   for (const file of files) for (const test of file.tests) counts[test.state] += 1;
   return counts;
-}
-
-/**
- * A test report that fits its key-value row, losing detail until it does:
- * what the tests logged, then diffs, then the tests that didn't fail, then
- * the last files. The counts stay whole.
- */
-function testsWithinBudget(report: TestReport): TestReport {
-  const noDiff = <T extends { diff: string | null }>(failure: T): T => ({ ...failure, diff: null });
-  const lighter: ((file: TestFileReport) => TestFileReport)[] = [
-    (file) => ({ ...file, console: [] }),
-    (file) => ({
-      ...file,
-      errors: file.errors.map(noDiff),
-      tests: file.tests.map((test) => ({ ...test, failure: test.failure && noDiff(test.failure) })),
-    }),
-    (file) => ({ ...file, tests: file.tests.filter((test) => test.state === "failed") }),
-  ];
-  const fits = (candidate: TestReport) => JSON.stringify(candidate).length <= reportBudgetBytes;
-  let kept = report;
-  for (const lighten of lighter) {
-    if (fits(kept)) return kept;
-    kept = { ...kept, files: kept.files.map(lighten) };
-  }
-  while (!fits(kept)) kept = { ...kept, files: kept.files.slice(0, -1) };
-  return kept;
 }
 
 function countBySeverity(problems: Problem[]): Record<Severity, number> {

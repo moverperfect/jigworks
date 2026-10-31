@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { countProblems, summariseTests, testProblems } from "../client/src/problems";
 import { describeTests } from "../src/agent";
 import { bundleTests, type TestBundle } from "../src/builder";
-import type { TestFileReport, TestReport } from "../src/shared/test-report";
+import { testReportWithin, type TestFileReport, type TestReport } from "../src/shared/test-report";
 import { isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
 import { call, create } from "./helpers/api";
 
@@ -358,5 +358,31 @@ describe("the problems list's tests", () => {
     expect(summariseTests({ ...report, files: [] })).toBe("No tests");
     const unbundled = { ...report, files: [], bundleErrors: [{ message: "x", file: null, line: null, column: null }] };
     expect(summariseTests(unbundled)).toBe("The tests couldn't be bundled");
+  });
+});
+
+describe("a test report too large to keep whole", () => {
+  const counts = { passed: 0, failed: 100, skipped: 0, todo: 0 };
+  const failure = (n: number) => ({ message: `failure ${n} ${"x".repeat(80)}`, diff: "-".repeat(50), file: null, line: null, column: null });
+
+  it("keeps the first failures that fit, rather than dropping whole files", () => {
+    const files = ["src/a.test.ts", "src/b.test.ts"].map((file) => ({
+      file,
+      tests: Array.from({ length: 50 }, (_, n) => ({ name: [`fails ${n}`], state: "failed" as const, line: n + 1, failure: failure(n) })),
+      errors: [],
+      console: ["log: hi"],
+    }));
+    const kept = testReportWithin({ ranAt: "", files, bundleErrors: [], counts }, 6_000);
+    expect(JSON.stringify(kept).length).toBeLessThanOrEqual(6_000);
+    expect(kept.counts).toEqual(counts);
+    expect(kept.files.map(({ file }) => file)).toEqual(["src/a.test.ts", "src/b.test.ts"]);
+    expect(kept.files[0]!.tests[0]).toEqual({ name: ["fails 0"], state: "failed", line: 1, failure: { ...failure(0), diff: null } });
+  });
+
+  it("keeps the first bundling errors that fit, however many there are", () => {
+    const bundleErrors = Array.from({ length: 200 }, (_, n) => ({ message: `missing ${n} ${"x".repeat(80)}`, file: null, line: null, column: null }));
+    const kept = testReportWithin({ ranAt: "", files: [], bundleErrors, counts }, 6_000);
+    expect(JSON.stringify(kept).length).toBeLessThanOrEqual(6_000);
+    expect(kept.bundleErrors[0]).toEqual(bundleErrors[0]);
   });
 });
