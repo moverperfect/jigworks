@@ -1,15 +1,12 @@
 import { createApp, createWorker, type Modules } from "@cloudflare/worker-bundler";
-import { DecodedMap, getOriginalPosition } from "@vitest/utils/source-map";
 import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
 import { platformEnvPrefix } from "../apphost/app-data";
+import { bundlerFiles, esbuildProblems, missingImports, unplaced, type Snapshot } from "./bundling";
 import { frontEnd, tailwindVersion, type TailwindFailure } from "./front-end";
 
-export type { BuildProblem };
-
-/** A Workspace's files and Packages: path relative to the Workspace root, to text. */
-export type Snapshot = ReadonlyMap<string, string>;
+export type { BuildProblem, Snapshot };
 
 /** The `assets` settings in `wrangler.jsonc` the app host follows (ADR 0014). */
 export interface AssetSettings {
@@ -96,12 +93,7 @@ export function inProcessBuilder(): Builder {
  */
 export async function build(snapshot: Snapshot): Promise<BuildResult> {
   const hash = await hashOf(snapshot);
-  const files = Object.fromEntries(snapshot);
-  // The bundler runs its own npm installer for any dependency it can't find
-  // under node_modules/, which would skip the platform's Package rules: the
-  // one-day minimum age, and one version of each Package. So it isn't told
-  // about any. The Packages are already in the snapshot.
-  if (files["package.json"] !== undefined) files["package.json"] = withoutDependencies(files["package.json"]);
+  const files = bundlerFiles(snapshot);
   const config = (parseJsonc(snapshot.get("wrangler.jsonc") ?? "{}") ?? {}) as {
     compatibility_date?: string;
     compatibility_flags?: string[];
@@ -205,86 +197,6 @@ export async function build(snapshot: Snapshot): Promise<BuildResult> {
   };
 }
 
-/** The tests' bundle, for the Tester (ADR 0017). */
-export interface TestBundle {
-  ok: true;
-  /** One ES module that exports `files`: each test file's path, to a function that imports it. */
-  code: string;
-  /** The bundle's source map, which takes errors back to the Workspace's files. */
-  sourceMap: string;
-  compatibilityDate: string | undefined;
-  compatibilityFlags: string[];
-}
-
-export type TestBundleResult = TestBundle | { ok: false; errors: BuildProblem[] };
-
-// The bundle's entry, made by the platform.
-const testsEntry = "__jigworks-tests.js";
-const inlineSourceMap = "\n//# sourceMappingURL=data:application/json;base64,";
-
-/**
- * Bundles a snapshot's test files into one module, as a Build bundles the
- * app. Each file is imported only when the Tester asks for it, inside its
- * call, where Workers allow timers and randomness. `virtualModules` gives the
- * tests the platform's `vitest`.
- */
-export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtualModules: Record<string, string>): Promise<TestBundleResult> {
-  const files = Object.fromEntries(snapshot);
-  if (files["package.json"] !== undefined) files["package.json"] = withoutDependencies(files["package.json"]);
-  files[testsEntry] = `export const files = {\n${testFiles
-    .map((path) => `  ${JSON.stringify(path)}: () => import(${JSON.stringify(`./${path}`)}),`)
-    .join("\n")}\n};\n`;
-  const config = (parseJsonc(snapshot.get("wrangler.jsonc") ?? "{}") ?? {}) as { compatibility_date?: string; compatibility_flags?: string[] };
-  let code: string;
-  try {
-    const worker = await createWorker({
-      files,
-      entryPoint: testsEntry,
-      virtualModules,
-      jsx: "automatic",
-      jsxImportSource: "react",
-      sourcemap: true,
-    });
-    const main = worker.modules[worker.mainModule];
-    code = typeof main === "string" ? main : (main?.js ?? "");
-  } catch (error) {
-    return { ok: false, errors: esbuildProblems(error) };
-  }
-  await initLexer();
-  const at = code.lastIndexOf(inlineSourceMap);
-  const sourceMap = at === -1 ? "{}" : new TextDecoder().decode(Uint8Array.from(atob(code.slice(at + inlineSourceMap.length).trim()), (char) => char.charCodeAt(0)));
-  // The bundle is one module, so a relative import left in it wasn't found either.
-  const missing = missingImports(code, { relative: true });
-  if (missing.length > 0) {
-    const map = new DecodedMap(JSON.parse(sourceMap), "/");
-    return {
-      ok: false,
-      errors: missing.map((specifier) => ({
-        message: `The tests import "${specifier}", which isn't in the Workspace or its Packages`,
-        ...placeInBundle(code, code.indexOf(JSON.stringify(specifier)), map),
-      })),
-    };
-  }
-  return {
-    ok: true,
-    code: at === -1 ? code : code.slice(0, at),
-    sourceMap,
-    compatibilityDate: config.compatibility_date,
-    compatibilityFlags: config.compatibility_flags ?? [],
-  };
-}
-
-/** Which Workspace file, and where in it, the bundle's text at `offset` came from, by its source map. */
-function placeInBundle(code: string, offset: number, map: DecodedMap): Pick<BuildProblem, "file" | "line" | "column"> {
-  const before = code.slice(0, Math.max(offset, 0));
-  const lineStart = before.lastIndexOf("\n") + 1;
-  const original = offset < 0 ? null : getOriginalPosition(map, { line: before.split("\n").length, column: offset - lineStart });
-  const file = original?.source?.replace(/^.*virtual:\/?/, "");
-  return original && file && original.line !== null
-    ? { file, line: original.line, column: original.column + 1 }
-    : { file: null, line: null, column: null };
-}
-
 type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };
 
 // What `wrangler.jsonc` can ask for that the platform doesn't have: apps get
@@ -367,63 +279,6 @@ function assetSettings(assets: WranglerAssets = {}): AssetSettings {
     runWorkerFirst:
       typeof first === "boolean" ? first : Array.isArray(first) ? first.filter((pattern) => typeof pattern === "string") : false,
   };
-}
-
-// Node's built-in modules, which `nodejs_compat` provides with or without
-// the `node:` prefix.
-const nodeBuiltins = new Set(
-  "assert async_hooks buffer child_process cluster console constants crypto dgram diagnostics_channel dns domain events fs http http2 https inspector module net os path perf_hooks process punycode querystring readline repl stream string_decoder sys timers tls trace_events tty url util v8 vm wasi worker_threads zlib".split(
-    " ",
-  ),
-);
-
-/** Bare specifiers a bundle still imports or requires, other than the runtime's own, and relative ones if asked. */
-function missingImports(code: string, { browser = false, relative = false } = {}): string[] {
-  const specifiers = new Set<string>();
-  try {
-    const [imports] = parse(code);
-    for (const { specifier } of imports) if (typeof specifier === "string") specifiers.add(specifier);
-  } catch {
-    // Not an ES module; only look for requires.
-  }
-  for (const match of code.matchAll(/\b__require\(\s*["']([^"']+)["']\s*\)/g)) specifiers.add(match[1]!);
-  return [...specifiers].filter((specifier) => {
-    if (/^(\.|\/)/.test(specifier)) return relative;
-    if (/^([a-z][a-z0-9+.-]*:\/\/|data:)/i.test(specifier)) return false;
-    if (browser) return true;
-    if (specifier.startsWith("cloudflare:") || specifier.startsWith("node:")) return false;
-    return !nodeBuiltins.has(specifier.split("/")[0]!);
-  });
-}
-
-/** esbuild's errors with their places: Workspace paths, 1-based lines and columns. */
-function esbuildProblems(error: unknown): BuildProblem[] {
-  const details = (error as { errors?: { text?: string; location?: { file?: string; line?: number; column?: number } }[] })
-    ?.errors;
-  if (!Array.isArray(details) || details.length === 0) return [unplaced(error instanceof Error ? error.message : String(error))];
-  return details.map(({ text, location }) =>
-    location?.file
-      ? {
-          message: String(text),
-          // worker-bundler names files `virtual:<path>`, and esbuild counts columns from 0.
-          file: location.file.replace(/^virtual:\/?/, ""),
-          line: location.line ?? null,
-          column: location.column === undefined ? null : location.column + 1,
-        }
-      : unplaced(String(text)),
-  );
-}
-
-const unplaced = (message: string): BuildProblem => ({ message, file: null, line: null, column: null });
-
-/** `package.json` without its dependencies, unless it isn't valid JSON, which the bundler ignores anyway. */
-function withoutDependencies(packageJson: string): string {
-  try {
-    const { dependencies: _, ...rest } = JSON.parse(packageJson) as Record<string, unknown>;
-    return JSON.stringify(rest);
-  } catch {
-    return packageJson;
-  }
 }
 
 async function hashOf(snapshot: Snapshot): Promise<string> {

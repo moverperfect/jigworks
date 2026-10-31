@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { countProblems, summariseTests, testProblems } from "../client/src/problems";
 import { describeTests } from "../src/agent";
-import { bundleTests, type TestBundle } from "../src/builder";
+import { bundleTests, type TestBundle } from "../src/builder/tests";
 import { testReportWithin, type TestFileReport, type TestReport } from "../src/shared/test-report";
 import { isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
 import { call, create } from "./helpers/api";

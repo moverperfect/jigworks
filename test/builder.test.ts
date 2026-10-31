@@ -53,6 +53,20 @@ describe("build", () => {
     expect(await build(files)).toMatchObject({ ok: false, missingPackages: ["@fake/a"] });
   });
 
+  it("builds a Package's Workers or browser code, never the Node build it lists first", async () => {
+    const files = project('import { where } from "split";\nexport default { fetch: () => new Response(where) };');
+    files.set(
+      "node_modules/split/package.json",
+      JSON.stringify({ name: "split", exports: { ".": { node: { import: "./node.js" }, browser: "./browser.js", default: "./node.js" } } }),
+    );
+    files.set("node_modules/split/node.js", 'export const where = "node";\n');
+    files.set("node_modules/split/browser.js", 'export const where = "browser";\n');
+    const result = await build(files);
+    if (!result.ok) throw new Error(JSON.stringify(result.errors));
+    expect(result.modules[result.mainModule]).toContain('"browser"');
+    expect(result.modules[result.mainModule]).not.toContain('"node"');
+  });
+
   it("reuses a recent Build of the same inputs, going back and forth", async () => {
     const builder = inProcessBuilder();
     const first = project('export default { fetch: () => new Response("one") };');
