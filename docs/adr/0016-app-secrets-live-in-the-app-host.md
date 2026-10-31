@@ -21,3 +21,4 @@ The Developer gives a Workspace secrets, such as API keys, which its app reads f
 - **None of the platform Worker's own secrets reach an app:** an app's `env` holds its `vars`, its secrets and, with Durable Object bindings, `AppData` (ADR 0015).
 - **Limits follow Cloudflare's:** up to 64 secrets, each up to 5,120 bytes. A name starts with a letter or `_`, then has only letters, digits and `_`.
 - **Deleting the Workspace deletes its secrets** with the app host.
+- **Each change of secrets gives both slots a new Worker ID,** which Cloudflare bills as a new Dynamic Worker for that day (ADR 0006).
