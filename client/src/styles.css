@@ -259,6 +259,7 @@ legend {
 }
 
 input[type="text"],
+input[type="password"],
 textarea {
   width: 100%;
   font: inherit;
@@ -453,7 +454,6 @@ h1.workspace-title {
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.25rem 0.75rem;
-  margin-left: auto;
 }
 
 .publish-status {
@@ -1188,4 +1188,32 @@ textarea.composer-input {
 
 .composer-actions .hint {
   font-size: 0.8125rem;
+}
+
+.secrets-button {
+  margin-left: auto;
+}
+
+.secret-list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.secret {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+}
+
+.secret-name {
+  font-family: var(--monospace);
+  overflow-wrap: anywhere;
+}
+
+.secret .button {
+  margin-left: auto;
 }

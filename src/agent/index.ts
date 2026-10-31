@@ -35,6 +35,7 @@ export const instructions = `You are the Agent on a development platform where a
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
 - Each successful Build becomes the Preview. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
+- The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.
 - Keep your replies short: say what you changed and anything the Developer needs to know.`;
 
@@ -112,6 +113,7 @@ export function agentTools(workspace: {
   addPackageForAgent: Workspace["addPackageForAgent"];
   requestPreview: Workspace["requestPreview"];
   previewLogs: Workspace["previewLogs"];
+  secretNames: Workspace["secretNames"];
 }): ToolSet {
   return {
     check: tool({
@@ -173,6 +175,16 @@ export function agentTools(workspace: {
         const entries = await workspace.previewLogs(limit);
         if (entries.length === 0) return "The Preview has no logs yet.";
         return entries.map((entry) => `${entry.at} ${entry.source} ${entry.level}: ${entry.message}`).join("\n");
+      },
+    }),
+    list_secrets: tool({
+      description:
+        "Lists the names of the secrets the Developer gave the Workspace. Each appears in the app's env under its name. Their values are never shown.",
+      inputSchema: z.object({}),
+      execute: async () => {
+        const secrets = await workspace.secretNames();
+        if (secrets.length === 0) return "The Workspace has no secrets yet. The Developer adds them on the Workspace page.";
+        return secrets.map(({ name }) => name).join(", ");
       },
     }),
   };

@@ -197,6 +197,7 @@ export class Workspace extends Think<Env, ConversationState> {
       addPackageForAgent: (name, options) => this.addPackageForAgent(name, options),
       requestPreview: (init) => this.requestPreview(init),
       previewLogs: (limit) => this.previewLogs(limit),
+      secretNames: () => this.secretNames(),
     });
   }
 
@@ -449,6 +450,21 @@ export class Workspace extends Think<Env, ConversationState> {
 
   private deploymentUrl(label: string): string {
     return `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`;
+  }
+
+  /** The names of the secrets the Developer gave the Workspace (ADR 0016). */
+  async secretNames(): Promise<{ name: string; updatedAt: string }[]> {
+    return this.env.APP_HOSTS.getByName(this.appLabel()).secretNames();
+  }
+
+  /** Adds or replaces a secret, which reaches the app's env at once. */
+  async setSecret(name: string, value: unknown): Promise<DeveloperChange> {
+    const label = this.appLabel();
+    return this.env.APP_HOSTS.getByName(label).setSecret(this.name, label, name, value);
+  }
+
+  async removeSecret(name: string): Promise<void> {
+    await this.env.APP_HOSTS.getByName(this.appLabel()).removeSecret(this.name, name);
   }
 
   /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */

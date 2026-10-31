@@ -2,6 +2,7 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
 import { appDataBinding, appDataModule, appDataWrapper } from "./app-data";
 import { assetResponse, type AppAssets } from "./assets";
+import { maxSecrets, secretProblem, withoutSecrets } from "./secrets";
 import type { AppLogEntry, Slot } from "../shared/app-logs";
 
 export type { AppLogEntry, Slot };
@@ -162,6 +163,39 @@ export class AppHost extends DurableObject<Env> {
     return { ok: true, published };
   }
 
+  /**
+   * Adds or replaces one of the app's secrets, which reaches its env in the
+   * Preview and the Deployment at once (ADR 0016).
+   */
+  setSecret(workspaceId: string, label: string, name: string, value: unknown): { ok: true } | { ok: false; error: string } {
+    const problem = secretProblem(name, value);
+    if (problem) return { ok: false, error: problem };
+    if (!this.claim(workspaceId, label)) return { ok: false, error: "The app's label belongs to another Workspace." };
+    const sql = this.sql();
+    const known = sql.exec("SELECT 1 FROM secrets WHERE name = ?", name).toArray().length > 0;
+    if (!known && sql.exec("SELECT 1 FROM secrets").toArray().length >= maxSecrets) {
+      return { ok: false, error: `A Workspace can have up to ${maxSecrets} secrets.` };
+    }
+    sql.exec("INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)", name, value, new Date().toISOString());
+    this.secretsChanged();
+    return { ok: true };
+  }
+
+  removeSecret(workspaceId: string, name: string): void {
+    if (this.workspaceId() !== workspaceId) return;
+    this.sql().exec("DELETE FROM secrets WHERE name = ?", name);
+    this.secretsChanged();
+  }
+
+  /** The app's secrets' names, never their values. */
+  secretNames(): { name: string; updatedAt: string }[] {
+    if (this.workspaceId() === null) return [];
+    return this.sql()
+      .exec<{ name: string; updated_at: string }>("SELECT name, updated_at FROM secrets ORDER BY name")
+      .toArray()
+      .map(({ name, updated_at }) => ({ name, updatedAt: updated_at }));
+  }
+
   /** The Deployment, or null before the first publish. */
   published(): PublishedBuild | null {
     return this.ctx.storage.kv.get<PublishedBuild>("deployment") ?? null;
@@ -237,10 +271,14 @@ export class AppHost extends DurableObject<Env> {
       false,
     ), deadline);
     if (!response) return { status: 504, headers: {}, body: `The Preview didn't answer within ${previewWaitSeconds} seconds.`, truncated: false };
+    // The Agent never reads a secret's value (ADR 0016).
+    const secrets = this.secrets();
+    const { body, truncated } = await readUpTo(response, previewBodyShown, deadline);
     return {
       status: response.status,
-      headers: Object.fromEntries(response.headers),
-      ...(await readUpTo(response, previewBodyShown, deadline)),
+      headers: Object.fromEntries([...response.headers].map(([name, value]) => [name, withoutSecrets(value, secrets)])),
+      body: withoutSecrets(body, secrets),
+      truncated,
     };
   }
 
@@ -248,8 +286,11 @@ export class AppHost extends DurableObject<Env> {
   log(slot: Slot, source: AppLogEntry["source"], entries: { level: string; message: string }[]): void {
     const at = new Date().toISOString();
     const sql = this.sql();
+    // Kept without secrets' values, as the Agent reads the logs (ADR 0016).
+    const secrets = this.secrets();
     for (const { level, message } of entries) {
-      sql.exec("INSERT INTO logs (at, slot, source, level, message) VALUES (?, ?, ?, ?, ?)", at, slot, source, level, message.slice(0, logLineLength));
+      const kept = withoutSecrets(message, secrets).slice(0, logLineLength);
+      sql.exec("INSERT INTO logs (at, slot, source, level, message) VALUES (?, ?, ?, ?, ?)", at, slot, source, level, kept);
     }
     sql.exec("DELETE FROM logs WHERE slot = ? AND id NOT IN (SELECT id FROM logs WHERE slot = ? ORDER BY id DESC LIMIT ?)", slot, slot, logsKept);
   }
@@ -287,6 +328,7 @@ export class AppHost extends DurableObject<Env> {
         CREATE TABLE IF NOT EXISTS sign_ins (token TEXT PRIMARY KEY, destination TEXT NOT NULL, path TEXT NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, destination TEXT NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS facets (name TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
       `);
       this.tablesReady = true;
     }
@@ -419,7 +461,9 @@ export class AppHost extends DurableObject<Env> {
     const label = this.ctx.storage.kv.get<string>("label")!;
     const durableObjects = build.durableObjects ?? {};
     const withData = Object.keys(durableObjects).length > 0;
-    return this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({
+    // A change of secrets makes a new Worker, with the new env.
+    const secretsVersion = this.ctx.storage.kv.get<number>("secrets:version") ?? 0;
+    return this.env.LOADER.get(`app:${label}:${slot}:${build.hash}:${secretsVersion}`, async () => ({
       compatibilityDate: build.compatibilityDate ?? fallbackCompatibilityDate,
       compatibilityFlags: build.compatibilityFlags,
       mainModule: withData ? appDataModule : build.mainModule,
@@ -427,7 +471,11 @@ export class AppHost extends DurableObject<Env> {
         ...(build.modules as WorkerLoaderWorkerCode["modules"]),
         ...(withData && { [appDataModule]: appDataWrapper(build.mainModule, durableObjects) }),
       },
-      env: { ...build.vars, ...(withData && { [appDataBinding]: this.ctx.exports.AppData({ props: { label, slot } }) }) },
+      env: {
+        ...build.vars,
+        ...this.secrets(),
+        ...(withData && { [appDataBinding]: this.ctx.exports.AppData({ props: { label, slot } }) }),
+      },
       limits: appLimits,
       tails: [this.ctx.exports.AppTail({ props: { label, slot } })],
     }));
@@ -466,9 +514,24 @@ export class AppHost extends DurableObject<Env> {
   }
 
   /** Stops the slot's running instances, so the next call starts them with the slot's new code. */
+  /** The app's secrets, name to value. */
+  private secrets(): Record<string, string> {
+    if (this.workspaceId() === null) return {};
+    const rows = this.sql().exec<{ name: string; value: string }>("SELECT name, value FROM secrets").toArray();
+    return Object.fromEntries(rows.map(({ name, value }) => [name, value]));
+  }
+
+  /** Makes both slots pick up the new secrets: new Workers, and running instances stopped. */
+  private secretsChanged(): void {
+    const kv = this.ctx.storage.kv;
+    kv.put("secrets:version", (kv.get<number>("secrets:version") ?? 0) + 1);
+    this.abortFacets("preview");
+    this.abortFacets("deployment");
+  }
+
   private abortFacets(slot: Slot): void {
     for (const name of [...this.running].filter((running) => running.startsWith(`${slot}:`))) {
-      this.ctx.facets.abort(name, new Error("The app has new code."));
+      this.ctx.facets.abort(name, new Error("The app has new code or secrets."));
       this.running.delete(name);
     }
   }
