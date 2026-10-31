@@ -16,6 +16,7 @@ The Agent writes tests as it would for vitest. Real vitest needs Node, and so do
 - **There's no DOM.** jsdom and happy-dom can't run in Workers, so component tests that click and type can't either. React components can be rendered to HTML with `react-dom/server`, and their logic tested as plain functions.
 - **No module mocks, snapshots, coverage or durations.** Time stands still during CPU work, so a test's duration would read 0.
 - **Every test file starts a Dynamic Worker,** which parses the Tester and the tests' bundle again.
+- **One test file that won't bundle stops them all,** since the files share a bundle. The error names the file and line, a missing import's included.
 - **A test that loops without yielding runs until the CPU limit stops its Dynamic Worker.** Its file is reported as not finishing, and the files after it still run.
 - **The tests' app code isn't the Build's.** It's bundled without a front end, with React's automatic JSX runtime for any `.tsx` file, and gets no `vars`, secrets or Durable Object bindings unless a test passes them in.
 - **vitest 5 deprecates the separate runner,** having moved it inside `vitest`. The parts stay at the platform's own vitest version and are upgraded with it (`docs/development.md`).
