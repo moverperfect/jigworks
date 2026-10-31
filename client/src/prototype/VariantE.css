@@ -1,0 +1,880 @@
+/* PROTOTYPE, throwaway: Variant E, "On the bench". The Agent is the jig that holds your app while it's worked
+   on: Paper on a cutting Mat, pencil-grey Archivo with its width axis as the whole hierarchy, and four corner
+   brackets whose posture (holding, working, released, held again, failed) says what's happening to your app.
+   Every class is prefixed ve- and lives under .ve; nothing here reaches other variants. */
+@import url("https://fonts.googleapis.com/css2?family=Archivo:ital,wdth,wght@0,62..125,100..900;1,62..125,100..900&display=swap");
+
+.ve {
+  --ve-mat: #c9dbcf;
+  --ve-paper: #fafaf7;
+  --ve-graphite: #2a2d2b;
+  --ve-blue: #2546a8;
+  --ve-chalk: #c7462e;
+  --ve-on-blue: #fafaf7;
+  --ve-muted: color-mix(in srgb, var(--ve-graphite) 62%, transparent);
+  --ve-rule: color-mix(in srgb, var(--ve-graphite) 18%, transparent);
+  --ve-ease: 300ms ease-in-out;
+  --ve-travel: 450ms ease-in-out;
+
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--ve-mat);
+  color: var(--ve-graphite);
+  font-family: Archivo, system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 400;
+  font-stretch: 100%;
+  line-height: 1.5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .ve {
+    --ve-mat: #1b3129;
+    --ve-paper: #1f2a25;
+    --ve-graphite: #e6eae7;
+    --ve-blue: #8fa8ff;
+    --ve-chalk: #f08a72;
+    --ve-on-blue: #1f2a25;
+  }
+}
+
+/* Type roles: width, not colour or boxes, says what kind of text something is. */
+.ve-note {
+  font-size: 14px;
+  font-weight: 500;
+  font-stretch: 86%;
+  line-height: 1.35;
+}
+
+.ve-wordmark,
+.ve-appname,
+.ve-apps-heading,
+.ve-popover-title {
+  font-size: 18px;
+  font-weight: 700;
+  font-stretch: 118%;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.ve-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ve-muted {
+  color: var(--ve-muted);
+}
+
+/* Controls */
+.ve-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 16px;
+  border: 2px solid transparent;
+  border-radius: 2px;
+  background: none;
+  color: var(--ve-graphite);
+  font-family: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  font-stretch: 100%;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.ve-button-primary {
+  background: var(--ve-blue);
+  border-color: var(--ve-blue);
+  color: var(--ve-on-blue);
+}
+
+.ve-button-primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ve-blue) 86%, var(--ve-graphite));
+  border-color: color-mix(in srgb, var(--ve-blue) 86%, var(--ve-graphite));
+}
+
+.ve-button-primary:disabled {
+  background: var(--ve-rule);
+  border-color: transparent;
+  color: var(--ve-muted);
+  cursor: default;
+}
+
+.ve-button-outline {
+  border-color: var(--ve-blue);
+  color: var(--ve-blue);
+}
+
+.ve-button-quiet {
+  border-color: var(--ve-rule);
+}
+
+.ve-button-outline:hover,
+.ve-button-quiet:hover {
+  background: color-mix(in srgb, var(--ve-graphite) 6%, transparent);
+}
+
+.ve-text-button {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ve-blue);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ve-text-button:hover,
+.ve-text-button:focus-visible {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 3px;
+}
+
+.ve-button:focus-visible,
+.ve-text-button:focus-visible,
+.ve-tab:focus-visible,
+.ve-segmented button:focus-visible,
+.ve-toolbar-button:focus-visible,
+.ve-technical summary:focus-visible {
+  outline: 2px solid var(--ve-blue);
+  outline-offset: 2px;
+}
+
+/* The header: Paper with one rule. */
+.ve-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 56px;
+  padding: 8px 24px;
+  background: var(--ve-paper);
+  border-bottom: 1px solid var(--ve-rule);
+}
+
+.ve-status {
+  color: var(--ve-muted);
+}
+
+.ve-status-live {
+  color: var(--ve-blue);
+}
+
+.ve-status-changed {
+  color: var(--ve-graphite);
+}
+
+.ve-publish-wrap {
+  position: relative;
+  margin-left: auto;
+}
+
+/* The jig: four L-shaped brackets, 3 px thick, 28 px on each arm, and one label at the top-left bracket. */
+.ve-jig {
+  --ve-jig-out: 16px;
+  --ve-jig-colour: var(--ve-graphite);
+  --ve-jig-opacity: 1;
+
+  position: relative;
+}
+
+.ve-jig-working {
+  --ve-jig-out: 8px;
+  --ve-jig-colour: var(--ve-blue);
+}
+
+.ve-jig-released {
+  --ve-jig-out: 40px;
+  --ve-jig-opacity: 0.35;
+}
+
+.ve-jig-failed {
+  --ve-jig-colour: var(--ve-chalk);
+}
+
+.ve-corner {
+  position: absolute;
+  width: 28px;
+  height: 28px;
+  border: 0 solid var(--ve-jig-colour);
+  opacity: var(--ve-jig-opacity);
+  pointer-events: none;
+  transition:
+    top var(--ve-ease),
+    left var(--ve-ease),
+    right var(--ve-ease),
+    bottom var(--ve-ease),
+    border-color var(--ve-ease),
+    opacity var(--ve-ease);
+}
+
+.ve-corner-tl {
+  top: calc(-1 * var(--ve-jig-out));
+  left: calc(-1 * var(--ve-jig-out));
+  border-top-width: 3px;
+  border-left-width: 3px;
+}
+
+.ve-corner-tr {
+  top: calc(-1 * var(--ve-jig-out));
+  right: calc(-1 * var(--ve-jig-out));
+  border-top-width: 3px;
+  border-right-width: 3px;
+}
+
+.ve-corner-bl {
+  bottom: calc(-1 * var(--ve-jig-out));
+  left: calc(-1 * var(--ve-jig-out));
+  border-bottom-width: 3px;
+  border-left-width: 3px;
+}
+
+.ve-corner-br {
+  bottom: calc(-1 * var(--ve-jig-out));
+  right: calc(-1 * var(--ve-jig-out));
+  border-bottom-width: 3px;
+  border-right-width: 3px;
+}
+
+/* The label sits on the top-left bracket's arm, to the right of the corner. */
+/* Its last line is centred on the arm; a long label wraps upwards, away from the sheet. */
+.ve-jig-label {
+  position: absolute;
+  bottom: calc(100% + var(--ve-jig-out) - 10px);
+  left: calc(-1 * var(--ve-jig-out) + 38px);
+  right: calc(-1 * var(--ve-jig-out) + 38px);
+  margin: 0;
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  font-size: 14px;
+  font-weight: 500;
+  font-stretch: 86%;
+  line-height: 1.2;
+  transition:
+    bottom var(--ve-ease),
+    left var(--ve-ease),
+    right var(--ve-ease),
+    color var(--ve-ease);
+}
+
+.ve-jig-label > span {
+  min-width: 0;
+}
+
+.ve-jig-working .ve-jig-label,
+.ve-jig-released .ve-jig-label,
+.ve-canvas-working .ve-strip-label,
+.ve-canvas-released .ve-strip-label {
+  color: var(--ve-blue);
+}
+
+.ve-copy {
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+  flex: none;
+}
+
+.ve-jig-quiet .ve-corner,
+.ve-jig-quiet .ve-jig-label {
+  visibility: hidden;
+}
+
+/* The hand-off: the start page's brackets travel to the canvas. */
+.ve-travel {
+  --ve-jig-out: 0px;
+  --ve-jig-colour: var(--ve-graphite);
+  --ve-jig-opacity: 1;
+
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  transition:
+    top var(--ve-travel),
+    left var(--ve-travel),
+    width var(--ve-travel),
+    height var(--ve-travel);
+}
+
+.ve-travel .ve-corner {
+  transition: border-color var(--ve-travel);
+}
+
+.ve-travel-go {
+  --ve-jig-colour: var(--ve-blue);
+}
+
+/* The start page: a centred column of left-aligned text, the composer held in the jig. */
+.ve-start {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 64px 32px 48px;
+}
+
+.ve-start-column {
+  max-width: 40rem;
+  margin: 0 auto;
+}
+
+.ve-question {
+  margin: 0 0 16px;
+  font-size: 44px;
+  font-weight: 700;
+  font-stretch: 118%;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  text-wrap: balance;
+}
+
+.ve-lede {
+  max-width: 62ch;
+  margin: 0 0 48px;
+}
+
+.ve-jig-composer {
+  margin: 0 0 48px;
+}
+
+.ve-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--ve-paper);
+  border: 1px solid var(--ve-rule);
+  border-radius: 2px;
+}
+
+.ve-composer:has(textarea:focus-visible) {
+  outline: 2px solid var(--ve-blue);
+  outline-offset: 0;
+}
+
+.ve-composer textarea {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+}
+
+.ve-composer textarea::placeholder {
+  color: var(--ve-muted);
+  opacity: 1;
+}
+
+.ve-composer textarea:disabled {
+  color: var(--ve-muted);
+}
+
+.ve-composer .ve-button {
+  align-self: flex-end;
+}
+
+.ve-composer-big {
+  padding: 16px;
+  border: 0;
+}
+
+.ve-composer-big textarea {
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.ve-ideas {
+  margin-bottom: 56px;
+}
+
+.ve-ideas-heading {
+  margin: 0 0 8px;
+  color: var(--ve-muted);
+}
+
+.ve-ideas li + li {
+  margin-top: 8px;
+}
+
+.ve-apps-heading {
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--ve-rule);
+}
+
+.ve-apps-list li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px 24px;
+  align-items: baseline;
+  padding: 10px 0;
+}
+
+.ve-apps-status,
+.ve-apps-when {
+  color: var(--ve-muted);
+}
+
+.ve-apps-live {
+  color: var(--ve-blue);
+}
+
+/* The split: the Conversation on Paper, the app on the Mat. */
+.ve-tabs {
+  display: none;
+}
+
+.ve-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.ve-chat {
+  flex: none;
+  width: 22rem;
+  display: flex;
+  flex-direction: column;
+  background: var(--ve-paper);
+  border-right: 1px solid var(--ve-rule);
+}
+
+.ve-chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px;
+}
+
+.ve-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.ve-speaker {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ve-muted);
+}
+
+.ve-you {
+  padding-left: 24px;
+}
+
+.ve-you p,
+.ve-agent p {
+  max-width: 62ch;
+  margin: 0;
+}
+
+.ve-agent p + p,
+.ve-agent .ve-technical + p {
+  margin-top: 12px;
+}
+
+.ve-steps {
+  margin: 12px 0 4px;
+}
+
+.ve-step,
+.ve-building-steps li {
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  gap: 0 6px;
+  padding: 3px 0;
+}
+
+.ve-glyph {
+  text-align: center;
+}
+
+.ve-step-running .ve-glyph,
+.ve-step-fixing .ve-glyph {
+  color: var(--ve-blue);
+}
+
+.ve-step-failed .ve-glyph,
+.ve-step-failed .ve-step-label {
+  color: var(--ve-chalk);
+}
+
+.ve-step-result {
+  display: block;
+  color: var(--ve-muted);
+  font-weight: 400;
+}
+
+.ve-technical summary {
+  cursor: pointer;
+  color: var(--ve-muted);
+}
+
+.ve-technical ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  color: var(--ve-muted);
+  font-weight: 400;
+}
+
+.ve-technical li + li {
+  margin-top: 2px;
+}
+
+.ve-choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.ve-choices .ve-button {
+  padding: 0 8px;
+  min-width: 0;
+}
+
+.ve-chat-bottom {
+  flex: none;
+  padding: 16px 20px 20px;
+  border-top: 1px solid var(--ve-rule);
+}
+
+.ve-suggestions {
+  margin-bottom: 16px;
+}
+
+.ve-suggestions li + li {
+  margin-top: 6px;
+}
+
+/* The canvas */
+.ve-canvas {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 32px 0;
+}
+
+.ve-toolbar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  font-size: 14px;
+  font-weight: 500;
+  font-stretch: 86%;
+  line-height: 1.35;
+}
+
+.ve-strip-label {
+  display: none;
+}
+
+.ve-segmented {
+  display: inline-flex;
+  border: 2px solid var(--ve-graphite);
+  border-radius: 2px;
+}
+
+.ve-segmented button {
+  padding: 4px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-stretch: 86%;
+  cursor: pointer;
+}
+
+.ve-segmented button[aria-pressed="true"] {
+  background: var(--ve-graphite);
+  color: var(--ve-paper);
+}
+
+.ve-segmented button:focus-visible {
+  outline-offset: 3px;
+}
+
+.ve-toolbar-button {
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-stretch: 86%;
+  cursor: pointer;
+}
+
+.ve-toolbar-button:hover,
+.ve-toolbar-button[aria-pressed="true"] {
+  text-decoration: underline;
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 4px;
+}
+
+.ve-toolbar-end {
+  margin-left: auto;
+}
+
+.ve-bench {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  align-items: stretch;
+  padding: 64px 0 56px;
+}
+
+.ve-jig-canvas {
+  width: 36rem;
+  max-width: 100%;
+}
+
+.ve-jig-phone {
+  width: 24rem;
+}
+
+.ve-sheet {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  background: var(--ve-paper);
+  border: 1px solid var(--ve-rule);
+  border-radius: 2px;
+}
+
+.ve-sheet-dim {
+  opacity: 0.85;
+}
+
+.ve .proto-code {
+  background: var(--ve-paper);
+  color: var(--ve-graphite);
+}
+
+/* The first build, on the Paper panel. */
+.ve-building {
+  padding: 32px 28px;
+}
+
+.ve-building-title {
+  margin: 0 0 16px;
+  font-size: 24px;
+  font-weight: 700;
+  font-stretch: 118%;
+  line-height: 1.15;
+}
+
+.ve-progress {
+  height: 3px;
+  margin: 0 0 24px;
+  background: var(--ve-rule);
+}
+
+.ve-progress span {
+  display: block;
+  height: 100%;
+  background: var(--ve-blue);
+  transition: width 200ms ease-out;
+}
+
+.ve-building-steps li + li {
+  margin-top: 4px;
+}
+
+/* The publish panel, anchored under the button. */
+.ve-popover-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9;
+}
+
+.ve-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 10;
+  width: min(22rem, calc(100vw - 32px));
+  padding: 20px;
+  background: var(--ve-paper);
+  border: 1px solid var(--ve-rule);
+  border-radius: 2px;
+  text-align: left;
+}
+
+.ve-popover-title {
+  margin-bottom: 8px;
+}
+
+.ve-popover p {
+  margin: 0 0 8px;
+}
+
+.ve-url {
+  font-weight: 600;
+}
+
+.ve-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* Motion: three movements only, none under reduced motion. */
+@media (prefers-reduced-motion: reduce) {
+  .ve-corner,
+  .ve-jig-label,
+  .ve-travel,
+  .ve-travel .ve-corner,
+  .ve-progress span {
+    transition: none;
+  }
+}
+
+/* Phone: a two-line header, Chat and App tabs, the brackets framing the whole canvas. */
+@media (max-width: 760px) {
+  .ve-top {
+    flex-wrap: wrap;
+    gap: 2px 16px;
+    min-height: 0;
+    padding: 12px 16px;
+  }
+
+  .ve-top-split .ve-wordmark {
+    flex: 1;
+  }
+
+  .ve-top-split .ve-publish-wrap {
+    order: 1;
+  }
+
+  .ve-top-split .ve-appname {
+    order: 2;
+    flex-basis: 100%;
+    margin-top: 6px;
+  }
+
+  .ve-top-split .ve-status {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .ve-tabs {
+    display: flex;
+    flex: none;
+    background: var(--ve-paper);
+    border-bottom: 1px solid var(--ve-rule);
+  }
+
+  .ve-tab {
+    flex: 1;
+    padding: 10px 0 8px;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    background: none;
+    color: var(--ve-muted);
+    font-family: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .ve-tab[aria-selected="true"] {
+    color: var(--ve-graphite);
+    border-bottom-color: var(--ve-graphite);
+  }
+
+  .ve-tab:focus-visible {
+    outline-offset: -2px;
+  }
+
+  .ve-chat {
+    flex: 1;
+    width: auto;
+    border-right: 0;
+  }
+
+  .ve-body[data-tab="chat"] .ve-canvas,
+  .ve-body[data-tab="app"] .ve-chat {
+    display: none;
+  }
+
+  .ve-canvas {
+    padding: 0;
+  }
+
+  .ve-toolbar {
+    flex-wrap: wrap;
+    gap: 8px 12px;
+    padding: 10px 12px;
+    background: var(--ve-paper);
+    border-bottom: 1px solid var(--ve-rule);
+  }
+
+  .ve-strip-label {
+    display: flex;
+    flex: 1 1 14rem;
+    gap: 12px;
+    align-items: baseline;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .ve-strip-label > span {
+    min-width: 0;
+  }
+
+  .ve-toolbar-wide,
+  .ve-jig-label {
+    display: none;
+  }
+
+  .ve-bench {
+    padding: 0;
+  }
+
+  .ve-body .ve-jig-canvas {
+    --ve-jig-out: 16px;
+
+    flex: 1;
+    width: auto;
+    margin: 28px;
+  }
+
+  .ve-start {
+    padding: 40px 24px;
+  }
+
+  .ve-question {
+    font-size: 36px;
+  }
+
+  .ve-lede,
+  .ve-jig-composer {
+    margin-bottom: 40px;
+  }
+
+  .ve-apps-list li {
+    grid-template-columns: 1fr auto;
+  }
+
+  .ve-apps-list .ve-apps-when {
+    grid-column: 1 / -1;
+    margin-top: -6px;
+  }
+}

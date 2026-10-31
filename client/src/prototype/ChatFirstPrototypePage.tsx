@@ -9,18 +9,29 @@ import { VariantA } from "./VariantA";
 import { VariantB } from "./VariantB";
 import { VariantC } from "./VariantC";
 import { VariantD } from "./VariantD";
+import { VariantE } from "./VariantE";
+import { VariantF } from "./VariantF";
+import { VariantG } from "./VariantG";
 import "./prototype.css";
 
+// Round 2: Jack leans to B, with A's start page for brand new apps. E, F and G are Fable 5.1's
+// visual directions for that structure (DESIGN-DIRECTIONS.md); A and B stay for comparison.
+// C and D are out of the bar but still open with `?variant=C` or `?variant=D`.
 const variants: VariantInfo[] = [
   { key: "A", name: "Just a conversation" },
   { key: "B", name: "Chat beside the app" },
+  { key: "E", name: "On the bench" },
+  { key: "F", name: "Fridge door" },
+  { key: "G", name: "Stage directions" },
+];
+const retired: VariantInfo[] = [
   { key: "C", name: "The app is the canvas" },
   { key: "D", name: "Agree a plan, then build" },
 ];
 
 function readVariant(): string {
   const key = new URLSearchParams(window.location.search).get("variant")?.toUpperCase();
-  return variants.some((v) => v.key === key) ? key! : "A";
+  return [...variants, ...retired].some((v) => v.key === key) ? key! : "A";
 }
 
 export function ChatFirstPrototypePage() {
@@ -42,8 +53,11 @@ export function ChatFirstPrototypePage() {
         {variant === "B" && <VariantB sim={sim} />}
         {variant === "C" && <VariantC sim={sim} />}
         {variant === "D" && <VariantD sim={sim} />}
+        {variant === "E" && <VariantE sim={sim} />}
+        {variant === "F" && <VariantF sim={sim} />}
+        {variant === "G" && <VariantG sim={sim} />}
       </div>
-      <PrototypeSwitcher variants={variants} current={variant} onChange={change} sim={sim} />
+      <PrototypeSwitcher variants={variants.some((v) => v.key === variant) ? variants : [...variants, ...retired]} current={variant} onChange={change} sim={sim} />
     </div>
   );
 }

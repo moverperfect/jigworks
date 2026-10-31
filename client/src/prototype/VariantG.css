@@ -1,0 +1,826 @@
+/* PROTOTYPE, throwaway: Variant G, "Stage directions". The Conversation set as a play script,
+   in a reading serif on a stone-coloured page, with no bubbles, cards or boxes anywhere. */
+@import url("https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,200..900;1,7..72,200..900&display=swap");
+
+.vg {
+  --vg-stone: #edefe9;
+  --vg-ink: #1c2633;
+  --vg-plum: #6b2d5c;
+  --vg-madder: #b23a33;
+  --vg-rule: #c9ccc3;
+  --vg-muted: color-mix(in srgb, var(--vg-ink) 58%, transparent);
+  --vg-line: 27px;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+  background: var(--vg-stone);
+  color: var(--vg-ink);
+  font-family: Literata, Georgia, "Iowan Old Style", serif;
+  font-optical-sizing: auto;
+  font-size: 17px;
+  line-height: 1.6;
+  font-weight: 400;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vg {
+    --vg-stone: #1b1f27;
+    --vg-ink: #e4e3dc;
+    --vg-plum: #c98bb9;
+    --vg-madder: #e08078;
+    --vg-rule: #3a4150;
+  }
+}
+
+.vg *,
+.vg *::before,
+.vg *::after {
+  box-sizing: border-box;
+}
+
+.vg :where(p, h1, h2, ul, figure) {
+  margin: 0;
+  padding: 0;
+}
+
+.vg :where(ul) {
+  list-style: none;
+}
+
+/* :where() keeps this reset below every vg- rule in specificity. */
+.vg :where(button, textarea, a) {
+  font: inherit;
+  font-optical-sizing: auto;
+  color: inherit;
+}
+
+.vg :focus-visible {
+  outline: 2px solid var(--vg-plum);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+.vg-muted {
+  color: var(--vg-muted);
+}
+
+.vg-live {
+  color: var(--vg-plum);
+}
+
+.vg-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* The two crossfades: the start page out, the split in. */
+.vg-start {
+  transition: opacity 200ms ease-out;
+}
+
+.vg-leaving {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.vg-arriving {
+  animation: vg-fade-in 250ms ease-out;
+}
+
+@keyframes vg-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes vg-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+/* The running head. */
+.vg-head {
+  flex: none;
+  min-height: 54px;
+  padding: 0 32px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 16px;
+  border-bottom: 1px solid var(--vg-rule);
+}
+
+.vg-head-start {
+  grid-template-columns: 1fr;
+}
+
+.vg-wordmark {
+  font-style: italic;
+  font-weight: 500;
+  font-size: 17px;
+}
+
+.vg-title {
+  font-weight: 600;
+  font-size: 17px;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vg-status {
+  font-size: 15px;
+  text-align: right;
+}
+
+/* Status and Publish share the right-hand cell, so the title is centred on the page. */
+.vg-head-right {
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+/* Buttons: one solid, one outlined, and words. */
+.vg-button {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 7px 18px;
+  border: 1px solid var(--vg-plum);
+  border-radius: 4px;
+  background: var(--vg-plum);
+  color: var(--vg-stone);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.vg-button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--vg-plum) 88%, var(--vg-ink));
+  border-color: color-mix(in srgb, var(--vg-plum) 88%, var(--vg-ink));
+}
+
+.vg-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.vg-outline {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  padding: 7px 18px;
+  border: 1px solid var(--vg-plum);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vg-plum);
+  cursor: pointer;
+}
+
+.vg-outline:hover {
+  background: color-mix(in srgb, var(--vg-plum) 10%, transparent);
+}
+
+.vg-text-button {
+  font-size: 16px;
+  font-weight: 600;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--vg-plum);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.vg-text-button:hover:not(:disabled) {
+  text-decoration: underline;
+  text-underline-offset: 0.2em;
+}
+
+.vg-text-button:disabled {
+  color: var(--vg-muted);
+  cursor: default;
+}
+
+/* A link in a sentence: Plum, underlined, keeping the sentence's size and slant. An anchor,
+   so it wraps across lines like any words in a sentence (a button is an atomic box). */
+.vg-link {
+  color: var(--vg-plum);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--vg-plum) 45%, transparent);
+  text-underline-offset: 0.18em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vg-link:hover {
+  text-decoration-color: var(--vg-plum);
+}
+
+.vg-quiet,
+.vg-view {
+  font-size: 15px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--vg-muted);
+  cursor: pointer;
+}
+
+.vg-quiet:hover,
+.vg-view:hover {
+  color: var(--vg-ink);
+}
+
+.vg-view[aria-pressed="true"] {
+  color: var(--vg-plum);
+  font-weight: 600;
+}
+
+.vg-quiet[aria-pressed="true"] {
+  color: var(--vg-plum);
+}
+
+/* The start page. */
+.vg-start-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.vg-start-column {
+  width: min(36rem, 100%);
+  margin: 0 auto;
+  padding: calc(var(--vg-line) * 3) 32px calc(var(--vg-line) * 2);
+}
+
+.vg-question {
+  font-size: 52px;
+  font-weight: 500;
+  line-height: 1.1;
+  letter-spacing: -0.005em;
+  margin-bottom: var(--vg-line);
+}
+
+.vg-lede {
+  max-width: 60ch;
+  margin-bottom: var(--vg-line);
+}
+
+/* The composer: no box, a baseline to write on. */
+.vg-composer {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  border-bottom: 1px solid var(--vg-rule);
+  padding-bottom: 8px;
+}
+
+.vg-composer-big {
+  margin-bottom: calc(var(--vg-line) * 1.5);
+  padding-bottom: 10px;
+}
+
+.vg-field {
+  flex: 1;
+  min-width: 0;
+  padding: 4px 0;
+  border: 0;
+  background: none;
+  resize: none;
+  line-height: 1.6;
+  field-sizing: content;
+  min-height: calc(1.6em + 8px);
+  max-height: calc(1.6em * 6 + 8px);
+}
+
+.vg-composer-big .vg-field {
+  font-size: 19px;
+  min-height: calc(1.6em * 2 + 8px);
+}
+
+.vg-field::placeholder {
+  color: var(--vg-muted);
+  opacity: 1;
+}
+
+.vg-field:disabled {
+  color: var(--vg-muted);
+}
+
+.vg-field:focus-visible {
+  outline: none;
+}
+
+/* Focus thickens the baseline to 2 px of Plum without moving anything. */
+.vg-composer:focus-within {
+  border-bottom-color: var(--vg-plum);
+  box-shadow: 0 1px 0 var(--vg-plum);
+}
+
+/* The examples, as a sentence. */
+.vg-examples {
+  font-style: italic;
+  font-size: 16px;
+  line-height: 1.5;
+  margin-bottom: calc(var(--vg-line) * 2);
+}
+
+.vg-example {
+  display: block;
+  padding-left: 1.5rem;
+}
+
+/* Your apps, as a contents list. */
+.vg-yours-heading {
+  font-size: 17px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.vg-yours-item {
+  margin-bottom: 12px;
+}
+
+.vg-yours-row {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 0;
+  border: 0;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+
+.vg-yours-row:hover .vg-yours-name {
+  color: var(--vg-plum);
+}
+
+.vg-yours-name {
+  flex: none;
+}
+
+.vg-leader {
+  flex: 1;
+  height: 1em;
+  background-image: radial-gradient(circle, var(--vg-rule) 1.1px, transparent 1.5px);
+  background-size: 7px 7px;
+  background-position: 0 bottom;
+  background-repeat: repeat-x;
+  translate: 0 -0.15em;
+}
+
+.vg-yours-status {
+  flex: none;
+  font-size: 15px;
+}
+
+.vg-yours-changed {
+  display: block;
+  padding-left: 1.5rem;
+  font-size: 15px;
+  color: var(--vg-muted);
+}
+
+/* The split: the script on the left, the plate on the right. */
+.vg-tabs {
+  display: none;
+}
+
+.vg-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 30rem 1fr;
+}
+
+.vg-chat {
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--vg-rule);
+}
+
+.vg-script {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 32px var(--vg-line);
+  overscroll-behavior: contain;
+}
+
+.vg-chat .vg-composer {
+  flex: none;
+  margin: 8px 32px 20px;
+}
+
+.vg-turn {
+  margin-top: var(--vg-line);
+  max-width: 60ch;
+}
+
+.vg-speaker {
+  font-weight: 600;
+}
+
+.vg-speaker-agent {
+  color: var(--vg-plum);
+}
+
+.vg-line {
+  margin-top: 0;
+}
+
+.vg-line + .vg-line {
+  margin-top: calc(var(--vg-line) / 2);
+}
+
+.vg-line-you {
+  white-space: pre-wrap;
+}
+
+/* Stage directions. */
+.vg-direction,
+.vg-technical-toggle,
+.vg-caption,
+.vg-activity {
+  font-style: italic;
+}
+
+.vg-direction {
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.vg-directions,
+.vg-offer-list {
+  padding-left: 1.5rem;
+}
+
+.vg-directions {
+  margin-top: 6px;
+}
+
+.vg-direction-done {
+  color: var(--vg-muted);
+}
+
+.vg-direction-failed {
+  color: var(--vg-madder);
+}
+
+.vg-technical-toggle {
+  display: block;
+  margin: 2px 0 0 1.5rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--vg-muted);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, var(--vg-ink) 25%, transparent);
+  text-underline-offset: 0.18em;
+  cursor: pointer;
+}
+
+.vg-technical-toggle:hover,
+.vg-technical-toggle[aria-expanded="true"] {
+  color: var(--vg-ink);
+}
+
+.vg-technical {
+  margin-top: 2px;
+  font-size: 15px;
+}
+
+.vg-directions + .vg-line,
+.vg-technical-toggle + .vg-line,
+.vg-technical + .vg-line {
+  margin-top: calc(var(--vg-line) / 2);
+}
+
+.vg-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 10px 0 4px 1.5rem;
+}
+
+.vg-offers .vg-direction:first-child {
+  margin-bottom: 0;
+}
+
+/* The plate. */
+.vg-canvas {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.vg-toolbar {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 20px;
+  min-height: 54px;
+  padding: 0 32px;
+  line-height: 54px;
+  white-space: nowrap;
+}
+
+.vg-space {
+  flex: 1;
+}
+
+.vg-plate {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 32px 20px;
+}
+
+.vg-appearing {
+  animation: vg-fade-in 250ms ease-out;
+}
+
+.vg-frame {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--vg-rule);
+  background: var(--vg-stone);
+}
+
+.vg-plate-computer .vg-frame {
+  max-width: 60rem;
+}
+
+.vg-plate-phone .vg-frame {
+  max-width: 24rem;
+}
+
+.vg-caption {
+  margin-top: 12px;
+  max-width: 60ch;
+  text-align: center;
+  font-size: 16px;
+  line-height: 1.5;
+  min-height: 24px;
+}
+
+.vg-caption-plum {
+  color: var(--vg-plum);
+}
+
+.vg-caption-failed {
+  color: var(--vg-madder);
+}
+
+.vg-url {
+  font-style: normal;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+/* The progress rule: 1 px of Rule with a Plum segment filling left to right. */
+.vg-progress {
+  display: block;
+  width: 20rem;
+  max-width: 100%;
+  height: 1px;
+  margin-top: 12px;
+  background: var(--vg-rule);
+  position: relative;
+}
+
+.vg-progress-done {
+  position: absolute;
+  inset: -1px auto -1px 0;
+  background: var(--vg-plum);
+  transition: width 200ms ease-out;
+}
+
+/* While the first build runs: one big italic line, then the rule. */
+.vg-building {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+}
+
+.vg-activity {
+  font-size: 30px;
+  font-weight: 400;
+  line-height: 1.3;
+  max-width: 24ch;
+}
+
+.vg-building .vg-progress {
+  margin-top: var(--vg-line);
+}
+
+.vg-ghost {
+  position: absolute;
+  inset: 54px 32px 20px;
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+  animation: vg-fade-out 250ms ease-out forwards;
+}
+
+/* The publish panel: the shared copy on Stone, framed by one Rule. */
+.vg-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: color-mix(in srgb, var(--vg-stone) 82%, transparent);
+}
+
+.vg-panel {
+  width: min(30rem, 100%);
+  padding: var(--vg-line) 32px;
+  border: 1px solid var(--vg-rule);
+  background: var(--vg-stone);
+}
+
+.vg-panel-title {
+  font-size: 24px;
+  font-weight: 500;
+  line-height: 1.25;
+  margin-bottom: calc(var(--vg-line) / 2);
+}
+
+.vg-panel .vg-line {
+  max-width: 60ch;
+}
+
+.vg-panel-actions {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 24px;
+  margin-top: var(--vg-line);
+}
+
+/* Narrow screens: one pane at a time. */
+@media (max-width: 760px) {
+  .vg-head {
+    padding: 10px 20px;
+    row-gap: 2px;
+  }
+
+  .vg-head-split {
+    grid-template-columns: 1fr auto;
+    grid-template-areas:
+      "wordmark publish"
+      "title publish"
+      "status publish";
+    align-items: start;
+  }
+
+  .vg-head-split .vg-wordmark {
+    grid-area: wordmark;
+  }
+
+  .vg-head-right {
+    display: contents;
+  }
+
+  .vg-head-split .vg-title {
+    grid-area: title;
+    text-align: left;
+    line-height: 1.35;
+  }
+
+  .vg-head-split .vg-status {
+    grid-area: status;
+    justify-self: start;
+    text-align: left;
+    line-height: 1.35;
+  }
+
+  .vg-head-split .vg-publish {
+    grid-area: publish;
+    align-self: center;
+  }
+
+  .vg-tabs {
+    flex: none;
+    display: flex;
+    gap: 24px;
+    padding: 0 20px;
+    min-height: 44px;
+  }
+
+  .vg-tab {
+    padding: 0;
+    border: 0;
+    background: none;
+    font-size: 17px;
+    color: var(--vg-muted);
+    cursor: pointer;
+  }
+
+  .vg-tab[aria-selected="true"] {
+    color: var(--vg-plum);
+    font-weight: 600;
+  }
+
+  .vg-body {
+    grid-template-columns: 1fr;
+  }
+
+  .vg-chat {
+    border-right: 0;
+  }
+
+  .vg-split[data-tab="chat"] .vg-canvas,
+  .vg-split[data-tab="app"] .vg-chat {
+    display: none;
+  }
+
+  .vg-script {
+    padding: 0 20px var(--vg-line);
+  }
+
+  .vg-turn {
+    margin-top: calc(var(--vg-line) * 0.75);
+  }
+
+  .vg-chat .vg-composer {
+    margin: 8px 20px 16px;
+  }
+
+  .vg-toolbar {
+    gap: 16px;
+    padding: 0 20px;
+    min-height: 44px;
+    line-height: 44px;
+  }
+
+  .vg-toolbar .vg-new-tab {
+    display: none;
+  }
+
+  .vg-plate {
+    padding: 0 20px 16px;
+  }
+
+  .vg-ghost {
+    inset: 44px 20px 16px;
+  }
+
+  .vg-start-column {
+    padding: calc(var(--vg-line) * 1.5) 20px var(--vg-line);
+  }
+
+  .vg-question {
+    font-size: 40px;
+  }
+
+  .vg-composer-big .vg-field {
+    font-size: 17px;
+  }
+
+  .vg-head-start {
+    padding: 0 20px;
+  }
+
+  .vg-panel {
+    padding: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vg-start,
+  .vg-progress-done {
+    transition: none;
+  }
+
+  .vg-arriving,
+  .vg-appearing {
+    animation: none;
+  }
+
+  .vg-ghost {
+    display: none;
+  }
+}

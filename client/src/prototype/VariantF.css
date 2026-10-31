@@ -1,0 +1,932 @@
+/* PROTOTYPE, throwaway: Variant F, "Fridge door". The apps people make here used to be a sheet stuck on the
+   fridge, so the interface is that surface: what you say is a yellow note, the Agent writes in ink on the door,
+   and your app is a sheet of paper pinned on the right. */
+@import url("https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:ital,wght@0,200..800;1,200..800&display=swap");
+
+/* Tokens. */
+.vf {
+  --vf-door: #f4f4f1;
+  --vf-sheet: #ffffff;
+  --vf-note: #ffe66d;
+  --vf-ink: #1d2a4d;
+  --vf-green: #157a52;
+  --vf-red: #c8392b;
+  --vf-muted: rgb(29 42 77 / 0.6);
+  --vf-rule: rgb(29 42 77 / 0.15);
+  --vf-shadow: 0 1px 2px rgb(29 42 77 / 0.18);
+  /* The Publish button: Ink on the light door, a Note on the dark one. */
+  --vf-press-bg: #1d2a4d;
+  --vf-press-fg: #ffffff;
+  --vf-tilt: 0deg;
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--vf-door);
+  color: var(--vf-ink);
+  font-family: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible", system-ui, sans-serif;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vf {
+    --vf-door: #1b2341;
+    --vf-ink: #e9ecf5;
+    --vf-green: #5cd39a;
+    --vf-red: #ff8a7a;
+    --vf-muted: rgb(233 236 245 / 0.6);
+    --vf-rule: rgb(233 236 245 / 0.15);
+    --vf-shadow: 0 1px 2px rgb(0 0 0 / 0.45);
+    --vf-press-bg: #ffe66d;
+    --vf-press-fg: #1d2a4d;
+  }
+}
+
+/* Paper is paper in both modes: a note is yellow, a sheet is white, and the ink on them stays dark. */
+.vf-note,
+.vf-sheet {
+  --vf-ink: #1d2a4d;
+  --vf-green: #157a52;
+  --vf-red: #c8392b;
+  --vf-muted: rgb(29 42 77 / 0.6);
+  --vf-rule: rgb(29 42 77 / 0.15);
+  color: var(--vf-ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .vf *,
+  .vf *::before,
+  .vf *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+.vf-muted {
+  color: var(--vf-muted);
+}
+
+.vf-small {
+  font-size: 14px;
+  color: var(--vf-muted);
+}
+
+.vf-live {
+  color: var(--vf-green);
+  font-weight: 600;
+}
+
+.vf-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Focus: a thick Ink ring, drawn outside the thing. */
+.vf :focus-visible {
+  outline: 3px solid var(--vf-ink);
+  outline-offset: 3px;
+}
+
+/* Writing on a note focuses the whole note, not a box inside it. */
+.vf-note:has(> textarea:focus-visible) {
+  outline: 3px solid var(--vf-ink);
+  outline-offset: 4px;
+}
+
+.vf-note > textarea:focus-visible {
+  outline: none;
+}
+
+/* Buttons: big, few, 10 px corners. */
+.vf-button {
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.2;
+  min-height: 3rem;
+  padding: 0.6rem 1.3rem;
+  border: 0;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.vf-button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* On a note: ink. */
+.vf-button-ink {
+  background: #1d2a4d;
+  color: #ffffff;
+}
+
+/* On the door or a sheet: the Publish button. */
+.vf-button-press {
+  background: var(--vf-press-bg);
+  color: var(--vf-press-fg);
+}
+
+.vf-sheet .vf-button-press {
+  background: #1d2a4d;
+  color: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  .vf-sheet .vf-button-press {
+    background: #ffe66d;
+    color: #1d2a4d;
+  }
+}
+
+.vf-button-plain {
+  background: transparent;
+  color: var(--vf-ink);
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--vf-ink) 30%, transparent);
+}
+
+.vf-button-plain:hover:not(:disabled) {
+  box-shadow: inset 0 0 0 2px var(--vf-muted);
+}
+
+.vf-button-text:hover:not(:disabled) {
+  color: var(--vf-ink);
+}
+
+.vf-button-text {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--vf-muted);
+  background: none;
+  border: 0;
+  border-radius: 10px;
+  min-height: 2.75rem;
+  padding: 0.4rem 0.7rem;
+  cursor: pointer;
+}
+
+.vf-button-text:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.vf-button-text[aria-pressed="true"] {
+  color: var(--vf-ink);
+}
+
+/* The header. */
+.vf-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  min-height: 4rem;
+  padding: 0.5rem 1.5rem;
+}
+
+.vf-split .vf-head {
+  border-bottom: 1px solid var(--vf-rule);
+}
+
+.vf-wordmark {
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.vf-app-title {
+  font-size: 20px;
+  font-weight: 600;
+}
+
+.vf-status-word {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--vf-muted);
+}
+
+.vf-status-word-live {
+  color: var(--vf-green);
+  font-weight: 600;
+}
+
+.vf-status-word-changed {
+  color: var(--vf-ink);
+}
+
+.vf-publish {
+  margin-left: auto;
+}
+
+/* Notes: 2 px corners, a tiny tilt, the one shadow in the design. */
+.vf-note {
+  position: relative;
+  background: var(--vf-note);
+  border-radius: 2px;
+  box-shadow: var(--vf-shadow);
+  transform: rotate(var(--vf-tilt));
+}
+
+.vf-note > textarea {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: inherit;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  resize: none;
+}
+
+.vf-note > textarea::placeholder {
+  color: var(--vf-muted);
+}
+
+.vf-note > textarea:disabled {
+  color: inherit;
+}
+
+/* The start page: the door, one big note, three small ones, and your apps. */
+.vf-door {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 2.5rem 1.5rem 3rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: safe center;
+  gap: 2.75rem;
+}
+
+.vf-note-big,
+.vf-note-small {
+  transition: transform 150ms ease-out;
+}
+
+.vf-note-big {
+  width: 28rem;
+  max-width: 100%;
+  padding: 1.75rem 1.75rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.1rem;
+}
+
+.vf-question {
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+  cursor: text;
+}
+
+.vf-note-foot {
+  display: flex;
+  justify-content: flex-end;
+}
+
+/* The lift before the hand-off. */
+.vf-lifted {
+  transform: translateY(-8px) rotate(var(--vf-tilt));
+}
+
+.vf-ideas {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 1.25rem 1.75rem;
+  max-width: 40rem;
+}
+
+.vf-note-small,
+.vf-pick {
+  font: inherit;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-align: left;
+  border: 0;
+  cursor: pointer;
+  color: var(--vf-ink);
+}
+
+.vf-note-small {
+  width: 10rem;
+  min-height: 3rem;
+  padding: 0.9rem 1rem;
+}
+
+.vf-note-small:hover,
+.vf-pick:hover {
+  background: #ffe04f;
+}
+
+.vf-apps {
+  width: 28rem;
+  max-width: 100%;
+}
+
+.vf-apps h2 {
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.vf-apps ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.vf-apps li {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 1.25rem;
+  align-items: baseline;
+  padding: 0.8rem 0;
+  border-top: 1px solid var(--vf-rule);
+}
+
+.vf-apps-name {
+  font-weight: 500;
+}
+
+/* The phone tabs: only on a phone. */
+.vf-tabs {
+  display: none;
+}
+
+/* The split. */
+.vf-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 25rem 1fr;
+}
+
+/* The canvas opening when the first note arrives. */
+.vf-arriving .vf-canvas {
+  animation: vf-open 350ms cubic-bezier(0.45, 0, 0.2, 1) both;
+}
+
+@keyframes vf-open {
+  from {
+    opacity: 0;
+    transform: translateX(2rem);
+  }
+}
+
+/* The conversation. */
+.vf-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border-right: 1px solid var(--vf-rule);
+}
+
+.vf-chat-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 1.5rem 1.5rem 1rem;
+}
+
+.vf-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+/* Your notes. */
+.vf-you {
+  width: fit-content;
+  max-width: 22rem;
+  padding: 1rem 1.15rem;
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  animation: vf-settle 180ms ease-out;
+}
+
+@keyframes vf-settle {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) rotate(var(--vf-tilt));
+  }
+}
+
+.vf-about {
+  display: block;
+  font-size: 14px;
+  color: var(--vf-muted);
+  margin-bottom: 0.2rem;
+}
+
+/* The Agent's ink: no container, a margin stroke to mark its extent. */
+.vf-agent {
+  border-left: 3px solid var(--vf-rule);
+  padding-left: 1rem;
+  max-width: 58ch;
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  font-size: 17px;
+  line-height: 1.55;
+}
+
+.vf-agent:empty {
+  display: none;
+}
+
+.vf-agent-failed {
+  border-left-color: var(--vf-red);
+}
+
+.vf-failed-line {
+  color: var(--vf-red);
+  font-weight: 600;
+}
+
+/* Steps: a tick box each. */
+.vf-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.4;
+}
+
+.vf-step {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.vf-box {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  border: 2px solid var(--vf-muted);
+  border-radius: 2px;
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.vf-step-done .vf-box {
+  color: var(--vf-green);
+  border-color: var(--vf-green);
+}
+
+.vf-step-running .vf-box,
+.vf-step-fixing .vf-box {
+  border-color: var(--vf-ink);
+}
+
+/* The pen resting in the box being worked on. */
+.vf-step-running .vf-box::after,
+.vf-step-fixing .vf-box::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--vf-ink);
+}
+
+.vf-step-failed {
+  color: var(--vf-red);
+}
+
+.vf-step-failed .vf-box {
+  color: var(--vf-red);
+  border-color: var(--vf-red);
+}
+
+.vf-technical {
+  font-size: 14px;
+  color: var(--vf-muted);
+}
+
+.vf-technical summary {
+  cursor: pointer;
+  width: fit-content;
+  border-radius: 4px;
+}
+
+.vf-technical ul {
+  margin: 0.35rem 0 0;
+  padding-left: 1.2rem;
+}
+
+/* Small notes to pick from, overlapping slightly at angles. */
+.vf-picks {
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0.25rem 0.75rem 0.5rem 0.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 0.9rem 0;
+}
+
+.vf-picks li {
+  margin-right: -0.5rem;
+}
+
+.vf-pick {
+  padding: 0.75rem 0.95rem;
+  min-height: 3rem;
+  max-width: 10.5rem;
+}
+
+.vf-picks li:nth-child(even) {
+  margin-top: 0.35rem;
+}
+
+/* The composer: a blank note waiting at the bottom. */
+.vf-chat-foot {
+  flex: none;
+  padding: 0.75rem 1.5rem 1.5rem;
+}
+
+.vf-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 1rem 1.15rem 0.9rem;
+}
+
+.vf-composer .vf-button {
+  align-self: flex-end;
+}
+
+.vf-composer-waiting {
+  opacity: 0.55;
+}
+
+/* The canvas. */
+.vf-canvas {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  gap: 0.5rem;
+  padding: 0.75rem 2rem 2rem;
+}
+
+.vf-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.vf-view {
+  font: inherit;
+  color: var(--vf-muted);
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  border-radius: 4px 4px 0 0;
+  min-height: 2.75rem;
+  padding: 0.5rem 0.6rem 0.3rem;
+  cursor: pointer;
+}
+
+.vf-view:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.vf-view[aria-pressed="true"] {
+  color: var(--vf-ink);
+  font-weight: 700;
+  border-bottom-color: var(--vf-note);
+}
+
+.vf-toolbar-space {
+  flex: 1;
+}
+
+/* The status line above the sheet. */
+.vf-status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.6rem;
+  text-align: center;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--vf-muted);
+}
+
+.vf-status-working {
+  color: var(--vf-ink);
+}
+
+.vf-status-failed {
+  color: var(--vf-red);
+}
+
+.vf-status-live {
+  color: var(--vf-green);
+  font-weight: 600;
+}
+
+.vf-progress {
+  display: block;
+  width: 12rem;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--vf-rule);
+  overflow: hidden;
+}
+
+.vf-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--vf-green);
+  transition: width 200ms ease-out;
+}
+
+.vf-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+}
+
+/* The sheet: white paper with square corners and one hairline edge. */
+.vf-sheet {
+  background: var(--vf-sheet);
+  border: 1px solid var(--vf-rule);
+  width: 100%;
+  max-width: 50rem;
+  height: 100%;
+  overflow: auto;
+}
+
+.vf-stage-phone .vf-sheet {
+  max-width: 24rem;
+}
+
+/* The app landing on the sheet where the to-do list was. */
+.vf-sheet-app {
+  animation: vf-land 250ms ease-out;
+}
+
+@keyframes vf-land {
+  from {
+    opacity: 0;
+  }
+}
+
+/* The code stand-in borrows the platform's tokens, so set them to paper. */
+.vf-sheet-code {
+  --surface: #ffffff;
+  --text: #1d2a4d;
+  --muted: rgb(29 42 77 / 0.6);
+  --border: rgb(29 42 77 / 0.15);
+  --border-strong: rgb(29 42 77 / 0.45);
+  --hover: #f4f4f1;
+  --radius: 2px;
+  color-scheme: light;
+}
+
+/* The first build: a to-do list on the sheet. */
+.vf-sheet-todo {
+  max-width: 36rem;
+  height: auto;
+  max-height: 100%;
+  padding: 2rem 2.25rem 2.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+
+.vf-todo-title {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.vf-steps-todo {
+  font-size: 17px;
+  gap: 0.8rem;
+}
+
+.vf-steps-todo .vf-box {
+  margin-top: 3px;
+}
+
+.vf-todo-count {
+  color: var(--vf-muted);
+}
+
+/* Publishing: a sheet lifted in front of the door. */
+.vf-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgb(29 42 77 / 0.35);
+}
+
+.vf-dialog {
+  width: 100%;
+  max-width: 27rem;
+  height: auto;
+  padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  box-shadow: var(--vf-shadow);
+}
+
+.vf-dialog h2 {
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.vf-dialog-link {
+  font-size: 20px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.vf-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+/* A phone: the header stacks, two tabs, one pane at a time. */
+@media (max-width: 760px) {
+  .vf-head {
+    flex-wrap: wrap;
+    gap: 0.1rem 0.75rem;
+    min-height: 0;
+    padding: 0.6rem 1rem 0.4rem;
+    line-height: 1.3;
+  }
+
+  .vf-start .vf-head {
+    padding-bottom: 0;
+  }
+
+  .vf-publish {
+    order: 1;
+    min-height: 2.75rem;
+    padding: 0.4rem 1rem;
+  }
+
+  .vf-app-title {
+    order: 2;
+    flex-basis: 100%;
+    font-size: 18px;
+  }
+
+  .vf-status-word {
+    order: 3;
+    flex-basis: 100%;
+  }
+
+  .vf-split .vf-head {
+    border-bottom: 0;
+  }
+
+  .vf-tabs {
+    flex: none;
+    display: flex;
+    gap: 0.25rem;
+    padding: 0 0.5rem;
+    border-bottom: 1px solid var(--vf-rule);
+  }
+
+  .vf-tab {
+    font: inherit;
+    font-size: 16px;
+    font-weight: 500;
+    color: var(--vf-muted);
+    background: none;
+    border: 0;
+    border-bottom: 3px solid transparent;
+    border-radius: 4px 4px 0 0;
+    min-height: 2.75rem;
+    padding: 0.5rem 0.75rem 0.3rem;
+    cursor: pointer;
+  }
+
+  .vf-tab[aria-selected="true"] {
+    color: var(--vf-ink);
+    font-weight: 700;
+    border-bottom-color: var(--vf-note);
+  }
+
+  .vf-body {
+    grid-template-columns: 1fr;
+  }
+
+  .vf-body[data-tab="chat"] .vf-canvas,
+  .vf-body[data-tab="app"] .vf-chat {
+    display: none;
+  }
+
+  .vf-chat {
+    border-right: 0;
+  }
+
+  .vf-chat-scroll {
+    padding: 1.25rem 1rem 0.75rem;
+  }
+
+  .vf-chat-foot {
+    padding: 0.5rem 1rem 1rem;
+  }
+
+  .vf-you {
+    max-width: 100%;
+  }
+
+  .vf-canvas {
+    padding: 0.25rem 0.75rem 1rem;
+  }
+
+  /* One line: Phone, Computer and See the code. */
+  .vf-open {
+    display: none;
+  }
+
+  .vf-sheet,
+  .vf-stage-phone .vf-sheet {
+    max-width: 100%;
+  }
+
+  .vf-sheet-todo {
+    padding: 1.5rem 1.25rem;
+  }
+
+  .vf-door {
+    padding: 1.25rem 1rem 2.5rem;
+    gap: 2.25rem;
+  }
+
+  .vf-note-big {
+    padding: 1.4rem 1.3rem 1.25rem;
+  }
+
+  .vf-question {
+    font-size: 32px;
+  }
+
+  .vf-apps li {
+    grid-template-columns: 1fr auto;
+  }
+
+  .vf-apps .vf-small {
+    grid-column: 1 / -1;
+    margin-top: -0.5rem;
+  }
+
+  .vf-dialog {
+    padding: 1.5rem;
+  }
+}
