@@ -2,6 +2,21 @@
 
 The experiment asks whether Workers isolates alone can be where an application is developed (ADR 0001). Each stage gets a verdict: yes, yes with a caveat, or no. Measurements are Cloudflare's own unless marked otherwise.
 
+## Conclusion
+
+**Yes: Workers isolates alone can be where a Workers app is developed, for apps of the kind the two Templates make, with a narrower toolchain than a laptop's.** Every stage passed: stage 1 on a probe, with a caveat, and stages 2–6 on the deployed platform, stages 4–6 in Chrome.
+- **Editing with Checks (stages 1 and 2):** ts-rust, a TypeScript checker compiled to WebAssembly, runs in a Dynamic Worker. A warm Worker Template Check takes about a quarter of a second from the browser.
+- **The Agent (stage 3):** Turns of Opus 5.5 end with a clean Check, retrying when one has errors, and cost $0.03–0.15 each, thanks to Anthropic's prompt cache.
+- **Builds and the Preview (stage 4):** esbuild builds both Templates, with Tailwind compiled by the platform, and the Preview runs each Build for the Developer and the Agent. A React Build takes under 1 s from the browser once warm.
+- **Hosting (stage 5):** a Deployment serves a published Build, with Durable Objects for data and secrets in `env`.
+- **Tests (stage 6):** vitest-style tests run in Dynamic Workers, for the Developer, the Agent and at the end of each Turn: 0.6–1.6 s from the browser once warm, and 2.6–3.6 s for the first run after a deploy.
+
+**The caveats:**
+- **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks and the tests' bundling run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), and so did the React Template's third test run (stage 6). Builds still run there, and fit.
+- **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
+- **Apps get Durable Objects and nothing else** for storage (ADR 0006), and binary assets are served damaged (ADR 0014, #31).
+- **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
+
 ## Stage 0: ts-rust's WebAssembly module
 
 **Done.** The module is built from ts-rust commit `5879a56` on a Linux build machine by `tools/ts-rust-wasm/build.sh`, and kept in `vendor/ts-rust-wasm`.
@@ -518,6 +533,61 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 ### Found along the way
 
 - **The trace can't show an instance's CPU.** `AppData` showed 0 ms on each of its 9 events, and the one app host `callFacet` event 2 ms. The app's own events go to its tail, which keeps only their logs.
+
+## Stage 6: Tests in isolates
+
+**Verdict: yes, in Chrome.** A Workspace's tests run on the deployed platform, on a runner built from vitest's own parts, each test file in a Dynamic Worker of its own (ADR 0017). The Agent wrote tests, ran them with its `test` tool, and its Turn ended with every test file run. Failures showed in the problems list, at their place in the file. Firefox and WebKit weren't checked.
+- **Both Templates' tests pass.** The Worker Template's test calls a Hono route end to end. The Worker + React Template's also renders `App` to HTML with the real `react-dom/server`.
+- **A run takes 0.5–1.5 s once warm,** in the platform Worker: 0.5–0.7 s for the Worker Template's one test file, 1.0–1.5 s for the React Template's two. The first run after a deploy took 2.5 s and 3.5 s.
+- **The Workspace's Durable Object does almost none of the work:** 14–94 ms of CPU per run. The tests are bundled in a Dynamic Worker of their own. Bundled in the Durable Object, as first deployed, the React Template's tests put its isolate over the memory limit on the third run (below).
+- **Known limits, by design (ADR 0017),** which don't qualify the verdict:
+  - **No DOM:** components can be rendered to HTML and their logic tested, but not clicked.
+  - **No module mocks, snapshots or coverage.** `vi.mock` and the snapshot matchers fail, saying they aren't supported.
+  - **No app environment:** tests get none of the app's `vars`, secrets or Durable Object bindings unless they pass them in, and no network.
+  - **One bundle:** a test file that won't bundle stops the others.
+
+### The live check
+
+- **Platform:** the deployed platform, measured on 2026-10-31 after #52's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:**
+  - **Browser:** the round trip of `POST /api/workspaces/:id/tests`, timed in the page.
+  - **Platform Worker:** the time it logs for that request, from its call to the Durable Object being I/O.
+  - **Durable Object:** the Workspace's wall time and CPU for its `runTests` call, from Cloudflare's trace. Bundling and each test file run in Dynamic Workers, whose time the trace doesn't show.
+- **Workspaces:** one from each Template, made after #51's deploy and tested again after #52's.
+
+| Run | Browser | Platform Worker | Durable Object |
+| --- | ---: | ---: | ---: |
+| Worker Template, the first after the deploy | 2,552 ms | 2,509 ms | 1,599 ms, 94 ms of CPU |
+| Worker Template, again (2) | 565–709 ms | 516–667 ms | 508–658 ms, 14–20 ms of CPU |
+| Worker + React Template, the first after the deploy | 3,576 ms | 3,547 ms | 3,012 ms, 91 ms of CPU |
+| Worker + React Template, again (4) | 1,102–1,573 ms | 1,036–1,519 ms | 1,028–1,514 ms, 38–57 ms of CPU |
+
+- **Every run passed:** the Worker Template's `the app > greets by name`, and the React Template's `App > renders its heading, and asks the Worker for a greeting` and `the Worker > greets by name`. The trace showed no memory errors.
+- **A failing test:** a test file comparing `{ total: 2 }` with `{ total: 3 }` was saved to the Worker Template's Workspace, and Run tests pressed on its page.
+  - The problems list's summary read "1 error", and its status "Tested at 12:16:00: 1 passed, 1 failed".
+  - The Tests group listed `src/sum.test.ts:5:30` `sums > adds: AssertionError: expected { total: 2 } to deeply equal { total: 3 }`, with the diff below it.
+  - Clicking it opened the file, at line 5.
+
+**The Turn:** "Add a function slugify(text) in src/slug.ts that lowercases text, drops anything that isn't a letter, digit or space, and joins the words with hyphens. Write tests for it in src/slug.test.ts, including one for leading and trailing spaces, and run them with the test tool.", against a budget of $2, in a fresh Worker Template Workspace. The browser didn't time it.
+
+| Turn log | Steps | Retries | Input tokens (cache read / written) | Output | Cost |
+| ---: | ---: | ---: | --- | ---: | ---: |
+| 16.0 s | 3 | 0 | 21.0K (13.4K / 7.6K) | 1.5K | $0.07 |
+
+- **What the Agent did:** it wrote `src/slug.ts` and 8 tests, ran them with `test`, changed a test, and ran them again. Both runs were of that one file, and all 8 tests passed.
+- **The end of the Turn:** a clean Check, a Build, then every test file: 9 passed, with the Template's own. `testFailures` was 0. The page's problems list showed the run when the Turn ended, without Run tests being pressed.
+
+### Before the fix (#51's deploy)
+
+The first live check, the same day after #51's deploy, ran each Template's tests three times. The Worker Template's passed, in 1,062 ms for the first run and 464–565 ms after, in the platform Worker, with 353–880 ms of the Durable Object's CPU. The React Template's found two problems, both fixed in #52:
+- **`App.test.tsx` failed,** in every run's report: `Dynamic require of "util" is not supported`. worker-bundler resolves Packages with the `node` condition as well as `browser`, and `react-dom` lists the Node build of `react-dom/server` first. Packages now lose their `node` conditions before any bundling, Builds included, as with wrangler.
+- **The third run returned 500:** "Durable Object's isolate exceeded its memory limit and was reset." The first two took 3,112 ms and 1,658 ms in the platform Worker, with 2,758 ms and 1,322 ms of the Durable Object's CPU, and the third 1,484 ms of CPU before the reset. Most of that was bundling, going by how far it fell once bundling moved out. esbuild bundled the tests with a source map there, and never gives memory back. Tests now bundle in a Dynamic Worker of their own, as Checks run (ADR 0010).
+
+### Found along the way
+
+- **The platform's own tests missed both problems.** The fake `react-dom` listed its browser build first, unlike React's, and local workerd doesn't enforce memory limits. The fake now lists `node` first.
+- **Fake timers hang the platform's test suite.** Its Durable Objects run in the test file's isolate, so their timers stop too (`docs/development.md`).
+- **A Durable Object method can't be called `test`** over RPC in the platform's tests: `test` is a Worker handler's name. The method is `runTests`.
 
 ## The Conversation panel
 
