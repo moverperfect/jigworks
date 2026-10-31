@@ -283,13 +283,15 @@ export class AppHost extends DurableObject<Env> {
     // The Agent never reads a secret's value (ADR 0016). The body is read
     // past where it's cut by the longest value, so a value across the cut is
     // hidden whole.
-    const secrets = this.secretsToHide();
     let read: { body: string; truncated: boolean };
     try {
-      read = await readUpTo(response, previewBodyShown + longestSecret(secrets), deadline);
+      read = await readUpTo(response, previewBodyShown + longestSecret(this.secretsToHide()), deadline);
     } catch (error) {
       read = { body: `The Preview's answer broke off: ${error instanceof Error ? error.message : String(error)}`, truncated: true };
     }
+    // Read again after the answer, which may have taken long enough for a
+    // secret to change. The old value is kept as a retired one.
+    const secrets = this.secretsToHide();
     const body = withoutSecrets(read.body, secrets, previewBodyShown);
     return {
       status: response.status,

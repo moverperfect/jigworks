@@ -257,6 +257,51 @@ describe("hiding a secret's value", () => {
     expect((await env.WORKSPACES.getByName(workspace.id).previewLogs()).map(({ message }) => message)).toEqual(["failed with "]);
   });
 
+  it("hides a value set while the Agent's request is still reading the answer", async () => {
+    const workspace = await create("Secrets Midway");
+    await save(
+      workspace.id,
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        durable_objects: { bindings: [{ name: "KEEPER", class_name: "Keeper" }] },
+      }),
+    );
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { DurableObject } from "cloudflare:workers";
+export class Keeper extends DurableObject<{ API_KEY: string }> {
+  key() { return this.env.API_KEY; }
+}
+export default {
+  fetch(_request: Request, env: { KEEPER: DurableObjectNamespace<Keeper> }) {
+    const encoder = new TextEncoder();
+    let sent = false;
+    return new Response(new ReadableStream({
+      async pull(controller) {
+        if (sent) return controller.close();
+        sent = true;
+        controller.enqueue(encoder.encode("before "));
+        // By now the Developer has set a new value, which a new instance has.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        controller.enqueue(encoder.encode(await env.KEEPER.getByName("x").key()));
+      },
+    }));
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "the-first-value");
+    const answering = env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await setSecret(workspace.id, "API_KEY", "the-second-value");
+    expect((await answering).body).toBe("before [secret API_KEY]");
+  });
+
   it("hides a value in an error from the Preview's answer", async () => {
     const workspace = await create("Secrets Broken");
     await save(
