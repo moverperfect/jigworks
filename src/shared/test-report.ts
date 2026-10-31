@@ -59,13 +59,14 @@ export const testFailures = (report: TestReport): number =>
   report.counts.failed + report.bundleErrors.length + report.files.reduce((total, file) => total + file.errors.length, 0);
 
 /**
- * A test report that fits in `budget` bytes of JSON, losing detail until it
+ * A test report that fits in `budget` bytes of JSON, as UTF-8, losing detail until it
  * does: what the tests logged, then diffs, then the tests that didn't fail,
  * then the failures and bundling errors after the first that fit. The counts
  * stay whole.
  */
 export function testReportWithin(report: TestReport, budget: number): TestReport {
-  const size = (value: unknown) => JSON.stringify(value).length;
+  const encoder = new TextEncoder();
+  const size = (value: unknown) => encoder.encode(JSON.stringify(value)).byteLength;
   const noDiff = <T extends { diff: string | null }>(failure: T): T => ({ ...failure, diff: null });
   const lighter: ((file: TestFileReport) => TestFileReport)[] = [
     (file) => ({ ...file, console: [] }),

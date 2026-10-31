@@ -34,16 +34,17 @@ const fileTimeoutMs = 60_000;
 export async function testInDynamicWorkers(loader: WorkerLoader, bundle: TestBundle, files: string[]): Promise<TestFileReport[]> {
   const reports: TestFileReport[] = [];
   for (const file of files) {
-    const worker = loader.load({
-      compatibilityDate: bundle.compatibilityDate ?? fallbackCompatibilityDate,
-      compatibilityFlags: bundle.compatibilityFlags,
-      mainModule: testerModule,
-      modules: { [testerModule]: testerWorker, [testsModule]: bundle.code, [sourceMapModule]: { text: bundle.sourceMap } },
-      // The app's own limits, and no network.
-      globalOutbound: null,
-      limits: appLimits,
-    });
     try {
+      // Loading fails at once for a compatibility flag workerd doesn't know.
+      const worker = loader.load({
+        compatibilityDate: bundle.compatibilityDate ?? fallbackCompatibilityDate,
+        compatibilityFlags: bundle.compatibilityFlags,
+        mainModule: testerModule,
+        modules: { [testerModule]: testerWorker, [testsModule]: bundle.code, [sourceMapModule]: { text: bundle.sourceMap } },
+        // The app's own limits, and no network.
+        globalOutbound: null,
+        limits: appLimits,
+      });
       const report = await beforeDeadline(worker.getEntrypoint<Tester>("Tester").run(file), Date.now() + fileTimeoutMs);
       if (!report) throw new Error(`it ran for more than ${fileTimeoutMs / 1000} seconds.`);
       reports.push(report);

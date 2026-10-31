@@ -223,6 +223,14 @@ describe("the Tester", () => {
     ]);
   });
 
+  it("reports a file whose Worker won't start, such as for a compatibility flag workerd doesn't know", async () => {
+    const report = await only({
+      "wrangler.jsonc": '{ "name": "app", "compatibility_date": "2026-10-01", "compatibility_flags": ["no_such_flag"] }',
+      "src/index.test.ts": 'import { it } from "vitest";\nit("runs", () => {});\n',
+    });
+    expect(report.errors).toEqual([expect.objectContaining({ message: expect.stringContaining("no_such_flag") })]);
+  });
+
   it("can't reach the network", async () => {
     const report = await only({
       "src/fetch.test.ts": [
@@ -377,6 +385,17 @@ describe("a test report too large to keep whole", () => {
     expect(kept.counts).toEqual(counts);
     expect(kept.files.map(({ file }) => file)).toEqual(["src/a.test.ts", "src/b.test.ts"]);
     expect(kept.files[0]!.tests[0]).toEqual({ name: ["fails 0"], state: "failed", line: 1, failure: { ...failure(0), diff: null } });
+  });
+
+  it("counts bytes, not characters", () => {
+    const tests = Array.from({ length: 50 }, (_, n) => ({
+      name: [`fails ${n}`],
+      state: "failed" as const,
+      line: n + 1,
+      failure: { ...failure(n), message: "✗".repeat(80) },
+    }));
+    const kept = testReportWithin({ ranAt: "", files: [{ file: "src/a.test.ts", tests, errors: [], console: [] }], bundleErrors: [], counts }, 6_000);
+    expect(new TextEncoder().encode(JSON.stringify(kept)).byteLength).toBeLessThanOrEqual(6_000);
   });
 
   it("keeps the first bundling errors that fit, however many there are", () => {
