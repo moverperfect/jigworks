@@ -5,7 +5,7 @@ import { countProblems, summariseTests, testProblems } from "../client/src/probl
 import { describeTests } from "../src/agent";
 import { bundleTests, type TestBundle } from "../src/builder/tests";
 import { testReportWithin, type TestFileReport, type TestReport } from "../src/shared/test-report";
-import { isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
+import { bundleTestsInDynamicWorker, isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
 import { call, create } from "./helpers/api";
 
 // Tests a Workspace's own tests: they run in Dynamic Workers on a runner
@@ -332,6 +332,25 @@ describe("bundling the tests", () => {
     expect(result).toEqual({
       ok: false,
       errors: [{ file: "src/index.test.ts", line: 2, column: 25, message: 'The tests import "./missing", which isn\'t in the Workspace or its Packages' }],
+    });
+  });
+
+  it("reports a Test bundler that fails, or never answers, as a bundling error", async () => {
+    const broken = {
+      get: () => {
+        throw new Error("Worker exceeded memory limit.");
+      },
+    } as unknown as WorkerLoader;
+    expect(await bundleTestsInDynamicWorker(broken, workspace({}), ["src/index.test.ts"])).toEqual({
+      ok: false,
+      errors: [{ message: "The tests couldn't be bundled: Worker exceeded memory limit.", file: null, line: null, column: null }],
+    });
+
+    const silent = { get: () => ({ getEntrypoint: () => ({ bundle: () => new Promise(() => {}) }) }) } as unknown as WorkerLoader;
+    // Real timers: this isolate runs the platform's Durable Objects too.
+    expect(await bundleTestsInDynamicWorker(silent, workspace({}), ["src/index.test.ts"], 100)).toEqual({
+      ok: false,
+      errors: [{ message: "The tests couldn't be bundled: it took more than 0.1 seconds.", file: null, line: null, column: null }],
     });
   });
 

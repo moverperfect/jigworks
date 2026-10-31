@@ -6,6 +6,9 @@ import type { BuildProblem } from "../shared/build-report";
 /** A Workspace's files and Packages: path relative to the Workspace root, to text. */
 export type Snapshot = ReadonlyMap<string, string>;
 
+/** Changes when the same files bundle differently, so a Build's hash does too. 2: no `node` conditions. */
+export const bundlingVersion = 2;
+
 /**
  * The snapshot as the bundler takes it. The bundler runs its own npm
  * installer for any dependency it can't find under node_modules/, which would

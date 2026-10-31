@@ -3,7 +3,7 @@ import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
 import { platformEnvPrefix } from "../apphost/app-data";
-import { bundlerFiles, esbuildProblems, missingImports, unplaced, type Snapshot } from "./bundling";
+import { bundlerFiles, bundlingVersion, esbuildProblems, missingImports, unplaced, type Snapshot } from "./bundling";
 import { frontEnd, tailwindVersion, type TailwindFailure } from "./front-end";
 
 export type { BuildProblem, Snapshot };
@@ -283,8 +283,8 @@ function assetSettings(assets: WranglerAssets = {}): AssetSettings {
 
 async function hashOf(snapshot: Snapshot): Promise<string> {
   const encoder = new TextEncoder();
-  // The same files make a different Build after a Tailwind upgrade.
-  const parts = [`tailwindcss ${tailwindVersion}`];
+  // The same files make a different Build after a Tailwind upgrade, or a change to how they're bundled.
+  const parts = [`tailwindcss ${tailwindVersion}`, `bundling ${bundlingVersion}`];
   for (const path of [...snapshot.keys()].sort()) parts.push(path, snapshot.get(path)!);
   const digest = await crypto.subtle.digest("SHA-256", encoder.encode(parts.join("\0")));
   return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
