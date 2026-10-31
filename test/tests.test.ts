@@ -132,6 +132,20 @@ describe("the Tester", () => {
     ]);
   });
 
+  it("counts a test's assertions afresh for each repeat, with the test's own expect too", async () => {
+    const report = await only({
+      "src/repeats.test.ts": [
+        'import { it } from "vitest";',
+        'it("asserts once", { repeats: 2 }, ({ expect }) => {',
+        "  expect.assertions(1);",
+        "  expect(1).toBe(1);",
+        "});",
+        "",
+      ].join("\n"),
+    });
+    expect(report.tests.map(({ state, failure }) => [state, failure?.message])).toEqual([["passed", undefined]]);
+  });
+
   it("fails vi.mock and snapshots with a clear message that they aren't supported", async () => {
     const [mocked, snapshot] = await run({
       "src/a-mock.test.ts": [

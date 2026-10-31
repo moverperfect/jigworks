@@ -318,7 +318,11 @@ export async function runFile(path: string, load: (() => Promise<unknown>) | und
       await load();
     },
     onBeforeTryTask(test) {
-      setState({ ...freshState(), currentTestName: testName(test) }, expect);
+      const state = { ...freshState(), currentTestName: testName(test) };
+      setState(state, expect);
+      // The test's own `expect` lasts as long as its context, across retries and repeats.
+      const context = test.context as typeof test.context & { _local?: boolean };
+      if (context._local) (context.expect as Expect).setState(state);
     },
     onAfterTryTask(test) {
       const context = test.context as typeof test.context & { _local?: boolean };
