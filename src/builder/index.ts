@@ -2,6 +2,7 @@ import { createApp, createWorker, type Modules } from "@cloudflare/worker-bundle
 import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
+import { platformEnvPrefix } from "../apphost/app-data";
 import { frontEnd, tailwindVersion, type TailwindFailure } from "./front-end";
 
 export type { BuildProblem };
@@ -256,7 +257,7 @@ function wranglerBindings(config: Record<string, unknown>): { durableObjects: Re
       !jsName.test(className) ||
       // Not a key a plain object can hold, nor the platform's own, nor the app's default export.
       name === "__proto__" ||
-      name.startsWith("__jigworks") ||
+      name.startsWith(platformEnvPrefix) ||
       className === "default"
     ) {
       problems.push({

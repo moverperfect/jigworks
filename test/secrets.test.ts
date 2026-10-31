@@ -1,0 +1,358 @@
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
+import { env, exports } from "cloudflare:workers";
+import { describe, expect, it } from "vitest";
+import type { BuildReport } from "../src/shared/build-report";
+import type { Deployment } from "../src/shared/deployment";
+import { accessToken, testAccess } from "./helpers/access";
+import { call, create } from "./helpers/api";
+import { connect, history, runTurn, textOf } from "./helpers/conversation";
+
+// App secrets: the Developer gives a Workspace secrets, which its app reads
+// from env in the Preview and the Deployment. The Agent sees their names,
+// and the platform keeps their values out of what the Agent reads (ADR 0016).
+
+const build = async (id: string) => {
+  const response = await call(`/api/workspaces/${id}/build`, { method: "POST" });
+  expect(response.status).toBe(200);
+  return response.json<BuildReport>();
+};
+
+const save = async (id: string, path: string, text: string) => {
+  const response = await call(`/api/workspaces/${id}/files/${path}`, { method: "PUT", text });
+  expect(response.status).toBe(204);
+};
+
+const setSecret = (id: string, name: string, value: unknown, email?: string) =>
+  call(`/api/workspaces/${id}/secrets/${name}`, { method: "PUT", body: { value }, email });
+
+const secretNames = async (id: string) => {
+  const response = await call(`/api/workspaces/${id}/secrets`);
+  expect(response.status).toBe(200);
+  return (await response.json<{ secrets: { name: string; updatedAt: string }[] }>()).secrets.map(({ name }) => name);
+};
+
+/** An app that answers with the names in its env, and the value of the one a path names. */
+const envApp = `export default {
+  fetch(request: Request, env: Record<string, unknown>) {
+    const name = new URL(request.url).pathname.slice(1);
+    if (name === "names") return Response.json(Object.keys(env).sort());
+    if (name === "log") {
+      console.log("the key is", env.API_KEY);
+      return new Response("logged");
+    }
+    return new Response(String(env[name] ?? "(none)"));
+  },
+};
+`;
+
+const envWorkspace = async (name: string) => {
+  const workspace = await create(name);
+  await save(workspace.id, "src/index.ts", envApp);
+  expect(await build(workspace.id)).toMatchObject({ ok: true });
+  return workspace;
+};
+
+/** What the app answers in the Preview, signed in as the pane is, so nothing is hidden. */
+const inPreview = async (id: string, path: string) => {
+  const link = await call(`/api/workspaces/${id}/preview/sign-in`, { method: "POST", body: { to: path } });
+  const { url } = await link.json<{ url: string }>();
+  const signedIn = await exports.default.fetch(new Request(url, { headers: { "Sec-Fetch-Dest": "iframe" }, redirect: "manual" }));
+  const cookie = signedIn.headers.getSetCookie()[0]!.split(";", 1)[0]!;
+  const page = new URL(signedIn.headers.get("Location")!, url);
+  return (await exports.default.fetch(new Request(page, { headers: { Cookie: cookie, "Sec-Fetch-Dest": "iframe" } }))).text();
+};
+
+const inDeployment = async (url: string, path: string) => {
+  const token = await accessToken({ email: "colleague@example.com" }, { audience: testAccess.appsAudience });
+  return (await exports.default.fetch(new Request(new URL(path, url), { headers: { "Cf-Access-Jwt-Assertion": token } }))).text();
+};
+
+describe("a Workspace's secrets", () => {
+  it("can be added, replaced and removed, and their values are never shown again", async () => {
+    const workspace = await create("Secrets Kept");
+    expect(await secretNames(workspace.id)).toEqual([]);
+    expect((await setSecret(workspace.id, "API_KEY", "first-value")).status).toBe(204);
+    expect((await setSecret(workspace.id, "OTHER_KEY", "other-value")).status).toBe(204);
+    expect((await setSecret(workspace.id, "API_KEY", "second-value")).status).toBe(204);
+    const listed = await call(`/api/workspaces/${workspace.id}/secrets`);
+    const text = await listed.text();
+    expect(JSON.parse(text)).toEqual({
+      secrets: [
+        { name: "API_KEY", updatedAt: expect.any(String) },
+        { name: "OTHER_KEY", updatedAt: expect.any(String) },
+      ],
+    });
+    expect(text).not.toContain("value");
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/OTHER_KEY`, { method: "DELETE" })).status).toBe(204);
+    expect(await secretNames(workspace.id)).toEqual(["API_KEY"]);
+  });
+
+  it("refuses names and values the app couldn't use", async () => {
+    const workspace = await create("Secrets Refused");
+    for (const [name, value] of [
+      ["1KEY", "x"],
+      ["has-dash", "x"],
+      ["__jigworks_app_data", "x"],
+      ["EMPTY", ""],
+      ["SHORT", "12345"],
+      ["NOT_TEXT", 42],
+      ["TOO_LONG", "x".repeat(5121)],
+    ] as const) {
+      const response = await setSecret(workspace.id, name, value);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: expect.any(String) });
+    }
+    expect(await secretNames(workspace.id)).toEqual([]);
+  });
+
+  it("are the Workspace's own Developer's only", async () => {
+    const workspace = await create("Secrets Private");
+    expect((await setSecret(workspace.id, "API_KEY", "x", testAccess.secondDeveloper)).status).toBe(404);
+    expect((await call(`/api/workspaces/${workspace.id}/secrets`, { email: testAccess.secondDeveloper })).status).toBe(404);
+  });
+});
+
+describe("an app's secrets", () => {
+  it("reach the app's env in the Preview and the Deployment, and changes reach it without a new Build", async () => {
+    const workspace = await envWorkspace("Secrets In Env");
+    expect(await inPreview(workspace.id, "/API_KEY")).toBe("(none)");
+    await setSecret(workspace.id, "API_KEY", "first-value");
+    expect(await inPreview(workspace.id, "/API_KEY")).toBe("first-value");
+    const published = await call(`/api/workspaces/${workspace.id}/deployment`, { method: "POST", body: { replaces: null } });
+    const { url } = await published.json<Deployment>();
+    expect(await inDeployment(url, "/API_KEY")).toBe("first-value");
+
+    await setSecret(workspace.id, "API_KEY", "second-value");
+    expect(await inPreview(workspace.id, "/API_KEY")).toBe("second-value");
+    expect(await inDeployment(url, "/API_KEY")).toBe("second-value");
+    await call(`/api/workspaces/${workspace.id}/secrets/API_KEY`, { method: "DELETE" });
+    expect(await inPreview(workspace.id, "/API_KEY")).toBe("(none)");
+    expect(await inDeployment(url, "/API_KEY")).toBe("(none)");
+  });
+
+  it("are all the app's env holds, with its vars: none of the platform's own secrets", async () => {
+    const workspace = await envWorkspace("Secrets Platform");
+    await setSecret(workspace.id, "API_KEY", "value-1234");
+    expect(JSON.parse(await inPreview(workspace.id, "/names"))).toEqual(["API_KEY", "GREETING"]);
+  });
+
+  it("reach the app's Durable Objects too", async () => {
+    const workspace = await create("Secrets Objects");
+    await save(
+      workspace.id,
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        durable_objects: { bindings: [{ name: "KEEPER", class_name: "Keeper" }] },
+      }),
+    );
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { DurableObject } from "cloudflare:workers";
+export class Keeper extends DurableObject<{ API_KEY?: string }> {
+  key() { return this.env.API_KEY ?? "(none)"; }
+  names() { return Object.keys(this.env).sort(); }
+}
+export default {
+  async fetch(request: Request, env: { KEEPER: DurableObjectNamespace<Keeper> }) {
+    const keeper = env.KEEPER.getByName("x");
+    if (new URL(request.url).pathname === "/names") return Response.json({ app: Object.keys(env).sort(), keeper: await keeper.names() });
+    return new Response(await keeper.key());
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "first-value");
+    expect(await inPreview(workspace.id, "/")).toBe("first-value");
+    await setSecret(workspace.id, "API_KEY", "second-value");
+    expect(await inPreview(workspace.id, "/")).toBe("second-value");
+    // A binding's name isn't free for a secret, which the app couldn't read.
+    const taken = await setSecret(workspace.id, "KEEPER", "value-1234");
+    expect(taken.status).toBe(400);
+    expect(await taken.json()).toEqual({ error: expect.stringContaining("KEEPER") });
+    // Nothing of the platform's own, in the app's env or an instance's.
+    expect(JSON.parse(await inPreview(workspace.id, "/names"))).toEqual({ app: ["API_KEY", "KEEPER"], keeper: ["API_KEY", "KEEPER"] });
+  });
+});
+
+describe("hiding a secret's value", () => {
+  it("hides the longer of two values that overlap, whole", async () => {
+    const workspace = await envWorkspace("Secrets Overlap");
+    await setSecret(workspace.id, "SHORT", "secret-123");
+    await setSecret(workspace.id, "LONG", "secret-12345");
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/LONG" });
+    expect(answer.body).toBe("[secret LONG]");
+  });
+
+  it("hides a value escaped as JSON, in an answer and in a logged object", async () => {
+    const workspace = await create("Secrets Escaped");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch(_request: Request, env: { PEM: string }) {
+    console.log({ pem: env.PEM });
+    return Response.json({ pem: env.PEM });
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "PEM", '-----BEGIN KEY-----\nabc"def\\ghi\n-----END KEY-----');
+    const agent = env.WORKSPACES.getByName(workspace.id);
+    expect((await agent.requestPreview({ method: "GET", path: "/" })).body).toBe('{"pem":"[secret PEM]"}');
+    let logs: { message: string }[] = [];
+    for (let attempt = 0; attempt < 50 && logs.length === 0; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      logs = await agent.previewLogs();
+    }
+    expect(logs.map(({ message }) => message)).toEqual(['{"pem":"[secret PEM]"}']);
+  });
+
+  it("hides the part of a value left at the end of an answer cut short", async () => {
+    const workspace = await create("Secrets Cut");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch(_request: Request, env: { API_KEY: string }) {
+    return new Response("x".repeat(19_990) + env.API_KEY);
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "abcdefghijklmnopqrstuvwxyz");
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" });
+    expect(answer.truncated).toBe(true);
+    // Hidden first, then cut: what's left of the value is the start of its placeholder.
+    expect(answer.body).toBe("x".repeat(19_990) + "[secret API_KEY]".slice(0, 10));
+  });
+
+  it("forgets a replaced value after an hour, whether or not anything happens meanwhile", async () => {
+    const workspace = await envWorkspace("Secrets Forgotten");
+    await setSecret(workspace.id, "API_KEY", "the-old-value");
+    await setSecret(workspace.id, "API_KEY", "the-new-value");
+    const host = env.APP_HOSTS.getByName(await env.WORKSPACES.getByName(workspace.id).appLabel());
+    const retired = () =>
+      runInDurableObject(host, (_instance, state) => state.storage.sql.exec<{ value: string }>("SELECT value FROM retired_secrets").toArray());
+    expect(await retired()).toEqual([{ value: "the-old-value" }]);
+    // An hour on.
+    await runInDurableObject(host, (_instance, state) => {
+      state.storage.sql.exec("UPDATE retired_secrets SET retired_at = retired_at - 3600001");
+    });
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+    expect(await retired()).toEqual([]);
+  });
+
+  it("drops the start of a value from the end of a log line cut short in the browser", async () => {
+    const workspace = await envWorkspace("Secrets Cut Logs");
+    await setSecret(workspace.id, "API_KEY", "abcdefghijklmnopqrstuvwxyz");
+    const label = await env.WORKSPACES.getByName(workspace.id).appLabel();
+    await env.APP_HOSTS.getByName(label).log("preview", "browser", [{ level: "error", message: "failed with abcdefgh" }]);
+    expect((await env.WORKSPACES.getByName(workspace.id).previewLogs()).map(({ message }) => message)).toEqual(["failed with "]);
+  });
+
+  it("hides a value set while the Agent's request is still reading the answer", async () => {
+    const workspace = await create("Secrets Midway");
+    await save(
+      workspace.id,
+      "wrangler.jsonc",
+      JSON.stringify({
+        name: "app",
+        main: "src/index.ts",
+        compatibility_date: "2026-10-01",
+        durable_objects: { bindings: [{ name: "KEEPER", class_name: "Keeper" }] },
+      }),
+    );
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { DurableObject } from "cloudflare:workers";
+export class Keeper extends DurableObject<{ API_KEY: string }> {
+  key() { return this.env.API_KEY; }
+}
+export default {
+  fetch(_request: Request, env: { KEEPER: DurableObjectNamespace<Keeper> }) {
+    const encoder = new TextEncoder();
+    let sent = false;
+    return new Response(new ReadableStream({
+      async pull(controller) {
+        if (sent) return controller.close();
+        sent = true;
+        controller.enqueue(encoder.encode("before "));
+        // By now the Developer has set a new value, which a new instance has.
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        controller.enqueue(encoder.encode(await env.KEEPER.getByName("x").key()));
+      },
+    }));
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "the-first-value");
+    const answering = env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await setSecret(workspace.id, "API_KEY", "the-second-value");
+    expect((await answering).body).toBe("before [secret API_KEY]");
+  });
+
+  it("hides a value in an error from the Preview's answer", async () => {
+    const workspace = await create("Secrets Broken");
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `export default {
+  fetch(_request: Request, env: { API_KEY: string }) {
+    return new Response(new ReadableStream({ pull(controller) { controller.error(new Error("broke with " + env.API_KEY)); } }));
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await setSecret(workspace.id, "API_KEY", "abcdefghijklmnopqrstuvwxyz");
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" });
+    expect(JSON.stringify(answer)).not.toContain("abcdefghij");
+  });
+
+  it("hides a value in a log line that arrives after the secret changed", async () => {
+    const workspace = await envWorkspace("Secrets Late");
+    await setSecret(workspace.id, "API_KEY", "the-old-value");
+    await setSecret(workspace.id, "API_KEY", "the-new-value");
+    // As a request that started before the change would log, once it ends.
+    const label = await env.WORKSPACES.getByName(workspace.id).appLabel();
+    await env.APP_HOSTS.getByName(label).log("preview", "server", [{ level: "log", message: "the key was the-old-value" }]);
+    const logs = await env.WORKSPACES.getByName(workspace.id).previewLogs();
+    expect(logs.map(({ message }) => message)).toEqual(["the key was [secret API_KEY]"]);
+  });
+});
+
+describe("the Agent and secrets", () => {
+  it("lists the secrets' names with list_secrets", async () => {
+    const workspace = await create("Secrets Names");
+    await setSecret(workspace.id, "API_KEY", "a-long-secret-value");
+    await setSecret(workspace.id, "OTHER_KEY", "another-secret-value");
+    await runTurn(workspace.id, await connect(workspace.id), "[script:list-secrets] Which secrets are there?");
+    const [, reply] = await history(workspace.id);
+    expect(textOf(reply!)).toBe("The tool said: API_KEY, OTHER_KEY");
+  });
+
+  it("never reads a secret's value in what the Preview answers or logs", async () => {
+    const workspace = await envWorkspace("Secrets Hidden");
+    await setSecret(workspace.id, "API_KEY", "a-long-secret-value");
+    const agent = env.WORKSPACES.getByName(workspace.id);
+    expect((await agent.requestPreview({ method: "GET", path: "/API_KEY" })).body).toBe("[secret API_KEY]");
+    expect((await agent.requestPreview({ method: "GET", path: "/log" })).body).toBe("logged");
+    let logs: { message: string }[] = [];
+    for (let attempt = 0; attempt < 50 && logs.length === 0; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      logs = await agent.previewLogs();
+    }
+    expect(logs.map(({ message }) => message)).toEqual(["the key is [secret API_KEY]"]);
+  });
+});

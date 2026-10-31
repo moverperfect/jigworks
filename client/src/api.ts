@@ -2,6 +2,7 @@ import type { BuildReport } from "../../src/shared/build-report.ts";
 import type { AppLogEntry } from "../../src/shared/app-logs.ts";
 import type { CheckReport } from "../../src/shared/check-report.ts";
 import type { Deployment } from "../../src/shared/deployment.ts";
+import type { Secret } from "../../src/shared/secret.ts";
 
 export interface Template {
   id: string;
@@ -164,6 +165,22 @@ export function previewTabUrl(host: string, to: string): string {
 }
 
 export type { AppLogEntry, Deployment };
+
+export type { Secret };
+
+export async function listSecrets(id: string): Promise<Secret[]> {
+  const { secrets } = await request<{ secrets: Secret[] }>("GET", `${workspaceApiPath(id)}/secrets`);
+  return secrets;
+}
+
+/** Adds or replaces a secret. Fails with status 400, saying why, for a name or value the app couldn't use. */
+export async function setSecret(id: string, name: string, value: string): Promise<void> {
+  await request<void>("PUT", `${workspaceApiPath(id)}/secrets/${encodeURIComponent(name)}`, { value });
+}
+
+export async function removeSecret(id: string, name: string): Promise<void> {
+  await request<void>("DELETE", `${workspaceApiPath(id)}/secrets/${encodeURIComponent(name)}`);
+}
 
 /** Where the Deployment answers, and when it was last published. */
 export async function getDeployment(id: string): Promise<Deployment> {

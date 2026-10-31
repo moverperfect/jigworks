@@ -8,8 +8,11 @@
 /** The name of the module the app host loads in place of the app's own. */
 export const appDataModule = "jigworks-app-data.js";
 
+/** The start of every name the platform puts in an app's env, which apps can't use themselves. */
+export const platformEnvPrefix = "__jigworks";
+
 /** The env key `AppData` arrives under, which the stand-ins call. */
-export const appDataBinding = "__jigworks_app_data";
+export const appDataBinding = `${platformEnvPrefix}_app_data`;
 
 /** The module that wraps the app's `mainModule`, giving it its `durableObjects` bindings. */
 export function appDataWrapper(mainModule: string, durableObjects: Record<string, string>): string {

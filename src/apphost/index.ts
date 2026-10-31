@@ -2,6 +2,8 @@ import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
 import { appDataBinding, appDataModule, appDataWrapper } from "./app-data";
 import { assetResponse, type AppAssets } from "./assets";
+import { longestSecret, maxSecrets, secretProblem, withoutSecrets } from "./secrets";
+import type { Secret } from "../shared/secret";
 import type { AppLogEntry, Slot } from "../shared/app-logs";
 
 export type { AppLogEntry, Slot };
@@ -81,6 +83,8 @@ const notPublished = "This app hasn't been published yet.";
 // The Deployment's copy of its Build, kept in build_chunks under this name
 // rather than its hash, so no later Build can change it.
 const deploymentCopy = "deployment";
+// How long a replaced or removed secret's value is still hidden from the Agent (ADR 0016).
+const retiredSecretsKeptMs = 60 * 60 * 1000;
 // How long the Agent's request to the Preview waits for its response, all of it.
 const previewWaitSeconds = 10;
 
@@ -162,6 +166,45 @@ export class AppHost extends DurableObject<Env> {
     return { ok: true, published };
   }
 
+  /**
+   * Adds or replaces one of the app's secrets, which reaches its env in the
+   * Preview and the Deployment at once (ADR 0016).
+   */
+  async setSecret(workspaceId: string, label: string, name: string, value: unknown): Promise<{ ok: true } | { ok: false; error: string }> {
+    const problem = secretProblem(name, value);
+    if (problem) return { ok: false, error: problem };
+    if (!this.claim(workspaceId, label)) return { ok: false, error: "The app's label belongs to another Workspace." };
+    // The binding's stand-in would take the name in env, so the app couldn't read the secret.
+    if ((["preview", "deployment"] as const).some((slot) => Object.hasOwn(this.buildIn(slot)?.durableObjects ?? {}, name))) {
+      return { ok: false, error: `The app has a Durable Object binding named ${name}. Give the secret another name.` };
+    }
+    const sql = this.sql();
+    if (sql.exec<{ others: number }>("SELECT COUNT(*) AS others FROM secrets WHERE name != ?", name).one().others >= maxSecrets) {
+      return { ok: false, error: `A Workspace can have up to ${maxSecrets} secrets.` };
+    }
+    await this.retireSecret(name);
+    sql.exec("INSERT OR REPLACE INTO secrets (name, value, updated_at) VALUES (?, ?, ?)", name, value, new Date().toISOString());
+    this.secretsChanged();
+    return { ok: true };
+  }
+
+  /** Removes one of the app's secrets, from the Preview's env and the Deployment's at once. */
+  async removeSecret(workspaceId: string, name: string): Promise<void> {
+    if (this.workspaceId() !== workspaceId) return;
+    await this.retireSecret(name);
+    this.sql().exec("DELETE FROM secrets WHERE name = ?", name);
+    this.secretsChanged();
+  }
+
+  /** The app's secrets' names, never their values. */
+  secretNames(): Secret[] {
+    if (this.workspaceId() === null) return [];
+    return this.sql()
+      .exec<{ name: string; updated_at: string }>("SELECT name, updated_at FROM secrets ORDER BY name")
+      .toArray()
+      .map(({ name, updated_at }) => ({ name, updatedAt: updated_at }));
+  }
+
   /** The Deployment, or null before the first publish. */
   published(): PublishedBuild | null {
     return this.ctx.storage.kv.get<PublishedBuild>("deployment") ?? null;
@@ -237,10 +280,24 @@ export class AppHost extends DurableObject<Env> {
       false,
     ), deadline);
     if (!response) return { status: 504, headers: {}, body: `The Preview didn't answer within ${previewWaitSeconds} seconds.`, truncated: false };
+    // The Agent never reads a secret's value (ADR 0016). The body is read
+    // past where it's cut by the longest value, so a value across the cut is
+    // hidden whole.
+    let read: { body: string; truncated: boolean };
+    try {
+      read = await readUpTo(response, previewBodyShown + longestSecret(this.secretsToHide()), deadline);
+    } catch (error) {
+      read = { body: `The Preview's answer broke off: ${error instanceof Error ? error.message : String(error)}`, truncated: true };
+    }
+    // Read again after the answer, which may have taken long enough for a
+    // secret to change. The old value is kept as a retired one.
+    const secrets = this.secretsToHide();
+    const body = withoutSecrets(read.body, secrets, previewBodyShown);
     return {
       status: response.status,
-      headers: Object.fromEntries(response.headers),
-      ...(await readUpTo(response, previewBodyShown, deadline)),
+      headers: Object.fromEntries([...response.headers].map(([name, value]) => [name, withoutSecrets(value, secrets)])),
+      body,
+      truncated: read.truncated || body.length < withoutSecrets(read.body, secrets).length,
     };
   }
 
@@ -248,8 +305,11 @@ export class AppHost extends DurableObject<Env> {
   log(slot: Slot, source: AppLogEntry["source"], entries: { level: string; message: string }[]): void {
     const at = new Date().toISOString();
     const sql = this.sql();
+    // Kept without secrets' values, as the Agent reads the logs (ADR 0016).
+    const secrets = this.secretsToHide();
     for (const { level, message } of entries) {
-      sql.exec("INSERT INTO logs (at, slot, source, level, message) VALUES (?, ?, ?, ?, ?)", at, slot, source, level, message.slice(0, logLineLength));
+      const kept = withoutSecrets(message, secrets, logLineLength);
+      sql.exec("INSERT INTO logs (at, slot, source, level, message) VALUES (?, ?, ?, ?, ?)", at, slot, source, level, kept);
     }
     sql.exec("DELETE FROM logs WHERE slot = ? AND id NOT IN (SELECT id FROM logs WHERE slot = ? ORDER BY id DESC LIMIT ?)", slot, slot, logsKept);
   }
@@ -287,6 +347,8 @@ export class AppHost extends DurableObject<Env> {
         CREATE TABLE IF NOT EXISTS sign_ins (token TEXT PRIMARY KEY, destination TEXT NOT NULL, path TEXT NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, destination TEXT NOT NULL, expires_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS facets (name TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS retired_secrets (name TEXT NOT NULL, value TEXT NOT NULL, retired_at INTEGER NOT NULL);
       `);
       this.tablesReady = true;
     }
@@ -419,7 +481,8 @@ export class AppHost extends DurableObject<Env> {
     const label = this.ctx.storage.kv.get<string>("label")!;
     const durableObjects = build.durableObjects ?? {};
     const withData = Object.keys(durableObjects).length > 0;
-    return this.env.LOADER.get(`app:${label}:${slot}:${build.hash}`, async () => ({
+    // A change of secrets makes a new Worker, with the new env.
+    return this.env.LOADER.get(`app:${label}:${slot}:${build.hash}:${this.secretsVersion()}`, async () => ({
       compatibilityDate: build.compatibilityDate ?? fallbackCompatibilityDate,
       compatibilityFlags: build.compatibilityFlags,
       mainModule: withData ? appDataModule : build.mainModule,
@@ -427,7 +490,11 @@ export class AppHost extends DurableObject<Env> {
         ...(build.modules as WorkerLoaderWorkerCode["modules"]),
         ...(withData && { [appDataModule]: appDataWrapper(build.mainModule, durableObjects) }),
       },
-      env: { ...build.vars, ...(withData && { [appDataBinding]: this.ctx.exports.AppData({ props: { label, slot } }) }) },
+      env: {
+        ...build.vars,
+        ...this.secrets(),
+        ...(withData && { [appDataBinding]: this.ctx.exports.AppData({ props: { label, slot } }) }),
+      },
       limits: appLimits,
       tails: [this.ctx.exports.AppTail({ props: { label, slot } })],
     }));
@@ -465,10 +532,56 @@ export class AppHost extends DurableObject<Env> {
     }));
   }
 
-  /** Stops the slot's running instances, so the next call starts them with the slot's new code. */
+  /** The app's secrets, name to value. */
+  private secrets(): Record<string, string> {
+    const rows = this.sql().exec<{ name: string; value: string }>("SELECT name, value FROM secrets").toArray();
+    return Object.fromEntries(rows.map(({ name, value }) => [name, value]));
+  }
+
+  /**
+   * The values to hide from the Agent: the secrets' own, and for an hour
+   * those replaced or removed, which a request that started before the
+   * change can still log or answer with.
+   */
+  private secretsToHide(): [string, string][] {
+    const sql = this.sql();
+    sql.exec("DELETE FROM retired_secrets WHERE retired_at < ?", Date.now() - retiredSecretsKeptMs);
+    return [
+      ...Object.entries(this.secrets()),
+      ...sql.exec<{ name: string; value: string }>("SELECT name, value FROM retired_secrets").toArray().map(({ name, value }) => [name, value] as [string, string]),
+    ];
+  }
+
+  private async retireSecret(name: string): Promise<void> {
+    this.sql().exec("INSERT INTO retired_secrets (name, value, retired_at) SELECT name, value, ? FROM secrets WHERE name = ?", Date.now(), name);
+    // So the value goes after an hour even if nothing else happens.
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + retiredSecretsKeptMs);
+  }
+
+  /** Forgets the retired values past their hour, and wakes again for the rest. */
+  override async alarm(): Promise<void> {
+    const sql = this.sql();
+    sql.exec("DELETE FROM retired_secrets WHERE retired_at <= ?", Date.now() - retiredSecretsKeptMs);
+    const next = sql.exec<{ oldest: number | null }>("SELECT MIN(retired_at) AS oldest FROM retired_secrets").one().oldest;
+    if (next !== null) await this.ctx.storage.setAlarm(next + retiredSecretsKeptMs);
+  }
+
+  /** Counts changes of secrets, so each change loads a new Worker with the new env. */
+  private secretsVersion(): number {
+    return this.ctx.storage.kv.get<number>("secrets:version") ?? 0;
+  }
+
+  /** Makes both slots pick up the new secrets: new Workers, and running instances stopped. */
+  private secretsChanged(): void {
+    this.ctx.storage.kv.put("secrets:version", this.secretsVersion() + 1);
+    this.abortFacets("preview");
+    this.abortFacets("deployment");
+  }
+
+  /** Stops the slot's running instances, so the next call starts them with the slot's new code or secrets. */
   private abortFacets(slot: Slot): void {
     for (const name of [...this.running].filter((running) => running.startsWith(`${slot}:`))) {
-      this.ctx.facets.abort(name, new Error("The app has new code."));
+      this.ctx.facets.abort(name, new Error("The app has new code or secrets."));
       this.running.delete(name);
     }
   }

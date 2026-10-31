@@ -181,6 +181,27 @@ api.post("/workspaces/:id/deployment", async (c) => {
   return result.ok ? c.json(result.deployment) : c.json({ error: result.error }, 409);
 });
 
+// Secrets (ADR 0016): names in, names out. A value is never sent back.
+api.get("/workspaces/:id/secrets", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json({ secrets: await workspace(c, record.id).secretNames() }) : noSuchWorkspace(c);
+});
+
+api.put("/workspaces/:id/secrets/:name", async (c) => {
+  const record = await ownWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  const body = await c.req.json<{ value?: unknown }>().catch(() => null);
+  const result = await workspace(c, record.id).setSecret(c.req.param("name"), body?.value);
+  return result.ok ? c.body(null, 204) : c.json({ error: result.error }, 400);
+});
+
+api.delete("/workspaces/:id/secrets/:name", async (c) => {
+  const record = await ownWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  await workspace(c, record.id).removeSecret(c.req.param("name"));
+  return c.body(null, 204);
+});
+
 // A sign-in link for the Preview pane's frame. A tab signs in through `/preview-sign-in`.
 api.post("/workspaces/:id/preview/sign-in", async (c) => {
   const record = await ownWorkspace(c);

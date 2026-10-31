@@ -60,6 +60,7 @@ export const agentScripts: Record<string, Script> = {
   "use-build": echoTool("build", {}),
   "request-preview": echoTool("request_preview", { method: "get", path: "/api/hello/Agent" }),
   "read-preview-logs": echoTool("preview_logs", {}),
+  "list-secrets": echoTool("list_secrets", {}),
 
   // Writes a file with a type error and runs check in the same step, as the model often does.
   "write-and-check": (request) =>
