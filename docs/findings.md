@@ -396,7 +396,7 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 **Verdict: yes, in Chrome.** Publishing, app data and app secrets all work on the deployed platform. Firefox and WebKit weren't checked.
 - **Publishing works.** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
 - **App data works.** An app's Durable Object instances kept their data across new Builds and publishes, and the Preview's data stayed apart from the Deployment's. Calls through the binding took 17–44 ms on Cloudflare's side, for the 9 calls in the trace.
-- **App secrets work.** A secret reached the app's `env` in the Preview and the Deployment, and a change or removal reached both on the next request, with no new Build. The Agent saw only the secret's name, and `[secret API_KEY]` where the app answered or logged with its value.
+- **App secrets work.** A secret reached the app's `env` in the Preview and the Deployment. A change reached both on their next request, and a removal the Deployment, with no new Build. The Agent saw only the secret's name, and `[secret API_KEY]` where the app answered or logged with its value.
 - **The gaps:**
   - **Durable Objects (ADR 0015):** apps get no WebSockets into an instance and no alarms in one, and `env` imported from `cloudflare:workers` doesn't carry a binding.
   - **Secrets (ADR 0016):** hiding values keeps them out of the Agent's sight, not out of its reach. It writes the app's code, so code that encodes a value or sends it elsewhere can still get it out.
