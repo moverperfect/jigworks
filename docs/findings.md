@@ -393,9 +393,14 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 
 ## Stage 5: Hosting (Deployments)
 
-**No verdict yet:** stage 5 also covers app secrets (ticket 12).
+**Verdict: yes, in Chrome.** Publishing, app data and app secrets all work on the deployed platform. Firefox and WebKit weren't checked.
 - **Publishing works.** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
 - **App data works.** An app's Durable Object instances kept their data across new Builds and publishes, and the Preview's data stayed apart from the Deployment's. Calls through the binding took 17–44 ms on Cloudflare's side, for the 9 calls in the trace.
+- **App secrets work.** A secret reached the app's `env` in the Preview and the Deployment, and a change or removal reached both on the next request, with no new Build. The Agent saw only the secret's name, and `[secret API_KEY]` where the app answered or logged with its value.
+- **The gaps:**
+  - **Durable Objects (ADR 0015):** apps get no WebSockets into an instance and no alarms in one, and `env` imported from `cloudflare:workers` doesn't carry a binding.
+  - **Secrets (ADR 0016):** hiding values keeps them out of the Agent's sight, not out of its reach. It writes the app's code, so code that encodes a value or sends it elsewhere can still get it out.
+  - **Assets:** binary files in `public/` arrive damaged (ADR 0014, #31).
 
 ### Publishing a Deployment (ticket 10)
 
@@ -462,6 +467,40 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - After publishing again, the Deployment answered as version 2 and carried on from 4 to 5.
 - **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
 - **Not tried live:** the Build errors for KV, D1, R2, queues and cron triggers, which the tests cover.
+
+### App secrets (ticket 12)
+
+- **Platform:** the deployed platform, measured on 2026-10-31 after ticket 12's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:** the platform Worker's and the app host's wall time, from Cloudflare's trace, leaving out the network.
+- **Workspace:** a fresh one from the Worker Template.
+- **The app:** a Hono Worker whose routes answered with:
+  - `/api/key`: whether `API_KEY` was set, its length and its value;
+  - `/api/log`: a log line with the value in it;
+  - `/api/names`: the names in its `env`.
+
+| Step | Platform Worker | App host |
+| --- | ---: | ---: |
+| Add a secret, through the Secrets dialog | 79 ms | 55 ms, 3 ms of CPU |
+| Replace it | 41 ms | 18 ms |
+| Remove it | 40 ms | 17 ms |
+| The Deployment's first request after the secret was replaced, on a new Worker | 28 ms | |
+
+- **The Secrets dialog:**
+  - Adding `API_KEY` listed it with the time it was set, and cleared both fields.
+  - The API then returned the name and that time, with no value.
+- **The app's `env`:**
+  - In the Preview, `/api/key` answered with the value, as the Developer sees it.
+  - `/api/names` gave `API_KEY` and `GREETING`, from `vars`, and none of the platform Worker's own secrets.
+  - After publishing, the Deployment answered with the value too.
+- **A change, with no new Build:**
+  - After the value was replaced, the Deployment and the Preview both answered with the new one on their next request.
+  - After it was removed, the Deployment answered that it wasn't set.
+- **The Agent:** a Turn on the real model, asked to list the secrets, request `/api/key` and read the logs, against a budget of $1. It took 10.0 s and 3 steps, and cost $0.04.
+  - `list_secrets` gave it `API_KEY`.
+  - `/api/key` gave it `{"set":true,"length":23,"key":"[secret API_KEY]"}`.
+  - The log line read `calling the service with [secret API_KEY]`.
+  - The value appeared nowhere in the Conversation. The Agent learned the value's length only because the app's own code answered with it.
+- **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
 
 ### Found along the way
 
