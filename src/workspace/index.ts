@@ -43,7 +43,7 @@ import type { Deployment } from "../shared/deployment";
 import type { Secret } from "../shared/secret";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
 import { testFailures, testReportWithin, type TestCounts, type TestFileReport, type TestReport } from "../shared/test-report";
-import { isTestFile, testInDynamicWorkers, vitestModule, vitestTypes } from "../tester";
+import { bundleTestsInDynamicWorker, isTestFile, testInDynamicWorkers, vitestTypes } from "../tester";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
 
 export type { CheckReport, TestReport };
@@ -403,9 +403,7 @@ export class Workspace extends Think<Env, ConversationState> {
         .sort();
       if (testFiles.length === 0) return { run, testFiles, bundle: null };
       const snapshot = new Map([...this.files.snapshot(), ...this.packages.snapshot()]);
-      // The bundler is the Build's, loaded on first use.
-      const { bundleTests } = await import("../builder");
-      return { run, testFiles, bundle: await bundleTests(snapshot, testFiles, { vitest: vitestModule }) };
+      return { run, testFiles, bundle: await bundleTestsInDynamicWorker(this.env.LOADER, snapshot, testFiles) };
     });
     const files = bundle?.ok ? await testInDynamicWorkers(this.env.LOADER, bundle, testFiles) : [];
     const report: TestReport = { ranAt, files, bundleErrors: bundle && !bundle.ok ? bundle.errors : [], counts: countTests(files) };

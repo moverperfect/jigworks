@@ -102,8 +102,11 @@ export const registryPackages: FakePackage[] = [
           "package.json": JSON.stringify({
             name: "react-dom",
             version: "19.3.1",
-            // As React's own, which has a build for Node too.
-            exports: { "./client": "./client.js", "./server": { browser: "./server.browser.js", default: "./server.node.js" } },
+            // As React's own, which lists its Node build before its browser build.
+            exports: {
+              "./client": "./client.js",
+              "./server": { node: "./server.node.js", worker: "./server.browser.js", browser: "./server.browser.js", default: "./server.node.js" },
+            },
           }),
           "client.js": "export const createRoot = (element) => ({ render: (node) => { element.textContent = String(node.type); } });\n",
           // Renders the fake React's elements, calling function components with their props.

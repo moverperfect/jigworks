@@ -3,12 +3,19 @@
 // module that the platform passes to the Worker Loader as text (ADR 0017).
 // The tests' own bundle is passed alongside it.
 //
+// Also bundles the Test bundler's Dynamic Worker (src/tester/bundler.ts),
+// with worker-bundler, into src/generated/test-bundler.txt. esbuild's
+// compiled module is passed alongside it, as `esbuild.wasm`. As for the
+// Checker, the bundle's first line records the module's SHA-256, so the
+// bundle, and the Dynamic Worker ID made from it, change whenever esbuild does.
+//
 // Also packs the types the Check gives the tests' `vitest`, as JSON in
 // src/generated/vitest-types.txt: each path under node_modules/, to its text.
 // They're src/tester/types/vitest.d.ts as vitest's index.d.ts, with the
 // declarations of the parts it's built from and their dependencies.
 // usage: node scripts/pack-tester.mjs
 import { build } from "esbuild";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,6 +39,24 @@ await build({
   logLevel: "warning",
 });
 console.log(`wrote src/generated/tester-worker.txt (${(statSync(outfile).size / 1e3).toFixed(1)} kB)`);
+
+const bundlerFile = fileURLToPath(new URL("../src/generated/test-bundler.txt", import.meta.url));
+const esbuildWasm = readFileSync(join(repo, "node_modules/@cloudflare/worker-bundler/dist/esbuild.wasm"));
+await build({
+  banner: { js: `// esbuild.wasm sha256 ${createHash("sha256").update(esbuildWasm).digest("hex")}` },
+  absWorkingDir: repo,
+  entryPoints: ["src/tester/bundler.ts"],
+  outfile: bundlerFile,
+  bundle: true,
+  format: "esm",
+  platform: "browser",
+  target: "es2024",
+  minify: true,
+  external: ["cloudflare:workers"],
+  plugins: [esbuildWasmFromHost()],
+  logLevel: "warning",
+});
+console.log(`wrote src/generated/test-bundler.txt (${(statSync(bundlerFile).size / 1e3).toFixed(1)} kB)`);
 
 const typesFile = fileURLToPath(new URL("../src/generated/vitest-types.txt", import.meta.url));
 const types = {
@@ -70,6 +95,16 @@ function declarationsIn(dir) {
   return readdirSync(dir, { recursive: true })
     .filter((path) => /\.d\.[cm]?ts$/.test(path) && !path.split("/").includes("node_modules"))
     .map((path) => join(dir, path));
+}
+
+/** worker-bundler imports esbuild's compiled module, which the host passes in as a module of the same name. */
+function esbuildWasmFromHost() {
+  return {
+    name: "esbuild-wasm-from-host",
+    setup(build) {
+      build.onResolve({ filter: /\/esbuild\.wasm$/ }, () => ({ path: "./esbuild.wasm", external: true }));
+    },
+  };
 }
 
 /**
