@@ -389,13 +389,19 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 - **Size:** with Tailwind and the Worker + React Template, the Worker is 7,941 KiB compressed, 107 KiB more than before.
   - The Templates' Workers runtime types, 608 KiB, are now packed once, which saved 112 KiB compressed.
   - Ticket 13 has about 2.2 MB of the 10 MB limit.
-- **Binary assets:** a Build serves `public/` as text, so a binary file there would be damaged (ADR 0014, #31).
+- **Binary assets:** a Build serves `public/` as text, so a binary file there is served damaged (ADR 0014, #31).
 
 ## Stage 5: Hosting (Deployments)
 
-**No verdict yet:** stage 5 also covers app secrets (ticket 12).
+**Verdict: yes, in Chrome.** Publishing, app data and app secrets all work on the deployed platform. Firefox and WebKit weren't checked.
 - **Publishing works.** Publish copied a Build to the Deployment in under 100 ms on Cloudflare's side. After its first page, the Deployment's pages took 34–38 ms in the platform Worker, and later Builds changed only the Preview.
 - **App data works.** An app's Durable Object instances kept their data across new Builds and publishes, and the Preview's data stayed apart from the Deployment's. Calls through the binding took 17–44 ms on Cloudflare's side, for the 9 calls in the trace.
+- **App secrets work.** A secret reached the app's `env` in the Preview and the Deployment. A change reached both on their next request, with no new Build, and so did a removal in the Deployment, the only one checked. Saving one took 40–79 ms in the platform Worker. The Agent never saw the value: only the name, and `[secret API_KEY]` where the app answered or logged with it.
+- **Known limits, by design.** These come from the ADRs and earlier stages, not from this stage's checks, and don't qualify the verdict:
+  - **Storage (ADR 0006):** apps get no KV, D1, R2, queues or cron triggers. Durable Objects are their only storage.
+  - **Durable Objects (ADR 0015):** apps get no WebSockets into an instance and no alarms in one, and `env` imported from `cloudflare:workers` doesn't carry a binding.
+  - **Secrets (ADR 0016):** hiding values keeps them out of the Agent's sight, not out of its reach. It writes the app's code, so code that encodes a value or sends it elsewhere can still get it out.
+  - **Assets:** binary files in `public/` are served damaged (ADR 0014, #31).
 
 ### Publishing a Deployment (ticket 10)
 
@@ -462,6 +468,52 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - After publishing again, the Deployment answered as version 2 and carried on from 4 to 5.
 - **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
 - **Not tried live:** the Build errors for KV, D1, R2, queues and cron triggers, which the tests cover.
+
+### App secrets (ticket 12)
+
+- **Platform:** the deployed platform, measured on 2026-10-31 after ticket 12's deploy, from the Developer's signed-in browser (Chrome) in the UK.
+- **Times:**
+  - **Platform Worker:** its wall time for the request, from Cloudflare's trace, leaving out the network.
+  - **App host:** its wall time for its `setSecret` or `removeSecret` call, with CPU where it had any. These figures can run on (`docs/development.md`).
+- **Workspace:** a fresh one from the Worker Template.
+- **The app:** a Hono Worker with three routes:
+  - `/api/key` answered whether `API_KEY` was set, its length and its value;
+  - `/api/log` logged a line with the value in it;
+  - `/api/names` answered with the names in its `env`.
+
+| Step | Platform Worker | App host |
+| --- | ---: | ---: |
+| Add a secret, through the Secrets dialog | 79 ms | 55 ms, 3 ms of CPU |
+| Replace it, through the API | 41 ms | 18 ms |
+| Remove it, through the API | 40 ms | 17 ms |
+| First request after a change, on a new Worker (3) | 28–30 ms | |
+
+- **A new Worker after a change:** that comes from the code, not the trace. The Worker's ID includes the secrets' version. The next request after one of them took 20 ms. The trace has no app host event for these requests.
+- **The Secrets dialog:**
+  - Adding `API_KEY` listed it with the time it was set, and cleared both fields.
+  - The API then returned the name and that time, with no value.
+  - Not tried live: the dialog's Replace and Remove, which the change and removal above went round.
+- **The app's `env`:**
+  - In the Preview, `/api/key` answered the Developer with the value itself, not hidden.
+  - `/api/names` gave `API_KEY`, and `GREETING` from `vars`: none of the platform Worker's own secrets.
+  - After publishing, the Deployment answered with the value too.
+- **A change, with no new Build:**
+  - After the value was replaced, the Deployment and the Preview both answered with the new one on their next request.
+  - After it was removed, the Deployment answered that it wasn't set.
+- **Deleting the Workspace:** the Deployment's hostname then answered `404 There's no app here.`
+
+**The Turn:** "Without changing any files: use list_secrets to see the Workspace's secrets, then request GET /api/key on the Preview and read the Preview's logs. Tell me exactly what each showed you.", against a budget of $1. The browser didn't time it.
+
+| Turn log | Steps | Retries | Input tokens (cache read / written) | Output | Cost |
+| ---: | ---: | ---: | --- | ---: | ---: |
+| 10.0 s | 3 | 0 | 17.4K (11.4K / 6.1K) | 0.6K | $0.04 |
+
+- **What the Agent saw:**
+  - `list_secrets` gave it `API_KEY`.
+  - `request_preview` on `/api/key` gave it `{"set":true,"length":23,"key":"[secret API_KEY]"}`.
+  - `preview_logs` gave it the line `calling the service with [secret API_KEY]`.
+- **The value appeared nowhere in the Conversation.** The Agent learned the value's length only because the app's own code answered with it.
+- **The Turn ended** with a clean Check and a cached Build.
 
 ### Found along the way
 
