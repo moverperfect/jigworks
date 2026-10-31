@@ -4,18 +4,18 @@ The experiment asks whether Workers isolates alone can be where an application i
 
 ## Conclusion
 
-**Yes: Workers isolates alone can be where a Workers app is developed, for apps of the kind the two Templates make, with a narrower toolchain than a laptop's.** Every stage passed on the deployed platform, in Chrome:
-- **Editing with Checks (stages 1 and 2):** ts-rust, a TypeScript checker compiled to WebAssembly, runs in a Dynamic Worker. A Check takes about a quarter of a second from the browser.
-- **The Agent (stage 3):** Turns of Opus 5.5 end with a clean Check, retrying when one has errors, and cost $0.03–0.11 each, thanks to Anthropic's prompt cache.
-- **Builds and the Preview (stage 4):** esbuild builds both Templates, with Tailwind compiled by the platform, and the Preview runs each Build for the Developer and the Agent. A React Build takes under 1 s from the browser.
+**Yes: Workers isolates alone can be where a Workers app is developed, for apps of the kind the two Templates make, with a narrower toolchain than a laptop's.** Every stage passed: stage 1 on a probe, with a caveat, and stages 2–6 on the deployed platform, stages 4–6 in Chrome.
+- **Editing with Checks (stages 1 and 2):** ts-rust, a TypeScript checker compiled to WebAssembly, runs in a Dynamic Worker. A warm Worker Template Check takes about a quarter of a second from the browser.
+- **The Agent (stage 3):** Turns of Opus 5.5 end with a clean Check, retrying when one has errors, and cost $0.03–0.15 each, thanks to Anthropic's prompt cache.
+- **Builds and the Preview (stage 4):** esbuild builds both Templates, with Tailwind compiled by the platform, and the Preview runs each Build for the Developer and the Agent. A React Build takes under 1 s from the browser once warm.
 - **Hosting (stage 5):** a Deployment serves a published Build, with Durable Objects for data and secrets in `env`.
-- **Tests (stage 6):** vitest-style tests run in Dynamic Workers in 0.5–1.5 s, for the Agent and at the end of each Turn.
+- **Tests (stage 6):** vitest-style tests run in Dynamic Workers, for the Developer, the Agent and at the end of each Turn: 0.6–1.6 s from the browser once warm, and 2.6–3.6 s for the first run after a deploy.
 
 **The caveats:**
-- **Memory is the constraint that shapes everything.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks and the tests' bundling run in Dynamic Workers of their own: in the Workspace's Durable Object, they put it over the limit (stages 1 and 6). Builds still run there, and fit.
+- **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks and the tests' bundling run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), and so did the React Template's third test run (stage 6). Builds still run there, and fit.
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
-- **Apps get Durable Objects and nothing else** for storage (ADR 0006), and binary assets are served damaged (#31).
-- **Only Chrome was checked.** Firefox and WebKit are still to check.
+- **Apps get Durable Objects and nothing else** for storage (ADR 0006), and binary assets are served damaged (ADR 0014, #31).
+- **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
 
 ## Stage 0: ts-rust's WebAssembly module
 
@@ -574,14 +574,14 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 | ---: | ---: | ---: | --- | ---: | ---: |
 | 16.0 s | 3 | 0 | 21.0K (13.4K / 7.6K) | 1.5K | $0.07 |
 
-- **What the Agent did:** it wrote `src/slug.ts` and 8 tests, ran them with `test`, changed a test, and ran them again. Both runs named only `src/slug.test.ts`, and all 8 passed.
+- **What the Agent did:** it wrote `src/slug.ts` and 8 tests, ran them with `test`, changed a test, and ran them again. Both runs were of that one file, and all 8 tests passed.
 - **The end of the Turn:** a clean Check, a Build, then every test file: 9 passed, with the Template's own. `testFailures` was 0. The page's problems list showed the run when the Turn ended, without Run tests being pressed.
 
 ### Before the fix (#51's deploy)
 
-The first live check, the same day after #51's deploy, ran each Template's tests three times. The Worker Template's passed, in 1,062 ms for the first run and 464–565 ms after, in the platform Worker, with 404–880 ms of the Durable Object's CPU for the two runs in the trace. The React Template's found two problems, both fixed in #52:
-- **`App.test.tsx` failed:** `Dynamic require of "util" is not supported`. worker-bundler resolves Packages with the `node` condition as well as `browser`, and `react-dom` lists the Node build of `react-dom/server` first. Packages now lose their `node` conditions before any bundling, Builds included, as with wrangler.
-- **The third run returned 500:** "Durable Object's isolate exceeded its memory limit and was reset." The first two took 3,112 ms and 1,658 ms, with 2,758 ms and 1,322 ms of the Durable Object's CPU, most of it esbuild bundling the tests with a source map. esbuild never gives memory back. Tests now bundle in a Dynamic Worker of their own, as Checks run (ADR 0010).
+The first live check, the same day after #51's deploy, ran each Template's tests three times. The Worker Template's passed, in 1,062 ms for the first run and 464–565 ms after, in the platform Worker, with 353–880 ms of the Durable Object's CPU. The React Template's found two problems, both fixed in #52:
+- **`App.test.tsx` failed,** in every run's report: `Dynamic require of "util" is not supported`. worker-bundler resolves Packages with the `node` condition as well as `browser`, and `react-dom` lists the Node build of `react-dom/server` first. Packages now lose their `node` conditions before any bundling, Builds included, as with wrangler.
+- **The third run returned 500:** "Durable Object's isolate exceeded its memory limit and was reset." The first two took 3,112 ms and 1,658 ms in the platform Worker, with 2,758 ms and 1,322 ms of the Durable Object's CPU, and the third 1,484 ms of CPU before the reset. Most of that was bundling, going by how far it fell once bundling moved out. esbuild bundled the tests with a source map there, and never gives memory back. Tests now bundle in a Dynamic Worker of their own, as Checks run (ADR 0010).
 
 ### Found along the way
 
