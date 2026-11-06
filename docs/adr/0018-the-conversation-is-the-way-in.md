@@ -1,0 +1,25 @@
+# The Conversation is the way in
+
+Jigworks was built for people who write code. Its home page asks for a name and a Template, and its Workspace page gives most of its room to the file tree, the editor and the problems list, with the Conversation at the side. The people it's for mostly don't write code: a running club's organiser, someone lending a lawnmower to the neighbours, an office that wants a kitchen rota. They know what their app should do, but not which Template fits it, what a Check is, or why a Build failed. So the Conversation becomes the way in, in the design chosen from the prototype in #50 (Variant E, "On the bench"), which spec #56 builds:
+
+- **Jigworks is for people who don't write code.** A new Workspace starts from a message describing the app, and the Workspace page puts the Conversation beside the app running in its Preview.
+- **The Agent picks the Template.** It chooses one to suit the Developer's message, and names the Workspace, with a `start_app` tool, before it changes any files.
+- **The code sits behind "See the code".** The file tree, the editor, the problems list, the tests and the logs all stay, shown in place of the app, for Developers who write code.
+- **A Turn that leaves the app broken is undone.** When, after its retries, a Turn's last Check still has errors or its last Build failed, the platform puts the Workspace's files back as they were when the Turn started, and the page says the app hasn't changed.
+- **The page uses its own words,** such as "app" for a Workspace, listed in the glossary's "Words on the page". Code, docs, issues and pull requests keep the glossary's own words. The Agent's instructions ask it to talk to the Developer in the page's words.
+
+## Considered options
+
+- **Renaming Workspace to App everywhere,** so that the page, the code and the docs share one word. That means migrating the `Workspace` Durable Object class to a new name and renaming every route under `/api/workspaces`, for a word only the page needs.
+- **Leaving a broken Turn's files as they are, and saying so.** That's what happens today: the files keep the broken change, and when its Build failed, the Preview keeps running the last Build that worked. But a Developer who doesn't write code can't mend the files, and the next Turn would start from them, so the app they see and the files the Agent works on would differ. Undoing keeps "your app hasn't changed" true.
+
+## Consequences
+
+- **Spec #56 replaces stories 12, 13 and 17 of #23** for the page Developers see.
+- **The Developer keeps its name,** though most Developers won't write code. Like Workspace, it's a word for code and docs, and the page doesn't need it.
+- **A Workspace can have no files,** from the Developer's first message until the Agent starts the app, which may be after a Turn that only asks a question. Until then, the Agent's tools that change, check, build or test files refuse, so nothing is written without a Template under it, and a Turn runs no Check or Build at its end. `start_app` works only in a Workspace with no files.
+- **Undoing needs a copy of the files** from the start of each Turn, kept beside them in the Workspace's own Durable Object (ADR 0003). The next Turn replaces it, so only the last Turn can be undone. The Packages are installed again from the restored `package.json`, and a Check and a Build run, so that what the Developer and the Agent see matches the files. Undoing the Turn that started the app leaves the Workspace with no files again, with nothing to check or build, and a later Turn starts it afresh.
+- **Failing tests don't make a Turn broken** (ADR 0017). Turns that end in an error, run out of steps, or stop when the Workspace restarts are undone too, when they leave the app broken.
+- **Undoing never loses the Developer's edits,** because a Turn locks them out (ADR 0011) and undoing is part of the Turn.
+- **Undoing puts back files, not app data.** Every successful Build goes to the Preview, the Agent's mid-Turn Builds included, so whatever a broken Turn's Builds wrote to the Preview's Durable Objects (ADR 0015) stays. The Deployment is never touched, because publishing is refused while a Turn runs.
+- **The Conversation keeps every message** of an undone Turn, and the Agent is told at the start of its next Turn that its changes were put back, so it doesn't build on files that are gone.
