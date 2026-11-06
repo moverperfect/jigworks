@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import { previewTabUrl } from "./api";
 import type { AppAreaState } from "./appArea";
+import type { PublishState } from "./publish";
 import { ErrorMessage } from "./ErrorMessage";
 import { formatTime } from "./ProblemsPanel";
 import { usePreviewLogs, type PreviewFrame } from "./usePreview";
@@ -30,6 +31,13 @@ const notes: Record<AppAreaState, { beside: string; instead: string }> = {
   // The Preview learns of its first Build a moment after the page does.
   ready: { beside: "", instead: "Loading your app…" },
   failed: { beside: "The last change didn't work.", instead: "The last change didn't work, and there's nothing to show yet." },
+  live: { beside: "Live. Anyone with the link can use it.", instead: "Loading your app…" },
+};
+
+/** What a ready app's label says about who sees it, while it isn't live. */
+const held: Record<Exclude<PublishState, "live">, string> = {
+  "not-published": "Only you can see this until you publish.",
+  "live-with-changes": "Changes not yet published. People with the link have the earlier version.",
 };
 
 /**
@@ -40,11 +48,14 @@ const notes: Record<AppAreaState, { beside: string; instead: string }> = {
 export function PreviewPanel({
   preview,
   state,
+  publishing,
   onShowCode,
   showCodeButton,
 }: {
   preview: PreviewFrame;
   state: AppAreaState;
+  /** The publish state, or null until the page knows it. */
+  publishing: PublishState | null;
   onShowCode(): void;
   showCodeButton: Ref<HTMLButtonElement>;
 }) {
@@ -55,6 +66,7 @@ export function PreviewPanel({
   const host = info && new URL(info.url).hostname;
   const ready = info?.ready ?? false;
   const note = notes[state];
+  const beside = state === "ready" && publishing && publishing !== "live" ? held[publishing] : note.beside;
 
   function reload(event?: FormEvent) {
     event?.preventDefault();
@@ -114,7 +126,7 @@ export function PreviewPanel({
       <div className={`preview-view preview-${device}`} data-state={state}>
         {/* Always there, so screen readers hear each change of state. */}
         <p className="jig-label" role="status">
-          {ready ? [note.beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : ""}
+          {ready ? [beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : ""}
         </p>
         {preview.info.status === "loading" && <p className="editor-message muted">Loading your app…</p>}
         {preview.info.status === "failed" && (

@@ -475,9 +475,16 @@ h1.workspace-title {
 
 .publish-status {
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
+.publish-copied:empty {
+  display: none;
+}
+
+/* Messages take a row of their own, below the header's buttons. */
 .workspace-header-message {
+  order: 2;
   flex-basis: 100%;
 }
 
@@ -647,11 +654,13 @@ h2.code-view-heading {
  * The jig (Direction 1, "On the bench"): the app on a Paper sheet, held by
  * four corner brackets, 3 px thick and 28 px on each arm. Their posture shows
  * the app area's state: holding in Graphite; working, tight and in Marking
- * blue; and failed, in Chalk. One label sits on the top-left bracket's arm.
+ * blue; failed, in Chalk; and live, opened out and faded, as the app is out
+ * of the jig. One label sits on the top-left bracket's arm.
  */
 .preview-view {
   --jig-out: 16px;
   --jig-colour: var(--text);
+  --jig-opacity: 1;
   --jig-label: inherit;
   --jig-side: 3rem;
   --jig-ease: 300ms ease-in-out;
@@ -682,10 +691,12 @@ h2.code-view-heading {
     linear-gradient(#000 0 0) 100% 0 / 28px 28px no-repeat,
     linear-gradient(#000 0 0) 0 100% / 28px 28px no-repeat,
     linear-gradient(#000 0 0) 100% 100% / 28px 28px no-repeat;
+  opacity: var(--jig-opacity);
   pointer-events: none;
   transition:
     inset var(--jig-ease),
-    border-color var(--jig-ease);
+    border-color var(--jig-ease),
+    opacity var(--jig-ease);
 }
 
 .preview-view:is([data-state="first-build"], [data-state="updating"]) {
@@ -697,6 +708,12 @@ h2.code-view-heading {
 .preview-view[data-state="failed"] {
   --jig-colour: var(--chalk);
   --jig-label: var(--danger);
+}
+
+.preview-view[data-state="live"] {
+  --jig-out: 40px;
+  --jig-opacity: 0.35;
+  --jig-label: var(--primary);
 }
 
 /* The label's last line sits level with the top-left bracket's arm, and a long label wraps upwards. */
@@ -770,6 +787,12 @@ h2.code-view-heading {
     padding-inline: 1rem;
   }
 
+  /* The name and the menu share the top row, with publishing on its own row below. */
+  .workspace-header > .publish {
+    order: 1;
+    flex-basis: 100%;
+  }
+
   /* On a phone, the app's toolbar is a Paper strip, and the jig sits closer in. */
   .app-area > .app-toolbar {
     padding: 0.35rem 1rem;
@@ -781,6 +804,11 @@ h2.code-view-heading {
     --jig-side: 1.75rem;
 
     margin-block: 2.75rem 1.75rem;
+  }
+
+  /* Opened out only as far as the narrower margins allow. */
+  .preview-view[data-state="live"] {
+    --jig-out: 24px;
   }
 
   .workspace-layout {
@@ -1479,6 +1507,7 @@ textarea.composer-input {
 .speaker,
 .pane-heading,
 .publish-status,
+.publish-copied,
 .hint,
 .conversation-status,
 .conversation-note,

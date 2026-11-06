@@ -446,21 +446,18 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /**
-   * Where the Preview answers, and whether it has a Build to run. A Workspace
+   * Where the Preview answers, and the hash of the Build it runs (the latest
+   * successful one), or null before there's one to run. A Workspace
    * whose successful Build predates its app host builds once more, from the
    * cache, to send it there.
    */
-  async preview(): Promise<{ url: string; ready: boolean }> {
-    let ready = await this.previewReady();
-    if (!ready && (await this.latestBuild())?.ok) {
+  async preview(): Promise<{ url: string; ready: boolean; hash: string | null }> {
+    let hash = await this.appHost().previewHash();
+    if (hash === null && (await this.latestBuild())?.ok) {
       await this.buildInItsOwnCall("preview");
-      ready = await this.previewReady();
+      hash = await this.appHost().previewHash();
     }
-    return { url: `https://${previewHost(this.appLabel(), this.env.APPS_DOMAIN)}/`, ready };
-  }
-
-  private async previewReady(): Promise<boolean> {
-    return (await this.appHost().previewHash()) !== null;
+    return { url: `https://${previewHost(this.appLabel(), this.env.APPS_DOMAIN)}/`, ready: hash !== null, hash };
   }
 
   /** A single-use link that signs the Developer in to the Preview and shows `to` (ADR 0013). The caller checks ownership first. */
@@ -505,8 +502,8 @@ export class Workspace extends Think<Env, ConversationState> {
     if (!result.ok) {
       const error =
         result.reason === "changed"
-          ? "The Deployment changed since this page loaded. Look at it again before publishing."
-          : "There's no successful Build to publish yet.";
+          ? "Your app was published from somewhere else since this page looked. Check what's live now before publishing again."
+          : "Your app hasn't been built yet, so there's nothing to publish.";
       return { ok: false, error };
     }
     console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: result.published.hash }));

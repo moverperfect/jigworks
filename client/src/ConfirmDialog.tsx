@@ -4,6 +4,7 @@ import { useEffect, useId, useRef, type FormEvent, type ReactNode } from "react"
 export function ConfirmDialog({
   title,
   confirm,
+  cancel = "Cancel",
   children,
   onConfirm,
   onClose,
@@ -11,6 +12,8 @@ export function ConfirmDialog({
   title: string;
   /** The confirming button's text. */
   confirm: string;
+  /** The cancelling button's text. */
+  cancel?: string;
   /** What will happen. */
   children: ReactNode;
   onConfirm(): void;
@@ -43,7 +46,7 @@ export function ConfirmDialog({
         <p id={`${id}-description`}>{children}</p>
         <div className="dialog-actions">
           <button type="button" className="button" onClick={() => dialog.current?.close()}>
-            Cancel
+            {cancel}
           </button>
           <button type="submit" className="button button-primary">
             {confirm}

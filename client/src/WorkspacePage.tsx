@@ -1,14 +1,15 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
-import { ApiError, getWorkspace, listFiles, type Workspace } from "./api";
+import { ApiError, getDeployment, getWorkspace, listFiles, type Workspace } from "./api";
 import { appAreaState } from "./appArea";
 import { ConversationPanel } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
 import { FileTree } from "./FileTree";
-import { useLoad, useMediaQuery, useTitle, type Loader } from "./hooks";
+import { useLoad, useMediaQuery, usePageVisible, useTitle, type Loader } from "./hooks";
 import { PreviewLogs, PreviewPanel } from "./PreviewPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { PublishControl } from "./PublishControl";
+import { publishState } from "./publish";
 import { foldersOf } from "./tree";
 import { useChecks, type Checks } from "./useChecks";
 import { useConversation } from "./useConversation";
@@ -86,7 +87,22 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
   const rightShown = !narrow || tab === "app";
   // A hidden app area has no frame, so the app runs no code there.
   const preview = usePreviewFrame(id, checks.build, rightShown && !codeShown);
-  const areaState = appAreaState(state, preview.built);
+  const deployment = useLoad(() => getDeployment(id));
+  const deployed = deployment.state.status === "ready" ? deployment.state.data : null;
+  const publishing = deployed && publishState(deployed.hash, preview.goodHash);
+  const areaState = appAreaState(state, preview.built, publishing);
+
+  // Another tab may have built or published meanwhile, so look again when the page comes back into view.
+  const pageVisible = usePageVisible();
+  const wasVisible = useRef(pageVisible);
+  const onPageShown = useEffectEvent(() => {
+    deployment.reload();
+    preview.refreshInfo();
+  });
+  useEffect(() => {
+    if (pageVisible && !wasVisible.current) onPageShown();
+    wasVisible.current = pageVisible;
+  }, [pageVisible]);
 
   const conversationPanel = useRef<HTMLDivElement>(null);
   const focusTab = (which: Tab) => document.getElementById(`${pageId}-${which}-tab`)?.focus();
@@ -157,7 +173,13 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     <>
       <div className="workspace-header">
         <h1 className="workspace-title">{workspace.name}</h1>
-        <PublishControl id={id} />
+        <PublishControl
+          id={id}
+          name={workspace.name}
+          deployment={deployment}
+          latestGoodHash={preview.goodHash}
+          locked={locked}
+        />
         <WorkspaceMenu workspace={workspace} canStartFresh={canStartFresh} />
       </div>
 
@@ -199,6 +221,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
             <PreviewPanel
               preview={preview}
               state={areaState}
+              publishing={publishing}
               onShowCode={() => swapView(true)}
               showCodeButton={showCodeButton}
             />

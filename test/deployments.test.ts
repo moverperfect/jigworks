@@ -85,7 +85,7 @@ describe("publishing", () => {
     for (const replaces of [null, "0".repeat(64)]) {
       const refused = await publish(workspace.id, replaces);
       expect(refused.status).toBe(409);
-      expect(await refused.json()).toEqual({ error: "The Deployment changed since this page loaded. Look at it again before publishing." });
+      expect(await refused.json()).toEqual({ error: "Your app was published from somewhere else since this page looked. Check what's live now before publishing again." });
     }
     expect(await (await open(first.url)).text()).toBe("one");
     expect((await publish(workspace.id, first.hash)).status).toBe(200);
@@ -146,7 +146,7 @@ describe("publishing", () => {
     const workspace = await create("Deployment Unbuilt");
     const response = await publish(workspace.id);
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: "There's no successful Build to publish yet." });
+    expect(await response.json()).toEqual({ error: "Your app hasn't been built yet, so there's nothing to publish." });
   });
 
   it("is for the Workspace's own Developer only", async () => {

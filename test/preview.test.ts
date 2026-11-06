@@ -24,7 +24,7 @@ const save = async (id: string, path: string, text: string) => {
 const preview = async (id: string) => {
   const response = await call(`/api/workspaces/${id}/preview`);
   expect(response.status).toBe(200);
-  return response.json<{ url: string; ready: boolean }>();
+  return response.json<{ url: string; ready: boolean; hash: string | null }>();
 };
 
 const logs = async (id: string) => {
@@ -84,12 +84,14 @@ describe("the Preview", () => {
   it("answers on the Workspace's own hostname once a Build succeeds", async () => {
     const workspace = await create("Preview Notes");
     const before = await preview(workspace.id);
-    expect(before.ready).toBe(false);
+    expect(before).toMatchObject({ ready: false, hash: null });
     expect(new URL(before.url).hostname).toMatch(new RegExp(`^preview-notes-[a-z0-9]{8}-preview\\.${testAccess.appsDomain.replaceAll(".", "\\.")}$`));
     expect((await visit(workspace.id)).status).toBe(503);
 
-    expect(await build(workspace.id)).toMatchObject({ ok: true });
-    expect((await preview(workspace.id)).ready).toBe(true);
+    const built = await build(workspace.id);
+    expect(built).toMatchObject({ ok: true });
+    // The page tells what's published from the hash of the Build the Preview runs.
+    expect(await preview(workspace.id)).toMatchObject({ ready: true, hash: built.hash });
     const response = await visit(workspace.id);
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("Hello from your Worker");
