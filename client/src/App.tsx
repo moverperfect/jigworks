@@ -36,7 +36,7 @@ export function App() {
     page = <HomePage />;
   } else if (route.page === "workspace") {
     page = (
-      <Suspense fallback={<p className="workspace-message muted">Loading the Workspace…</p>}>
+      <Suspense fallback={<p className="workspace-message muted">Loading your app…</p>}>
         <WorkspacePage key={route.id} id={route.id} />
       </Suspense>
     );

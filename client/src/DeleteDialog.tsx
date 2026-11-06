@@ -59,8 +59,8 @@ export function DeleteDialog({
           Delete <span className="exact">{workspace.name}</span>?
         </h2>
         <p id={`${id}-description`}>
-          This deletes the Workspace's files and its Conversation, and takes down its Preview and its Deployment. It can't be
-          undone.
+          This deletes the app's files and its Conversation, and takes the app down, both here and wherever it's live. It
+          can't be undone.
         </p>
         <div className="field">
           <label htmlFor={`${id}-confirm`}>
@@ -82,7 +82,7 @@ export function DeleteDialog({
             Cancel
           </button>
           <button type="submit" className="button button-danger" disabled={!matches || deleting}>
-            {deleting ? "Deleting…" : "Delete Workspace"}
+            {deleting ? "Deleting…" : "Delete app"}
           </button>
         </div>
       </form>

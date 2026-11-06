@@ -433,17 +433,14 @@ main.workspace-main {
 .workspace-header {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: 0.25rem 1rem;
   padding: 0.5rem 1.25rem;
   border-bottom: 1px solid var(--border);
 }
 
-.back-link {
-  font-size: 0.9rem;
-}
-
 h1.workspace-title {
+  flex: 1 1 12rem;
   margin: 0;
   font-size: 1.15rem;
   overflow-wrap: anywhere;
@@ -461,6 +458,65 @@ h1.workspace-title {
   color: var(--muted);
 }
 
+.workspace-header-message {
+  flex-basis: 100%;
+}
+
+/* The header's menu, a popover under its button. Browsers without anchor positioning centre it. */
+.menu-button {
+  anchor-name: --workspace-menu;
+}
+
+.menu {
+  min-width: 11rem;
+  padding: 0.25rem;
+  color: var(--text);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+
+@supports (anchor-name: --a) {
+  .menu {
+    position-anchor: --workspace-menu;
+    inset: auto;
+    top: anchor(bottom);
+    right: anchor(right);
+    margin: 0.25rem 0 0;
+  }
+}
+
+.menu-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  font: inherit;
+  font-size: 0.9rem;
+  color: inherit;
+  text-align: start;
+  text-decoration: none;
+  background: none;
+  border: 0;
+  border-radius: calc(var(--radius) - 2px);
+  cursor: pointer;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--hover);
+}
+
+.menu-item:disabled {
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .workspace-message {
   padding: 1.25rem;
 }
@@ -469,16 +525,124 @@ h1.workspace-title {
   margin-bottom: 0.5rem;
 }
 
+/* The Conversation on the left, the app on the right. */
 .workspace-layout {
   display: grid;
   flex: 1;
   min-height: 0;
-  grid-template-columns: minmax(10rem, 15rem) minmax(0, 1fr) minmax(16rem, min(30%, 28rem));
+  grid-template-columns: minmax(16rem, min(32%, 28rem)) minmax(0, 1fr);
+  background: var(--surface);
+}
+
+.workspace-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-pane + .workspace-pane {
+  border-left: 1px solid var(--border);
+}
+
+.workspace-conversation,
+.app-area,
+.code-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+
+.workspace-pane[hidden],
+.app-area[hidden],
+.code-view[hidden] {
+  display: none;
+}
+
+.app-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem 0.75rem;
+  min-height: 2.75rem;
+  padding: 0.35rem 0.75rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-toolbar-end {
+  margin-left: auto;
+}
+
+h2.code-view-heading {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.segmented {
+  display: flex;
+}
+
+.segmented .button {
+  border-radius: 0;
+}
+
+.segmented .button:first-child {
+  border-radius: var(--radius) 0 0 var(--radius);
+}
+
+.segmented .button:last-child {
+  margin-left: -1px;
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.segmented .button[aria-pressed="true"] {
+  color: var(--on-primary);
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+.app-note {
+  padding: 0 0.75rem;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+
+.app-note:not(:empty) {
+  padding-block: 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.app-instead {
+  margin: auto;
+  padding: 1.5rem;
+  font-size: 1.1rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* The Phone view is about a phone's width, centred. */
+.preview-phone {
+  background: var(--background);
+}
+
+.preview-phone .preview-frame {
+  width: min(100%, 390px);
+  margin-inline: auto;
+  border-inline: 1px solid var(--border);
+}
+
+/* The code: the files beside the editor, with the problems list and the logs below it. */
+.code-layout {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(9rem, 14rem) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas:
-    "files editor conversation"
-    "files problems conversation";
-  background: var(--surface);
+    "files editor"
+    "files reports";
 }
 
 .workspace-files {
@@ -487,8 +651,7 @@ h1.workspace-title {
   border-right: 1px solid var(--border);
 }
 
-/* The editor and the Preview share the middle, as two tabs. */
-.workspace-middle {
+.workspace-editor {
   grid-area: editor;
   display: flex;
   flex-direction: column;
@@ -496,66 +659,46 @@ h1.workspace-title {
   min-height: 0;
 }
 
-.workspace-editor,
-.workspace-preview {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0;
-  min-width: 0;
-  min-height: 0;
-}
-
-.workspace-editor[hidden],
-.workspace-preview[hidden] {
-  display: none;
-}
-
-.workspace-problems {
-  grid-area: problems;
+.code-reports {
+  grid-area: reports;
   min-width: 0;
   border-top: 1px solid var(--border);
 }
 
-.workspace-conversation {
-  grid-area: conversation;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  border-left: 1px solid var(--border);
-}
-
-/* Narrow windows stack the regions, and the page scrolls. */
-@media (max-width: 40rem) {
-  #root:has(> .workspace-main) {
-    height: auto;
-    min-height: 100dvh;
+/* Narrow windows show the chat or the app, behind tabs. Matches the page's narrowQuery. */
+@media (width < 760px) {
+  .workspace-header {
+    padding-inline: 0.75rem;
   }
 
   .workspace-layout {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(20rem, 1fr) auto 32rem;
-    grid-template-areas: "files" "editor" "problems" "conversation";
+  }
+
+  .workspace-pane + .workspace-pane {
+    border-left: 0;
+  }
+
+  .workspace-tabs .workspace-tab {
+    flex: 1;
+    text-align: center;
+  }
+
+  /* The code scrolls as one, so the editor keeps a usable height. */
+  .code-layout {
+    display: flex;
+    flex-direction: column;
+    overflow: auto;
   }
 
   .workspace-files {
-    max-height: 12rem;
+    flex: none;
+    max-height: 10rem;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .workspace-conversation {
-    border-left: 0;
-    border-top: 1px solid var(--border);
-  }
-
-  /* The page scrolls here, so the Preview takes the height it needs. */
-  .workspace-preview,
-  .workspace-preview .preview-view {
-    flex: 1 0 auto;
-  }
-
-  .workspace-preview .preview-frame {
+  .workspace-editor {
     flex: none;
     height: 24rem;
   }
@@ -644,7 +787,7 @@ h1.workspace-title {
   border-bottom: 1px solid var(--border);
 }
 
-h2.editor-path {
+h3.editor-path {
   flex: 1 1 auto;
   min-width: 0;
   margin: 0;
@@ -691,6 +834,7 @@ h2.editor-path {
 .workspace-tabs {
   display: flex;
   padding: 0 0.5rem;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
@@ -863,7 +1007,7 @@ input.preview-path:focus-visible {
   color: var(--muted);
 }
 
-h3.problem-group-heading {
+h4.problem-group-heading {
   margin: 0;
   padding: 0.35rem 0.75rem 0.1rem;
   font-size: 0.85rem;
@@ -941,8 +1085,6 @@ button.problem:hover {
 .conversation-header {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
   min-height: 2.75rem;
   padding: 0.35rem 0.75rem;
   border-bottom: 1px solid var(--border);
@@ -1198,10 +1340,6 @@ textarea.composer-input {
 
 .composer-actions .hint {
   font-size: 0.8125rem;
-}
-
-.secrets-button {
-  margin-left: auto;
 }
 
 .secret-list {

@@ -5,24 +5,11 @@ import { ErrorMessage } from "./ErrorMessage";
 import { useLoad } from "./hooks";
 import { formatTime } from "./ProblemsPanel";
 
-/** The Workspace header's Secrets button, which opens the Secrets dialog. */
-export function SecretsButton({ id }: { id: string }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button type="button" className="button button-small secrets-button" onClick={() => setOpen(true)}>
-        Secrets
-      </button>
-      {open && <SecretsDialog id={id} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
 /**
  * A Workspace's secrets (ADR 0016): their names, a form to add or replace
  * one, and Remove. A value goes in and is never shown again.
  */
-function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) {
+export function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) {
   const headingId = useId();
   const dialog = useRef<HTMLDialogElement>(null);
   const loaded = useLoad(() => listSecrets(id));

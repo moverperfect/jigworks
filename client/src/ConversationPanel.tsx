@@ -12,8 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { isSummary, maxRetries, type LastTurn } from "../../src/shared/conversation.ts";
-import { startFresh, startTurn, toApiError, type ApiError } from "./api";
-import { ConfirmDialog } from "./ConfirmDialog";
+import { startTurn, toApiError, type ApiError } from "./api";
 import { ErrorMessage } from "./ErrorMessage";
 import { renderMarkdown, type MarkdownNode } from "./markdown";
 import type { Conversation, ConversationMessage } from "./useConversation";
@@ -40,37 +39,42 @@ export function ConversationPanel({
   id,
   conversation,
   unsavedChanges,
+  visible,
 }: {
   id: string;
   conversation: Conversation;
   /** Whether the open file has unsaved changes, which the Agent might overwrite. */
   unsavedChanges: boolean;
+  /** Whether the pane is on screen. A hidden one can't scroll, so it catches up when it's shown again. */
+  visible: boolean;
 }) {
   const headingId = useId();
   const [text, setText] = useState("");
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
-  const [confirming, setConfirming] = useState(false);
   const list = useRef<HTMLOListElement>(null);
   // Follow new messages unless the Developer has scrolled up to read.
   const following = useRef(true);
   const { messages, state, connected } = conversation;
 
-  const idle = connected && state !== null && state.turn === null && !state.startingFresh && !posting;
-  const canSend = idle && !unsavedChanges;
+  const canSend = conversation.idle && !posting && !unsavedChanges;
   const turnRunning = state?.turn != null;
 
   useLayoutEffect(() => {
     const element = list.current;
-    if (element && following.current) element.scrollTop = element.scrollHeight;
-  }, [messages]);
+    if (element && visible && following.current) element.scrollTop = element.scrollHeight;
+  }, [messages, visible]);
 
-  /** Starts a Turn or Start fresh, showing any error beside the composer. */
-  async function post(action: () => Promise<void>) {
+  /** Starts a Turn, showing any error beside the composer. */
+  async function send(event?: FormEvent) {
+    event?.preventDefault();
+    if (!canSend) return;
+    following.current = true;
     setPosting(true);
     setError(null);
     try {
-      await action();
+      await startTurn(id, text);
+      setText("");
     } catch (caught) {
       setError(toApiError(caught));
     } finally {
@@ -78,18 +82,11 @@ export function ConversationPanel({
     }
   }
 
-  function send(event?: FormEvent) {
-    event?.preventDefault();
-    if (!canSend) return;
-    following.current = true;
-    void post(() => startTurn(id, text).then(() => setText("")));
-  }
-
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     // Enter sends and Shift+Enter starts a new line. Enter that picks an IME suggestion does neither.
     if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
     event.preventDefault();
-    send();
+    void send();
   }
 
   return (
@@ -98,14 +95,6 @@ export function ConversationPanel({
         <h2 id={`${headingId}-heading`} className="pane-heading conversation-heading">
           Conversation
         </h2>
-        <button
-          type="button"
-          className="button button-small"
-          onClick={() => setConfirming(true)}
-          disabled={!idle || messages.length === 0}
-        >
-          Start fresh
-        </button>
       </div>
 
       <ol
@@ -126,7 +115,7 @@ export function ConversationPanel({
 
       <ConversationStatus conversation={conversation} />
 
-      <form className="composer" onSubmit={send}>
+      <form className="composer" onSubmit={(event) => void send(event)}>
         <label htmlFor={`${headingId}-message`} className="visually-hidden">
           Message to the Agent
         </label>
@@ -149,18 +138,6 @@ export function ConversationPanel({
           </button>
         </div>
       </form>
-
-      {confirming && (
-        <ConfirmDialog
-          title="Start fresh?"
-          confirm="Start fresh"
-          onClose={() => setConfirming(false)}
-          onConfirm={() => void post(() => startFresh(id))}
-        >
-          The Agent summarises everything after your first message, then carries on from the summary. The messages it
-          summarises won't be shown any more.
-        </ConfirmDialog>
-      )}
     </section>
   );
 }
@@ -343,7 +320,7 @@ function describeLastTurn(lastTurn: LastTurn): string | null {
   if (lastTurn.outOfSteps) said.push("The Agent used all the Turn's steps");
   const left = [
     lastTurn.checkErrors ? plural(lastTurn.checkErrors, "error") : null,
-    lastTurn.buildErrors ? "a failed Build" : null,
+    lastTurn.buildErrors ? "an app that doesn't build" : null,
     lastTurn.testFailures ? plural(lastTurn.testFailures, "test failure") : null,
   ].filter((part) => part !== null);
   if (left.length > 0) {
@@ -354,11 +331,11 @@ function describeLastTurn(lastTurn: LastTurn): string | null {
   return said.length > 0 ? said.join(", and ") : null;
 }
 
-/** What a Turn's Check and Build found, for the platform's message asking the Agent to fix it. */
+/** What a Turn's Check and Build found, for the platform's message asking the Agent to fix it, in the page's words (ADR 0018). */
 function describeFound(checkErrors: number, buildErrors: number): string {
-  if (buildErrors === 0) return `The Check found ${plural(checkErrors, "error")}`;
-  if (checkErrors === 0) return "The Build failed";
-  return `The Check found ${plural(checkErrors, "error")} and the Build failed`;
+  if (buildErrors === 0) return `Making sure it works: ${plural(checkErrors, "error")}`;
+  if (checkErrors === 0) return "Making sure it works: the app doesn't build";
+  return `Making sure it works: ${plural(checkErrors, "error")}, and the app doesn't build`;
 }
 
 /** The time now, updated every second while `ticking`. */
