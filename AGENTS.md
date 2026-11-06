@@ -14,7 +14,7 @@ A browser-based platform where a Developer and the Agent build and host Cloudfla
 - **Deploys:** merges to `main` deploy. After a deploy, do a live check from Jack's signed-in browser, put the measurements in `docs/findings.md`, and add a dated comment to the issue.
 - **Before Turns on the real model,** state a usage budget.
 - **Dependencies** are exact versions published at least a day ago.
-- **Words:** use the glossary's words in code, UI text and docs, in British English.
+- **Words:** British English. The page, the Agent's replies included, uses the glossary's "Words on the page" where it lists one (ADR 0018). Everything else, code, docs, issues and pull requests included, uses the glossary's own words. A word the page needs that isn't listed goes in that section first.
 - **Organisation-neutral:** the repo, its commits, issues and pull requests name no particular organisation, its hostnames or its people's work addresses. Values for one Installation live in its configuration; docs may use Jack's Installation (`app.jigworks.dev`, `jigworks.app`) as the example.
 - **Cloudflare:** work only in Jack's own account.
 - **Notes:** keep durable notes in `docs/development.md` or in issue comments. Jack has Claude Code's memory turned off.

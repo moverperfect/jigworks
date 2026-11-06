@@ -13,7 +13,7 @@ The person who sets up and runs an Installation: its Access applications, domain
 _Avoid_: Admin, owner
 
 **Developer**:
-A signed-in person on the Installation's Developer list, who works in Workspaces by talking with the Agent in the Conversation and editing files.
+A signed-in person on the Installation's Developer list, who builds apps by talking with the Agent in the Conversation, whether or not they write code. Any Developer can also edit a Workspace's files.
 _Avoid_: User, engineer
 
 **Agent**:
@@ -69,5 +69,21 @@ A named value, such as an API key, that the Developer gives a Workspace and its 
 _Avoid_: Environment variable, var, credential
 
 **Template**:
-A starting set of files for a new Workspace.
+A starting set of files for a new Workspace, which the Agent chooses to suit what the Developer asked for (ADR 0018).
 _Avoid_: Starter, scaffold, boilerplate
+
+## Words on the page
+
+The page shows these words in place of the glossary's own, for Developers who don't write code (ADR 0018).
+
+**app**:
+A Workspace, and its Preview where the page shows it running. In code and docs, an app is still what a Workspace's Build runs, as in app host and apps domain.
+
+**chat**:
+The Conversation, where the page needs a short name for it, as on a phone's tabs.
+
+**making sure it works**:
+The Check, Build and tests that end a Turn.
+
+**live**:
+Said of a Workspace with a Deployment. It's "live, with changes not yet published" while its latest Build differs from its Deployment, and "not published" before it has one.
