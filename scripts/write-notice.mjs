@@ -57,8 +57,24 @@ function describe(dir) {
   return { name: manifest.name, version: manifest.version, licence: manifest.license ?? "see below", text };
 }
 
+/**
+ * Each package the pages import a stylesheet from, such as a font's, as
+ * `name` → where the client has it installed. Vite writes no source map for
+ * CSS, so these never show in `bundledPackages`.
+ */
+function stylesheetPackages() {
+  const found = new Map();
+  const src = join(root, "client/src");
+  for (const file of readdirSync(src, { recursive: true })) {
+    if (!/\.(tsx?|css)$/.test(String(file))) continue;
+    const imports = readFileSync(join(src, String(file)), "utf8").matchAll(/import\s+["']((?:@[^/"']+\/)?[^./"'][^/"']*)\/[^"']*\.css["']/g);
+    for (const [, name] of imports) found.set(name, join(root, "client/node_modules", name));
+  }
+  return found;
+}
+
 const worker = [...bundledPackages(join(out, "worker")).values()].map(describe);
-const pages = [...bundledPackages(join(out, "client")).values()].map(describe);
+const pages = [...bundledPackages(join(out, "client")).values(), ...stylesheetPackages().values()].map(describe);
 rmSync(out, { recursive: true, force: true });
 
 const byName = (a, b) => a.name.localeCompare(b.name) || a.version.localeCompare(b.version);

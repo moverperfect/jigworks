@@ -55,7 +55,13 @@ export default defineConfig({
             },
           }),
         ],
-        test: { name: "platform", include: ["test/**/*.test.ts"], testTimeout: 120_000 },
+        test: {
+          name: "platform",
+          include: ["test/**/*.test.ts"],
+          testTimeout: 120_000,
+          // Vitest empties CSS files, even read with `?raw`; test/colours.test.ts reads the page's colours.
+          css: { include: [/client\/src\/styles\.css/] },
+        },
       },
     ],
   },

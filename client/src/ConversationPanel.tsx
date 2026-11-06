@@ -91,11 +91,9 @@ export function ConversationPanel({
 
   return (
     <section className="workspace-conversation" aria-labelledby={`${headingId}-heading`}>
-      <div className="conversation-header">
-        <h2 id={`${headingId}-heading`} className="pane-heading conversation-heading">
-          Conversation
-        </h2>
-      </div>
+      <h2 id={`${headingId}-heading`} className="visually-hidden">
+        Conversation
+      </h2>
 
       <ol
         ref={list}
@@ -166,10 +164,8 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
     const changedFiles = metadata?.from === "developer" ? metadata.changedFiles : [];
     return (
       <li className="conversation-item from-developer">
-        <p className="conversation-text">
-          <span className="visually-hidden">You: </span>
-          {texts[0]?.text}
-        </p>
+        <span className="speaker">You</span>
+        <p className="conversation-text">{texts[0]?.text}</p>
         {changedFiles.length > 0 && <p className="conversation-note">Told the Agent you changed {changedFiles.join(", ")}</p>}
       </li>
     );
@@ -202,7 +198,7 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
   if (parts.every((part) => part === null)) return null;
   return (
     <li className="conversation-item from-agent">
-      <span className="visually-hidden">The Agent: </span>
+      <span className="speaker">Agent</span>
       {parts}
     </li>
   );
