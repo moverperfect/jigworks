@@ -55,7 +55,7 @@ export function PublishControl({ id }: { id: string }) {
           </a>
         </span>
       )}
-      <button type="button" className="button button-small" disabled={!deployment || busy} onClick={() => void start()}>
+      <button type="button" className="button button-primary button-small" disabled={!deployment || busy} onClick={() => void start()}>
         {busy ? "Publishing…" : "Publish"}
       </button>
       {loaded.state.status === "failed" && <ErrorMessage error={loaded.state.error} retry={loaded.retry} />}

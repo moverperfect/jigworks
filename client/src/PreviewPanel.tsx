@@ -110,12 +110,12 @@ export function PreviewPanel({
         </button>
       </div>
 
-      {/* Always there, so screen readers hear each change of state. */}
-      <p className="app-note" role="status">
-        {ready ? [note.beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : ""}
-      </p>
-
-      <div className={`preview-view preview-${device}`}>
+      {/* The app on a Paper sheet, held in the jig: its brackets and their label say what's happening to it. */}
+      <div className={`preview-view preview-${device}`} data-state={state}>
+        {/* Always there, so screen readers hear each change of state. */}
+        <p className="jig-label" role="status">
+          {ready ? [note.beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : ""}
+        </p>
         {preview.info.status === "loading" && <p className="editor-message muted">Loading your app…</p>}
         {preview.info.status === "failed" && (
           <div className="editor-message">

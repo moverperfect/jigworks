@@ -1,34 +1,44 @@
 :root {
   color-scheme: light dark;
-  --background: #f5f5f4;
-  --surface: #ffffff;
-  --hover: #ececea;
-  --text: #1c1c1b;
-  --muted: #5c5c58;
-  --border: #dcdcd8;
-  --border-strong: #85857f;
-  --primary: #1c1c1b;
-  --on-primary: #ffffff;
-  --danger: #b3261e;
-  --on-danger: #ffffff;
-  --danger-surface: #fbeceb;
-  --focus: #1d5fd1;
+  /*
+   * Variant E, "On the bench" (ADR 0018), whose colours and type are Direction 1
+   * in the prototype's DESIGN-DIRECTIONS.md (#50). The app sits on a cutting Mat;
+   * the chat, header and dialogs are Paper; text is Graphite; Marking blue is
+   * the one action colour; Chalk marks failure.
+   */
+  --background: #c9dbcf; /* Mat */
+  --surface: #fafaf7; /* Paper */
+  --text: #2a2d2b; /* Graphite */
+  /* Direction 1's muted text, Graphite at 62%, is darkened to 76% so that it meets WCAG AA on the Mat too. */
+  --muted: #5c5e5c;
+  --border: #d5d5d2; /* Graphite at 18% on Paper, for rules */
+  --border-strong: #737572; /* a field's edge, at 3:1 */
+  --hover: #ededea;
+  --selected: #e4e5e2;
+  --primary: #2546a8; /* Marking blue */
+  --on-primary: #fafaf7;
+  /* Chalk marks failure: the brackets in Chalk, and text in a darker Chalk that meets WCAG AA on the Mat. */
+  --chalk: #c7462e;
+  --danger: #a33824;
+  --on-danger: #fafaf7;
+  --danger-surface: #f7e6e2;
+  --focus: var(--primary);
   --warning: #8a5300;
-  --selected: #e4e4e1;
-  --radius: 6px;
+  --radius: 2px;
   --monospace: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
 
-  /* The editor's colours. */
+  /* The editor's colours, on Paper. */
   --code-keyword: #7a3b9c;
   --code-string: #2c6b2f;
   --code-literal: #0b6670;
   --code-comment: #6b6b66;
   --code-type: #8a4b08;
   --code-function: #1f4fa0;
-  --code-active-line: rgb(0 0 0 / 0.035);
-  --code-selection: #d3dff6;
+  --code-active-line: rgb(42 45 43 / 0.04);
+  --code-selection: #d3dcf3;
 
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: "Archivo Variable", system-ui, sans-serif;
+  font-stretch: 100%;
   line-height: 1.5;
   color: var(--text);
   background: var(--background);
@@ -36,21 +46,21 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #161615;
-    --surface: #1f1f1e;
-    --hover: #2a2a28;
-    --text: #ececea;
-    --muted: #a5a5a0;
-    --border: #393936;
-    --border-strong: #75756f;
-    --primary: #ececea;
-    --on-primary: #161615;
-    --danger: #f08a82;
-    --on-danger: #161615;
-    --danger-surface: #3a1e1c;
-    --focus: #82acff;
+    --background: #1b3129;
+    --surface: #1f2a25;
+    --text: #e6eae7;
+    --muted: #9aa19d;
+    --border: #434d48;
+    --border-strong: #6f7773;
+    --hover: #2a3530;
+    --selected: #313c37;
+    --primary: #8fa8ff;
+    --on-primary: #1f2a25;
+    --chalk: #f08a72;
+    --danger: #f08a72;
+    --on-danger: #1f2a25;
+    --danger-surface: #3a2622;
     --warning: #e3b45c;
-    --selected: #33332f;
 
     --code-keyword: #cfa6f5;
     --code-string: #9fd39f;
@@ -58,8 +68,8 @@
     --code-comment: #9a9a94;
     --code-type: #e6b673;
     --code-function: #8fb5ff;
-    --code-active-line: rgb(255 255 255 / 0.04);
-    --code-selection: #344660;
+    --code-active-line: rgb(230 234 231 / 0.04);
+    --code-selection: #34465f;
   }
 }
 
@@ -80,9 +90,18 @@ p {
   margin: 0;
 }
 
+/* Headings are wide Archivo: the width axis, not another family, sets them apart. */
+h1,
+h2,
+.product-name,
+.app-instead {
+  font-weight: 700;
+  font-stretch: 118%;
+}
+
 h1 {
   font-size: 1.6rem;
-  line-height: 1.25;
+  line-height: 1.15;
   margin-bottom: 1.25rem;
 }
 
@@ -139,8 +158,7 @@ a {
 }
 
 .product-name {
-  font-weight: 650;
-  font-size: 1.05rem;
+  font-size: 1.125rem;
   text-decoration: none;
 }
 
@@ -166,7 +184,7 @@ main {
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 1.25rem;
 }
 
@@ -179,6 +197,8 @@ main {
   justify-content: center;
   min-height: 2.5rem;
   padding: 0.4rem 0.9rem;
+  font-size: 0.9375rem;
+  font-weight: 600;
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   background: var(--surface);
@@ -254,7 +274,6 @@ legend {
 }
 
 .hint {
-  font-size: 0.9rem;
   color: var(--muted);
 }
 
@@ -333,7 +352,7 @@ input[aria-invalid="true"] {
   text-align: center;
   color: var(--muted);
   border: 1px dashed var(--border-strong);
-  border-radius: 8px;
+  border-radius: var(--radius);
 }
 
 .workspace-list {
@@ -382,7 +401,7 @@ h3.workspace-name {
   color: var(--text);
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius);
 }
 
 .dialog::backdrop {
@@ -436,13 +455,14 @@ main.workspace-main {
   align-items: center;
   gap: 0.25rem 1rem;
   padding: 0.5rem 1.25rem;
+  background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
 
 h1.workspace-title {
-  flex: 1 1 12rem;
+  flex: 1 1 8rem;
   margin: 0;
-  font-size: 1.15rem;
+  font-size: 1.125rem;
   overflow-wrap: anywhere;
 }
 
@@ -454,7 +474,6 @@ h1.workspace-title {
 }
 
 .publish-status {
-  font-size: 0.9rem;
   color: var(--muted);
 }
 
@@ -474,7 +493,6 @@ h1.workspace-title {
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
-  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
 }
 
 @supports (anchor-name: --a) {
@@ -504,7 +522,6 @@ h1.workspace-title {
   text-decoration: none;
   background: none;
   border: 0;
-  border-radius: calc(var(--radius) - 2px);
   cursor: pointer;
 }
 
@@ -530,7 +547,7 @@ h1.workspace-title {
   display: grid;
   flex: 1;
   min-height: 0;
-  grid-template-columns: minmax(16rem, min(32%, 28rem)) minmax(0, 1fr);
+  grid-template-columns: 22rem minmax(0, 1fr);
   background: var(--surface);
 }
 
@@ -555,6 +572,10 @@ h1.workspace-title {
   min-height: 0;
 }
 
+.app-area {
+  background: var(--background);
+}
+
 .workspace-pane[hidden],
 .app-area[hidden],
 .code-view[hidden] {
@@ -575,6 +596,28 @@ h1.workspace-title {
   margin-left: auto;
 }
 
+/* On the Mat, the app's toolbar is notes: its buttons read as words, underlined on hover. */
+.app-area > .app-toolbar {
+  padding: 1.5rem 2rem 0;
+  border-bottom: 0;
+}
+
+.app-area > .app-toolbar > .button,
+.preview-address > .button {
+  min-height: 2rem;
+  padding: 0.2rem 0;
+  font: inherit;
+  background: none;
+  border: 0;
+}
+
+.app-area > .app-toolbar > .button:hover:not(:disabled),
+.preview-address > .button:hover:not(:disabled) {
+  background: none;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
 h2.code-view-heading {
   margin: 0;
   font-size: 0.95rem;
@@ -582,55 +625,111 @@ h2.code-view-heading {
 
 .segmented {
   display: flex;
+  border: 2px solid var(--text);
+  border-radius: var(--radius);
 }
 
 .segmented .button {
+  min-height: 1.75rem;
+  font: inherit;
+  background: none;
+  border: 0;
   border-radius: 0;
 }
 
-.segmented .button:first-child {
-  border-radius: var(--radius) 0 0 var(--radius);
+.segmented .button[aria-pressed="true"],
+.segmented .button[aria-pressed="true"]:hover {
+  color: var(--surface);
+  background: var(--text);
 }
 
-.segmented .button:last-child {
-  margin-left: -1px;
-  border-radius: 0 var(--radius) var(--radius) 0;
+/*
+ * The jig (Direction 1, "On the bench"): the app on a Paper sheet, held by
+ * four corner brackets, 3 px thick and 28 px on each arm. Their posture shows
+ * the app area's state: holding in Graphite; working, tight and in Marking
+ * blue; and failed, in Chalk. One label sits on the top-left bracket's arm.
+ */
+.preview-view {
+  --jig-out: 16px;
+  --jig-colour: var(--text);
+  --jig-label: inherit;
+  --jig-side: 3rem;
+  --jig-ease: 300ms ease-in-out;
+
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  margin: 3.5rem var(--jig-side) 3rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
 }
 
-.segmented .button[aria-pressed="true"] {
-  color: var(--on-primary);
-  background: var(--primary);
-  border-color: var(--primary);
-}
-
-.app-note {
-  padding: 0 0.75rem;
-  font-size: 0.875rem;
-  color: var(--muted);
-}
-
-.app-note:not(:empty) {
-  padding-block: 0.35rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.app-instead {
-  margin: auto;
-  padding: 1.5rem;
-  font-size: 1.1rem;
-  text-align: center;
-  color: var(--muted);
-}
-
-/* The Phone view is about a phone's width, centred. */
 .preview-phone {
-  background: var(--background);
+  width: min(390px, 100% - 2 * var(--jig-side));
+  margin-inline: auto;
 }
 
-.preview-phone .preview-frame {
-  width: min(100%, 390px);
-  margin-inline: auto;
-  border-inline: 1px solid var(--border);
+.preview-view::before {
+  content: "";
+  position: absolute;
+  inset: calc(-1px - var(--jig-out));
+  border: 3px solid var(--jig-colour);
+  /* Only the corners show. */
+  mask:
+    linear-gradient(#000 0 0) 0 0 / 28px 28px no-repeat,
+    linear-gradient(#000 0 0) 100% 0 / 28px 28px no-repeat,
+    linear-gradient(#000 0 0) 0 100% / 28px 28px no-repeat,
+    linear-gradient(#000 0 0) 100% 100% / 28px 28px no-repeat;
+  pointer-events: none;
+  transition:
+    inset var(--jig-ease),
+    border-color var(--jig-ease);
+}
+
+.preview-view:is([data-state="first-build"], [data-state="updating"]) {
+  --jig-out: 8px;
+  --jig-colour: var(--primary);
+  --jig-label: var(--primary);
+}
+
+.preview-view[data-state="failed"] {
+  --jig-colour: var(--chalk);
+  --jig-label: var(--danger);
+}
+
+/* The label's last line sits level with the top-left bracket's arm, and a long label wraps upwards. */
+.jig-label {
+  position: absolute;
+  bottom: calc(100% + var(--jig-out) - 0.6rem);
+  /* Past the bracket's 28 px arm, with a 10 px gap. */
+  left: calc(38px - var(--jig-out));
+  right: 0;
+  color: var(--jig-label);
+  transition:
+    bottom var(--jig-ease),
+    left var(--jig-ease),
+    color var(--jig-ease);
+}
+
+/* During a later Turn the app stays usable, a little faded. */
+.preview-view[data-state="updating"] .preview-frame {
+  opacity: 0.85;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .preview-view::before,
+  .jig-label {
+    transition: none;
+  }
+}
+
+/* Before there's an app to show: what's happening, as the sheet's title. */
+.app-instead {
+  padding: 2rem 1.75rem;
+  font-size: 1.5rem;
+  line-height: 1.15;
 }
 
 /* The code: the files beside the editor, with the problems list and the logs below it. */
@@ -668,7 +767,20 @@ h2.code-view-heading {
 /* Narrow windows show the chat or the app, behind tabs. Matches the page's narrowQuery. */
 @media (width < 760px) {
   .workspace-header {
-    padding-inline: 0.75rem;
+    padding-inline: 1rem;
+  }
+
+  /* On a phone, the app's toolbar is a Paper strip, and the jig sits closer in. */
+  .app-area > .app-toolbar {
+    padding: 0.35rem 1rem;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .preview-view {
+    --jig-side: 1.75rem;
+
+    margin-block: 2.75rem 1.75rem;
   }
 
   .workspace-layout {
@@ -707,10 +819,6 @@ h2.code-view-heading {
 .pane-heading {
   margin: 0;
   padding: 0.6rem 0.75rem 0.3rem;
-  font-size: 0.8rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
   color: var(--muted);
 }
 
@@ -839,11 +947,11 @@ h3.editor-path {
 }
 
 .workspace-tab {
-  padding: 0.4rem 0.6rem 0.3rem;
-  font-size: 0.875rem;
+  padding: 0.6rem 0.6rem 0.45rem;
+  font-size: 0.9375rem;
   font-weight: 600;
   color: var(--muted);
-  border-bottom: 2px solid transparent;
+  border-bottom: 3px solid transparent;
 }
 
 .workspace-tab:hover {
@@ -901,13 +1009,6 @@ input.preview-path {
 
 input.preview-path:focus-visible {
   outline: none;
-}
-
-.preview-view {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 0;
-  min-height: 0;
 }
 
 .preview-frame {
@@ -1082,29 +1183,16 @@ button.problem:hover {
   overflow-wrap: anywhere;
 }
 
-.conversation-header {
-  display: flex;
-  align-items: center;
-  min-height: 2.75rem;
-  padding: 0.35rem 0.75rem;
-  border-bottom: 1px solid var(--border);
-}
-
-.pane-heading.conversation-heading {
-  padding: 0;
-}
-
 .conversation-messages {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 1.5rem;
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
   margin: 0;
-  padding: 0.75rem;
+  padding: 1.25rem;
   list-style: none;
-  font-size: 0.9rem;
 }
 
 .conversation-empty {
@@ -1117,23 +1205,23 @@ button.problem:hover {
   min-width: 0;
 }
 
+/* No bubbles: a speaker line, then the text, with your messages set in from the Agent's. */
+.speaker {
+  color: var(--muted);
+}
+
 .conversation-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .from-developer {
-  align-self: flex-end;
-  max-width: 90%;
-  padding: 0.45rem 0.7rem;
-  background: var(--selected);
-  border-radius: 10px;
+  padding-left: 1.5rem;
 }
 
 .conversation-note,
 .conversation-thinking,
 .tool-line {
-  font-size: 0.8125rem;
   color: var(--muted);
 }
 
@@ -1143,7 +1231,6 @@ button.problem:hover {
 
 .conversation-notice {
   padding-left: 0.6rem;
-  font-size: 0.85rem;
   color: var(--muted);
   border-left: 3px solid var(--warning);
 }
@@ -1266,7 +1353,7 @@ button.problem:hover {
   font-size: 0.875em;
   background: var(--background);
   border: 1px solid var(--border);
-  border-radius: 4px;
+  border-radius: var(--radius);
 }
 
 .markdown pre {
@@ -1276,6 +1363,10 @@ button.problem:hover {
   background: var(--background);
   border: 1px solid var(--border);
   border-radius: var(--radius);
+}
+
+.markdown a {
+  color: var(--primary);
 }
 
 .markdown-table {
@@ -1308,8 +1399,7 @@ button.problem:hover {
   flex-wrap: wrap;
   gap: 0 0.5rem;
   min-height: 2rem;
-  padding: 0.35rem 0.75rem;
-  font-size: 0.85rem;
+  padding: 0.5rem 1.25rem;
   color: var(--muted);
   border-top: 1px solid var(--border);
 }
@@ -1318,17 +1408,35 @@ button.problem:hover {
   color: var(--warning);
 }
 
+/* The message box and Send read as one Paper box, which shows focus for the box within. */
 .composer {
   display: grid;
   gap: 0.5rem;
-  padding: 0 0.75rem 0.75rem;
+  margin: 0 1.25rem 1.25rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
 }
+
 
 textarea.composer-input {
   min-height: 4.5rem;
   max-height: 40vh;
+  padding: 0;
   resize: vertical;
-  font-size: 0.9rem;
+  border: 0;
+}
+
+/* Browsers without :has() keep the textarea's own ring. */
+@supports selector(:has(*)) {
+  .composer:has(.composer-input:focus-visible) {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+  }
+
+  textarea.composer-input:focus-visible {
+    outline: none;
+  }
 }
 
 .composer-actions {
@@ -1336,10 +1444,6 @@ textarea.composer-input {
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-}
-
-.composer-actions .hint {
-  font-size: 0.8125rem;
 }
 
 .secret-list {
@@ -1364,4 +1468,25 @@ textarea.composer-input {
 
 .secret .button {
   margin-left: auto;
+}
+
+/*
+ * Notes, set semi-condensed against the normal width of the conversation: the
+ * Agent's working notes, status, labels, hints and toolbars (Direction 1).
+ */
+.app-toolbar,
+.jig-label,
+.speaker,
+.pane-heading,
+.publish-status,
+.hint,
+.conversation-status,
+.conversation-note,
+.conversation-notice,
+.conversation-thinking,
+.tool-line {
+  font-size: 0.875rem;
+  font-weight: 500;
+  font-stretch: 86%;
+  line-height: 1.35;
 }
