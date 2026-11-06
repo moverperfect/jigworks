@@ -11,6 +11,10 @@ export interface PreviewFrame {
   /** Where the Preview answers, and whether it has a Build to run yet. */
   info: LoadState<{ url: string; ready: boolean }>;
   retryInfo(): void;
+  /** The hash of the latest successful Build this page has seen, which the Preview runs, or null before one. */
+  goodHash: string | null;
+  /** Whether a Build has succeeded, so the Preview has one to run. */
+  built: boolean;
   /** The sign-in link the frame opens, or null while there's no frame. Each load gets a new one, as each works once. */
   src: string | null;
   frame: RefObject<HTMLIFrameElement | null>;
@@ -107,6 +111,8 @@ export function usePreviewFrame(id: string, build: BuildReport | null, visible: 
   return {
     info: info.state,
     retryInfo: info.retry,
+    goodHash,
+    built: ready || goodHash !== null,
     src,
     frame,
     loading,

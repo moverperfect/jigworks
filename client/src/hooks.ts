@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ApiError, toApiError } from "./api";
 
 export type LoadState<T> = { status: "loading" } | { status: "failed"; error: ApiError } | { status: "ready"; data: T };
@@ -53,4 +53,17 @@ export function useTitle(title: string | undefined): void {
   useEffect(() => {
     document.title = title ? `${title} · Jigworks` : "Jigworks";
   }, [title]);
+}
+
+/** Whether the window matches a media query, such as `(width < 760px)`, kept up to date. */
+export function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (changed: () => void) => {
+      const list = window.matchMedia(query);
+      list.addEventListener("change", changed);
+      return () => list.removeEventListener("change", changed);
+    },
+    [query],
+  );
+  return useSyncExternalStore(subscribe, () => window.matchMedia(query).matches);
 }

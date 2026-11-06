@@ -52,8 +52,9 @@ export function usePath(): string {
   return useSyncExternalStore(subscribe, () => window.location.pathname);
 }
 
-export function navigate(to: string): void {
-  if (to !== window.location.pathname && !mayLeave()) return;
+/** Changes page, asking the leave guard first unless `unguarded`, as when what it guards is gone. */
+export function navigate(to: string, { unguarded = false } = {}): void {
+  if (to !== window.location.pathname && !unguarded && !mayLeave()) return;
   window.history.pushState(null, "", to);
   shownPath = window.location.pathname;
   window.dispatchEvent(new PopStateEvent("popstate"));

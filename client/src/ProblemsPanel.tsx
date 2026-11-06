@@ -90,9 +90,9 @@ export function ProblemsPanel({
   }
 
   return (
-    <section className="workspace-problems" aria-labelledby={`${id}-heading`}>
+    <section aria-labelledby={`${id}-heading`}>
       <div className="problems-header">
-        <h2 id={`${id}-heading`} className="problems-heading">
+        <h3 id={`${id}-heading`} className="problems-heading">
           <button
             type="button"
             className="problems-toggle"
@@ -108,7 +108,7 @@ export function ProblemsPanel({
               <span className="problems-summary">{summarise(countProblems(report, build, tests.report))}</span>
             )}
           </button>
-        </h2>
+        </h3>
         <p className="problems-status" role="status">
           {status}
           {buildStatus && ` · ${buildStatus}`}
@@ -267,9 +267,9 @@ function ProblemItem({
 function ProblemGroup({ heading, count, children }: { heading: string; count: number; children: ReactNode }) {
   return (
     <section className="problem-group">
-      <h3 className="problem-group-heading">
+      <h4 className="problem-group-heading">
         <span className="problem-group-name">{heading}</span> <span className="problem-count">{count}</span>
-      </h3>
+      </h4>
       <ul className="problem-list">{children}</ul>
     </section>
   );

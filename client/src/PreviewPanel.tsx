@@ -1,9 +1,9 @@
-import { useId, useLayoutEffect, useRef, useState, type FormEvent } from "react";
-import type { BuildReport } from "../../src/shared/build-report.ts";
+import { useId, useLayoutEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import { previewTabUrl } from "./api";
+import type { AppAreaState } from "./appArea";
 import { ErrorMessage } from "./ErrorMessage";
 import { formatTime } from "./ProblemsPanel";
-import { usePreviewFrame, usePreviewLogs } from "./usePreview";
+import { usePreviewLogs, type PreviewFrame } from "./usePreview";
 
 const errorLevels = new Set(["error", "exception", "unhandledrejection", "console.error"]);
 
@@ -16,27 +16,45 @@ function toPath(typed: string): string {
   return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
 }
 
-/** The Preview pane: the latest successful Build in a frame, the path it shows, and its logs. */
+type Device = "phone" | "computer";
+const devices: { device: Device; label: string }[] = [
+  { device: "phone", label: "Phone" },
+  { device: "computer", label: "Computer" },
+];
+
+/** What the app area says about its state, beside the app, or in its place before there's one to show. */
+const notes: Record<AppAreaState, { beside: string; instead: string }> = {
+  empty: { beside: "", instead: "Your app appears here once it's built." },
+  "first-build": { beside: "", instead: "Building your app…" },
+  updating: { beside: "Updating your app…", instead: "Building your app…" },
+  // The Preview learns of its first Build a moment after the page does.
+  ready: { beside: "", instead: "Loading your app…" },
+  failed: { beside: "The last change didn't work.", instead: "The last change didn't work, and there's nothing to show yet." },
+};
+
+/**
+ * The app view: the Preview in a Phone or Computer view, the path it shows,
+ * Open in a new tab, and "See the code". The page says "your app" for the
+ * Preview (ADR 0018).
+ */
 export function PreviewPanel({
-  id,
-  build,
-  visible,
-  panelId,
-  tabId,
+  preview,
+  state,
+  onShowCode,
+  showCodeButton,
 }: {
-  id: string;
-  build: BuildReport | null;
-  /** Whether the pane's tab is selected. */
-  visible: boolean;
-  panelId: string;
-  tabId: string;
+  preview: PreviewFrame;
+  state: AppAreaState;
+  onShowCode(): void;
+  showCodeButton: Ref<HTMLButtonElement>;
 }) {
   const pathId = useId();
-  const preview = usePreviewFrame(id, build, visible);
   const [typed, setTyped] = useState("/");
+  const [device, setDevice] = useState<Device>("computer");
   const info = preview.info.status === "ready" ? preview.info.data : null;
   const host = info && new URL(info.url).hostname;
   const ready = info?.ready ?? false;
+  const note = notes[state];
 
   function reload(event?: FormEvent) {
     event?.preventDefault();
@@ -51,9 +69,21 @@ export function PreviewPanel({
   }
 
   return (
-    <section id={panelId} className="workspace-preview" role="tabpanel" aria-labelledby={tabId} hidden={!visible}>
-      <h2 className="visually-hidden">Preview</h2>
-      <div className="editor-toolbar">
+    <>
+      <div className="app-toolbar">
+        <div className="segmented" role="group" aria-label="Show your app on">
+          {devices.map((option) => (
+            <button
+              key={option.device}
+              type="button"
+              className="button button-small"
+              aria-pressed={device === option.device}
+              onClick={() => setDevice(option.device)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <form className="preview-address" onSubmit={reload}>
           <label htmlFor={pathId} className="preview-field">
             <span className="visually-hidden">Path to open on </span>
@@ -75,21 +105,24 @@ export function PreviewPanel({
         <button type="button" className="button button-small" onClick={openInTab} disabled={!ready}>
           Open in a new tab
         </button>
-        <span className="save-status" role="status">
-          {preview.loading && ready ? "Loading…" : ""}
-        </span>
+        <button ref={showCodeButton} type="button" className="button button-small app-toolbar-end" onClick={onShowCode}>
+          See the code
+        </button>
       </div>
 
-      <div className="preview-view">
-        {preview.info.status === "loading" && <p className="editor-message muted">Loading the Preview…</p>}
+      {/* Always there, so screen readers hear each change of state. */}
+      <p className="app-note" role="status">
+        {ready ? [note.beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : ""}
+      </p>
+
+      <div className={`preview-view preview-${device}`}>
+        {preview.info.status === "loading" && <p className="editor-message muted">Loading your app…</p>}
         {preview.info.status === "failed" && (
           <div className="editor-message">
             <ErrorMessage error={preview.info.error} retry={preview.retryInfo} />
           </div>
         )}
-        {info && !ready && (
-          <p className="editor-message muted">The Preview starts after the Workspace's first successful Build.</p>
-        )}
+        {info && !ready && <p className="app-instead">{note.instead}</p>}
         {preview.error && (
           <div className="editor-message">
             <ErrorMessage error={preview.error} retry={() => reload()} />
@@ -98,7 +131,7 @@ export function PreviewPanel({
         {preview.refused && (
           <div className="editor-message">
             <div className="message message-notice" role="alert">
-              <p>This browser won't keep the Preview signed in inside the page. Open it in a new tab instead.</p>
+              <p>This browser won't keep your app signed in inside the page. Open it in a new tab instead.</p>
               <button type="button" className="button" onClick={openInTab}>
                 Open in a new tab
               </button>
@@ -111,21 +144,19 @@ export function PreviewPanel({
             key={preview.src}
             ref={preview.frame}
             src={preview.src}
-            title="Preview"
+            title="Your app"
             className="preview-frame"
             hidden={preview.refused}
             onLoad={preview.loaded}
           />
         )}
       </div>
-
-      <PreviewLogs id={id} visible={visible} />
-    </section>
+    </>
   );
 }
 
 /** The Preview's server logs and front-end errors, newest last, which follow new lines unless the Developer scrolls up. */
-function PreviewLogs({ id, visible }: { id: string; visible: boolean }) {
+export function PreviewLogs({ id, visible }: { id: string; visible: boolean }) {
   const headingId = useId();
   const [expanded, setExpanded] = useState(true);
   const { logs, error, refresh } = usePreviewLogs(id, visible && expanded);

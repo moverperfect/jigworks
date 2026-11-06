@@ -16,6 +16,8 @@ export interface Conversation {
   failed: boolean;
   /** Whether a Turn's reply is arriving. */
   streaming: boolean;
+  /** Whether connected with no Turn running and no Start fresh under way, so the Developer may start either. */
+  idle: boolean;
 }
 
 /**
@@ -37,11 +39,13 @@ export function useConversation(id: string): Conversation {
     getInitialMessages: null,
   });
 
+  const state = agent.state ?? null;
   return {
     messages: transcript.messages,
-    state: agent.state ?? null,
+    state,
     connected: agent.identified,
     failed: agent.connectionError !== null,
     streaming: transcript.isStreaming,
+    idle: agent.identified && state !== null && state.turn === null && !state.startingFresh,
   };
 }
