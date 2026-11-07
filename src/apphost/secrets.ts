@@ -14,11 +14,17 @@ const shortestValue = 6;
 // The shortest start of a value dropped from the end of text cut short.
 const shortestPart = 4;
 
+/** What a secret's name can be, for the Developer and the Agent. */
+export const secretNameRule = "A secret's name starts with a letter or _, then has only letters, digits and _, up to 64 in all.";
+
+/** Whether `name` can be a secret's: one the app reads from env that isn't the platform's own. */
+export function isSecretName(name: string): boolean {
+  return /^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) && !name.startsWith(platformEnvPrefix);
+}
+
 /** Why a secret can't be set, or null if it can. */
 export function secretProblem(name: string, value: unknown): string | null {
-  if (!/^[A-Za-z_][A-Za-z0-9_]{0,63}$/.test(name) || name.startsWith(platformEnvPrefix)) {
-    return "A secret's name starts with a letter or _, then has only letters, digits and _, up to 64 in all.";
-  }
+  if (!isSecretName(name)) return secretNameRule;
   if (typeof value !== "string" || value === "") return "Give the secret a value.";
   if (value.length < shortestValue) {
     return `A secret's value is at least ${shortestValue} characters, so it can be hidden from the Agent. Put a short setting in vars in wrangler.jsonc.`;

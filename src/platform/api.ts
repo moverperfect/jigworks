@@ -293,13 +293,23 @@ api.get("/workspaces/:id/conversation", async (c) => {
   return workspace(c, record.id).fetch(c.req.raw);
 });
 
+// Starts a Turn with the Developer's `{ message }`, or, once they've added a
+// Secret the Agent asked for, with the platform's note of its name: `{ secret }`.
 api.post("/workspaces/:id/turns", async (c) => {
   const record = await ownWorkspace(c);
   if (!record) return noSuchWorkspace(c);
-  const body = await c.req.json<{ message?: unknown }>().catch(() => null);
-  const message = typeof body?.message === "string" ? body.message.trim() : "";
-  if (!message) return c.json({ error: "Write a message for the Agent." }, 400);
-  const result = await workspace(c, record.id).startTurn(message);
+  const body = await c.req.json<{ message?: unknown; secret?: unknown }>().catch(() => null);
+  const stub = workspace(c, record.id);
+  let result;
+  if (body?.secret !== undefined) {
+    const secret = typeof body.secret === "string" ? body.secret : "";
+    if (!(await stub.secretNames()).some(({ name }) => name === secret)) return c.json({ error: "There's no secret with that name. Save it first." }, 400);
+    result = await stub.startTurn({ addedSecret: secret });
+  } else {
+    const message = typeof body?.message === "string" ? body.message.trim() : "";
+    if (!message) return c.json({ error: "Write a message for the Agent." }, 400);
+    result = await stub.startTurn(message);
+  }
   return result.ok ? c.body(null, 202) : c.json({ error: result.error }, 409);
 });
 

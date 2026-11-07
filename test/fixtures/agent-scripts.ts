@@ -14,6 +14,8 @@ export const unbuildableIndex =
 export const buildableIndex = 'import { Hono } from "hono";\nexport default new Hono().get("/", (c) => c.text("hi"));\n';
 // A test that fails, beside the Template's, which passes.
 export const failingTest = 'import { expect, it } from "vitest";\n\nit("adds", () => {\n  expect(1 + 1).toBe(3);\n});\n';
+/** The value the Developer gives for the Secret that `ask-for-secret` asks for, which must never reach the model. */
+export const askedSecretValue = "key-from-the-email-service";
 
 export const agentScripts: Record<string, Script> = {
   // Answers once, with no tools.
@@ -171,6 +173,39 @@ export const agentScripts: Record<string, Script> = {
     if (!answering) return { text: `Going with: ${instruction}` };
     return { toolCalls: [{ name: "write", input: { path: "/src/count.ts", content: fixedCount } }] };
   },
+
+  // Breaks the app and asks for a Secret in the same step, then, once it's
+  // added, mends the app and says what it was told, and whether the value
+  // ever reached it.
+  "ask-for-secret": (request) => {
+    const instruction = latestInstruction(request);
+    if (instruction.includes("[script:ask-for-secret]")) {
+      if (afterToolResult(request)) return { text: "Carried on after asking." };
+      return {
+        toolCalls: [
+          { name: "write", input: { path: "/src/count.ts", content: brokenCount } },
+          { name: "ask_for_secret", input: { name: "EMAIL_KEY", why: "Your app needs your email service's key to send the emails." } },
+        ],
+      };
+    }
+    // The note arrives in the same message as ask_for_secret's result.
+    const last = request.messages.at(-1)!;
+    const told = typeof last.content === "string" || last.content.some((block) => block.type === "text");
+    if (told) return { toolCalls: [{ name: "write", input: { path: "/src/count.ts", content: fixedCount } }] };
+    return { text: `Told: ${instruction} Saw the value: ${JSON.stringify(request).includes(askedSecretValue)}` };
+  },
+
+  // Asks for a Secret under a name the app couldn't read, which ask_for_secret refuses, so the Turn carries on.
+  "ask-for-secret-badly": (request) =>
+    afterToolResult(request)
+      ? { text: "I'll do without it." }
+      : { toolCalls: [{ name: "ask_for_secret", input: { name: "EMAIL KEY", why: "To send emails." } }] },
+
+  // Asks for a Secret before starting the app, which ask_for_secret refuses, so the Turn carries on.
+  "ask-for-secret-before-start": (request) =>
+    afterToolResult(request)
+      ? { text: "I'll start your app first." }
+      : { toolCalls: [{ name: "ask_for_secret", input: { name: "EMAIL_KEY", why: "To send the emails." } }] },
 
   // Asks with the same answer twice, which ask refuses, so the Turn carries on.
   "ask-badly": (request) =>

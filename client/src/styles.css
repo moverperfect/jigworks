@@ -1437,6 +1437,19 @@ button.problem:hover {
   text-align: center;
 }
 
+/* The field for a Secret the Agent asked for, with Save beside it while they fit. */
+.secret-request-field {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.secret-request-field input {
+  flex: 1 1 12rem;
+  width: auto;
+  min-width: 0;
+}
+
 /* What to change next, in Marking blue above the message box, like the start page's ideas (`.start-idea`). */
 .suggestions {
   display: grid;

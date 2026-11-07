@@ -93,7 +93,7 @@ describe("an Agent message", () => {
 describe("a question", () => {
   const ask = (question: string, choices: unknown, state = "output-available") => tool("ask", { question, choices }, state);
   const question = { question: "Which address should the emails go to?", choices: ["My sign-in address", "A different address"] };
-  const shown = { ...question, id: expect.stringMatching(/^call-/) };
+  const shown = { asked: "question", ...question, id: expect.stringMatching(/^call-/) };
   const asking = (parts: Part[] = []): UIMessage => ({
     id: "2",
     role: "assistant",
@@ -134,6 +134,47 @@ describe("a question", () => {
       (second as { toolCallId: string }).toolCallId,
     ]);
     expect(openQuestion([developer, message], true)).toMatchObject({ id: (second as { toolCallId: string }).toolCallId, question: "Which day?" });
+  });
+});
+
+describe("a request for a Secret", () => {
+  const askForSecret = (input: unknown, state = "output-available") => tool("ask_for_secret", input, state);
+  const request = { name: "EMAIL_KEY", why: "Your app needs your email service's key to send the emails." };
+  const shown = { asked: "secret", ...request, id: expect.stringMatching(/^call-/) };
+  const developer: UIMessage<{ from?: string }> = { id: "1", role: "user", parts: [text("Email me when someone signs up")] };
+  const asking: UIMessage<{ from?: string }> = { id: "2", role: "assistant", parts: [text("Happy to."), askForSecret(request)] };
+
+  it("shows where the Agent asked for it, and not as a step or under Technical details", () => {
+    const write = tool("write", { path: "/src/App.tsx" });
+    expect(agentMessageBlocks([write, askForSecret(request)])).toEqual([
+      { kind: "steps", steps: [{ label: "Changing your app", done: true }], tools: [write], fromAgent: false },
+      { kind: "question", question: shown },
+    ]);
+  });
+
+  it("passes over a request the platform refused, one still being written, or one with no name or reason", () => {
+    for (const part of [
+      askForSecret(request, "output-error"),
+      askForSecret(request, "input-streaming"),
+      askForSecret({ ...request, name: " " }),
+      askForSecret({ name: "EMAIL_KEY" }),
+    ]) {
+      expect(agentMessageBlocks([part])).toEqual([]);
+    }
+  });
+
+  it("has its field only on the last message, when no Turn is running, and hides the suggestions meanwhile", () => {
+    expect(openQuestion([developer, asking], true)).toEqual(shown);
+    expect(openQuestion([developer, asking], false)).toBeNull();
+    // Added: the platform's note is the Developer's next message.
+    expect(openQuestion([developer, asking, { ...developer, id: "3" }], true)).toBeNull();
+    const suggested: UIMessage<{ from?: string }> = { ...asking, parts: [tool("suggest", { suggestions: ["Make it look sportier"] }), ...asking.parts] };
+    expect(suggestionsToShow([developer, suggested], true)).toEqual([]);
+  });
+
+  it("is the open one when it came after a question in the same message", () => {
+    const message: UIMessage = { id: "2", role: "assistant", parts: [tool("ask", { question: "Shall I?", choices: ["Yes", "No"] }), askForSecret(request)] };
+    expect(openQuestion([developer, message], true)).toEqual(shown);
   });
 });
 
