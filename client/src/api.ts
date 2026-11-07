@@ -159,8 +159,8 @@ export async function getLatestTests(id: string): Promise<TestReport | null> {
   return request("GET", `${workspaceApiPath(id)}/tests`);
 }
 
-/** Where the Preview answers, and whether it has a Build to run yet. Until then it answers 503. */
-export async function getPreview(id: string): Promise<{ url: string; ready: boolean }> {
+/** Where the Preview answers, and the hash of the Build it runs, the latest successful one. Before there's one, it answers 503. */
+export async function getPreview(id: string): Promise<{ url: string; ready: boolean; hash: string | null }> {
   return request("GET", `${workspaceApiPath(id)}/preview`);
 }
 

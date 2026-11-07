@@ -2,15 +2,18 @@ import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "rea
 import type { BuildReport } from "../../src/shared/build-report.ts";
 import { getPreview, getPreviewLogs, previewFrameLink, toApiError, type ApiError, type AppLogEntry } from "./api";
 import { useLoad, usePageVisible, type LoadState } from "./hooks";
+import { noBuildsSeen, seeBuilds } from "./publish";
 
 /** A sign-out this soon after the last one came straight after a fresh link, so the browser isn't keeping the cookie. */
 const refusedWithinMs = 10_000;
 const logsEveryMs = 3_000;
 
 export interface PreviewFrame {
-  /** Where the Preview answers, and whether it has a Build to run yet. */
-  info: LoadState<{ url: string; ready: boolean }>;
+  /** Where the Preview answers, whether it has a Build to run yet, and that Build's hash. */
+  info: LoadState<{ url: string; ready: boolean; hash: string | null }>;
   retryInfo(): void;
+  /** Reads the Preview again quietly, to learn of Builds made elsewhere, as in another tab. */
+  refreshInfo(): void;
   /** The hash of the latest successful Build this page has seen, which the Preview runs, or null before one. */
   goodHash: string | null;
   /** Whether a Build has succeeded, so the Preview has one to run. */
@@ -37,7 +40,13 @@ export interface PreviewFrame {
  * code, and gets a fresh link when it's shown again.
  */
 export function usePreviewFrame(id: string, build: BuildReport | null, visible: boolean): PreviewFrame {
-  const info = useLoad(() => getPreview(id));
+  // Successful Build reports seen, so a read of the Preview that started before one can't undo it.
+  const goodReports = useRef(0);
+  const info = useLoad(async () => {
+    const before = goodReports.current;
+    const preview = await getPreview(id);
+    return { ...preview, overtaken: goodReports.current !== before };
+  });
   const ready = info.state.status === "ready" && info.state.data.ready;
   const origin = info.state.status === "ready" ? new URL(info.state.data.url).origin : null;
   const frame = useRef<HTMLIFrameElement>(null);
@@ -51,8 +60,16 @@ export function usePreviewFrame(id: string, build: BuildReport | null, visible: 
   const signedOutAt = useRef(-Infinity);
 
   // The Preview runs the latest successful Build, so a failed one leaves the frame as it is.
-  const [goodHash, setGoodHash] = useState<string | null>(null);
-  if (build?.ok && build.hash !== goodHash) setGoodHash(build.hash);
+  // It's whichever the page saw last: one of its Build reports, or the Build the Preview runs when the page reads it,
+  // unless a successful Build report overtook that read.
+  const previewRead = info.state.status === "ready" && !info.state.data.overtaken ? info.state.data : null;
+  const [seen, setSeen] = useState(noBuildsSeen);
+  const nowSeen = seeBuilds(seen, build, previewRead);
+  if (nowSeen !== seen) setSeen(nowSeen);
+  const { goodHash } = nowSeen;
+  useEffect(() => {
+    if (build?.ok) goodReports.current += 1;
+  }, [build]);
 
   // The first successful Build starts the Preview.
   const onGoodBuild = useEffectEvent(() => {
@@ -111,6 +128,7 @@ export function usePreviewFrame(id: string, build: BuildReport | null, visible: 
   return {
     info: info.state,
     retryInfo: info.retry,
+    refreshInfo: info.reload,
     goodHash,
     built: ready || goodHash !== null,
     src,

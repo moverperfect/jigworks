@@ -335,6 +335,8 @@ say "Previews and Deployments live on *.$APPS_DOMAIN, behind an Access applicati
 open_url "https://one.dash.cloudflare.com/"
 step "Create another self-hosted application, \"Jigworks apps\": subdomain *, domain $APPS_DOMAIN."
 step "Give it the \"Jigworks Developers\" policy for now. Ticket 10 decides who opens Deployments."
+note "To open apps to everyone instead, give it a Bypass policy for Everyone, and set DEPLOYMENTS_OPEN_TO_EVERYONE"
+note "to true in wrangler.jsonc, so the page tells Developers that anyone with the link can use their apps."
 step "Configure → Advanced settings → Cookie settings: turn HTTP Only on, so app code can't read it. Save."
 step "Copy its Application Audience (AUD) Tag."
 ask APPS_ACCESS_AUD "Paste the apps' AUD tag:"

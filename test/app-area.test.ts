@@ -3,8 +3,8 @@ import { appAreaState } from "../client/src/appArea";
 import type { LastTurn } from "../src/shared/conversation";
 
 // What the app's page shows in place of the app: worked out from the
-// Conversation's state and whether a Build has succeeded, so the Preview has
-// something to run.
+// Conversation's state, whether a Build has succeeded, so the Preview has
+// something to run, and whether the app is live.
 
 const running = { turn: { startedAt: "2026-11-06T10:00:00.000Z" }, lastTurn: null };
 const idle = { turn: null, lastTurn: null };
@@ -59,5 +59,17 @@ describe("the app area's state", () => {
     expect(appAreaState(ended({ testFailures: 4 }), true)).toBe("ready");
     expect(appAreaState(ended({ status: "error", error: "Overloaded", checkErrors: null, buildErrors: null }), true)).toBe("ready");
     expect(appAreaState(ended({ status: "aborted", checkErrors: null, buildErrors: null }), false)).toBe("empty");
+  });
+
+  it("is live when a ready app's Deployment runs its latest Build", () => {
+    expect(appAreaState(idle, true, "live")).toBe("live");
+    expect(appAreaState(ended({}), true, "live")).toBe("live");
+  });
+
+  it("holds the app while it isn't live, has changes not yet published, or is busy or broken", () => {
+    expect(appAreaState(idle, true, "not-published")).toBe("ready");
+    expect(appAreaState(idle, true, "live-with-changes")).toBe("ready");
+    expect(appAreaState(running, true, "live")).toBe("updating");
+    expect(appAreaState(ended({ buildErrors: 1 }), true, "live")).toBe("failed");
   });
 });

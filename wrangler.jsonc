@@ -49,6 +49,10 @@
     // (ADR 0012). Both are used from ticket 08 on.
     "APPS_DOMAIN": "jigworks.app",
     "APPS_ACCESS_AUD": "50f3610a9815281e06ff9f0918fed58fa2e4f91f38444db6d36171c9dec95332",
+    // Whether the apps' Access application lets everyone open Deployments, so
+    // the page can say who can use a published app. The Operator decides that
+    // in Access (scripts/set-up-installation.sh); this only says what they chose.
+    "DEPLOYMENTS_OPEN_TO_EVERYONE": false,
     "PLATFORM_ORIGIN": "https://app.jigworks.dev",
     // Set only in a local .dev.vars, for wrangler dev. The gate ignores it for
     // any hostname but localhost.
