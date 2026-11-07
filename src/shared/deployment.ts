@@ -5,4 +5,6 @@ export interface Deployment {
   publishedAt: string | null;
   /** The hash of the Build it runs, or null before the first publish. */
   hash: string | null;
+  /** Whether the Installation's Deployments are open to everyone, or only to those the apps' Access application lets in. */
+  openToEveryone: boolean;
 }

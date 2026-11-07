@@ -87,3 +87,6 @@ The Check, Build and tests that end a Turn.
 
 **live**:
 Said of a Workspace with a Deployment. It's "live, with changes not yet published" while its latest Build differs from its Deployment, and "not published" before it has one.
+
+**this Jigworks's list**:
+The people who can use a Deployment when the Installation's Deployments aren't open to everyone: those the apps' Access application lets in, which is the Developer list unless the Operator chose otherwise. When they are open to everyone, the page says "anyone with the link" instead.

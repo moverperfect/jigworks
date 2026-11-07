@@ -51,14 +51,15 @@ describe("publishing", () => {
     await save(workspace.id, "src/index.ts", say("one"));
     await build(workspace.id);
     const before = await deployment(workspace.id);
-    expect(before).toMatchObject({ publishedAt: null, hash: null });
+    // The page says who can use it from the Installation's configuration, which tests leave at its default.
+    expect(before).toMatchObject({ publishedAt: null, hash: null, openToEveryone: false });
     expect(new URL(before.url).hostname).toMatch(new RegExp(`^deployment-copy-[a-z0-9]{8}\\.${testAccess.appsDomain.replaceAll(".", "\\.")}$`));
     expect((await open(before.url)).status).toBe(404);
 
     const published = await publish(workspace.id);
     expect(published.status).toBe(200);
     const info = await published.json<Deployment>();
-    expect(info).toMatchObject({ url: before.url, hash: expect.any(String), publishedAt: expect.any(String) });
+    expect(info).toMatchObject({ url: before.url, hash: expect.any(String), publishedAt: expect.any(String), openToEveryone: false });
     expect(await (await open(info.url)).text()).toBe("one");
 
     // Two more Builds: the Preview moves on, and the Deployment stays.

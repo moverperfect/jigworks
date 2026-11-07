@@ -53,3 +53,18 @@ export function seeBuilds(seen: BuildsSeen, report: BuildsSeen["report"], previe
   if (preview !== seen.preview && preview?.hash) goodHash = preview.hash;
   return { report, preview, goodHash };
 }
+
+/**
+ * Who can use a live app, in the page's words: anyone with the link when the
+ * Installation's Deployments are open to everyone, and otherwise only the
+ * people the apps' Access application lets in, "this Jigworks's list".
+ */
+const whoCanUse = (openToEveryone: boolean) =>
+  openToEveryone ? "Anyone with the link" : "Only people on this Jigworks's list";
+
+/** What the first Publish says about who'll be able to use the app at `host`. */
+export const firstPublishNote = (openToEveryone: boolean, host: string) =>
+  `${whoCanUse(openToEveryone)} will be able to use it, at ${host}${openToEveryone ? "" : ", once they've signed in"}.`;
+
+/** The jig's label while the app is live. */
+export const liveNote = (openToEveryone: boolean) => `Live. ${whoCanUse(openToEveryone)} can use it.`;

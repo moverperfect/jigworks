@@ -1,7 +1,7 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import { previewTabUrl } from "./api";
 import type { AppAreaState } from "./appArea";
-import type { PublishState } from "./publish";
+import { liveNote, type PublishState } from "./publish";
 import { ErrorMessage } from "./ErrorMessage";
 import { formatTime } from "./ProblemsPanel";
 import { usePreviewLogs, type PreviewFrame } from "./usePreview";
@@ -31,7 +31,8 @@ const notes: Record<AppAreaState, { beside: string; instead: string }> = {
   // The Preview learns of its first Build a moment after the page does.
   ready: { beside: "", instead: "Loading your app…" },
   failed: { beside: "The last change didn't work.", instead: "The last change didn't work, and there's nothing to show yet." },
-  live: { beside: "Live. Anyone with the link can use it.", instead: "Loading your app…" },
+  // Beside it, `liveNote` says who can use it.
+  live: { beside: "", instead: "Loading your app…" },
 };
 
 /** What a ready app's label says about who sees it, while it isn't live. */
@@ -49,6 +50,7 @@ export function PreviewPanel({
   preview,
   state,
   publishing,
+  openToEveryone,
   onShowCode,
   showCodeButton,
 }: {
@@ -56,6 +58,8 @@ export function PreviewPanel({
   state: AppAreaState;
   /** The publish state, or null until the page knows it. */
   publishing: PublishState | null;
+  /** Whether the Installation's Deployments are open to everyone. */
+  openToEveryone: boolean;
   onShowCode(): void;
   showCodeButton: Ref<HTMLButtonElement>;
 }) {
@@ -66,7 +70,9 @@ export function PreviewPanel({
   const host = info && new URL(info.url).hostname;
   const ready = info?.ready ?? false;
   const note = notes[state];
-  const beside = state === "ready" && publishing && publishing !== "live" ? held[publishing] : note.beside;
+  let beside = note.beside;
+  if (state === "live") beside = liveNote(openToEveryone);
+  else if (state === "ready" && publishing && publishing !== "live") beside = held[publishing];
 
   function reload(event?: FormEvent) {
     event?.preventDefault();

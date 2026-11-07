@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { latestGoodHash, noBuildsSeen, publishState, seeBuilds } from "../client/src/publish";
+import {
+  firstPublishNote,
+  latestGoodHash,
+  liveNote,
+  noBuildsSeen,
+  publishState,
+  seeBuilds,
+} from "../client/src/publish";
 
 // What the app's page says about publishing: worked out from the hash of the
 // Build the Deployment runs and the hash of the latest successful Build.
@@ -66,5 +73,21 @@ describe("the Builds the page has seen", () => {
     const seen = seeBuilds(noBuildsSeen, built("a"), read("a"));
     expect(seeBuilds(seen, seen.report, seen.preview)).toBe(seen);
     expect(seeBuilds(seen, seen.report, read(null)).goodHash).toBe("a");
+  });
+});
+
+describe("who can use a live app", () => {
+  it("is anyone with the link when the Installation's Deployments are open to everyone", () => {
+    expect(firstPublishNote(true, "sunday-runs.example.app")).toBe(
+      "Anyone with the link will be able to use it, at sunday-runs.example.app.",
+    );
+    expect(liveNote(true)).toBe("Live. Anyone with the link can use it.");
+  });
+
+  it("is only the people on this Jigworks's list when they aren't", () => {
+    expect(firstPublishNote(false, "sunday-runs.example.app")).toBe(
+      "Only people on this Jigworks's list will be able to use it, at sunday-runs.example.app, once they've signed in.",
+    );
+    expect(liveNote(false)).toBe("Live. Only people on this Jigworks's list can use it.");
   });
 });

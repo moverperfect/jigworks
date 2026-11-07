@@ -4,7 +4,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import { ErrorMessage } from "./ErrorMessage";
 import type { Loader } from "./hooks";
 import { formatTime } from "./ProblemsPanel";
-import { publishState, type PublishState } from "./publish";
+import { firstPublishNote, publishState } from "./publish";
 
 /**
  * Publishing, in the page's header and its words (ADR 0018): whether the app
@@ -109,7 +109,7 @@ export function PublishControl({
         >
           {first ? (
             <>
-              Anyone with the link will be able to use it, at {host}. You can keep changing it here, and people get your
+              {firstPublishNote(asking.openToEveryone, new URL(asking.url).hostname)} You can keep changing it here, and people get your
               changes only when you publish them.
             </>
           ) : (

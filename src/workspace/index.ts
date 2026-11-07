@@ -477,7 +477,7 @@ export class Workspace extends Think<Env, ConversationState> {
   async deployment(): Promise<Deployment> {
     const label = this.appLabel();
     const published = await this.env.APP_HOSTS.getByName(label).published();
-    return { url: this.deploymentUrl(label), publishedAt: null, hash: null, ...published };
+    return { publishedAt: null, hash: null, ...published, ...this.deploymentAt(label) };
   }
 
   /**
@@ -507,11 +507,15 @@ export class Workspace extends Think<Env, ConversationState> {
       return { ok: false, error };
     }
     console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: result.published.hash }));
-    return { ok: true, deployment: { url: this.deploymentUrl(label), ...result.published } };
+    return { ok: true, deployment: { ...result.published, ...this.deploymentAt(label) } };
   }
 
-  private deploymentUrl(label: string): string {
-    return `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`;
+  /** Where the Deployment answers, and who it's open to. */
+  private deploymentAt(label: string): Pick<Deployment, "url" | "openToEveryone"> {
+    return {
+      url: `https://${deploymentHost(label, this.env.APPS_DOMAIN)}/`,
+      openToEveryone: this.env.DEPLOYMENTS_OPEN_TO_EVERYONE === true,
+    };
   }
 
   /** The names of the secrets the Developer gave the Workspace (ADR 0016). */

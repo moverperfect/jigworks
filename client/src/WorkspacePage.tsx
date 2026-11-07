@@ -222,6 +222,7 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
               preview={preview}
               state={areaState}
               publishing={publishing}
+              openToEveryone={deployed?.openToEveryone ?? false}
               onShowCode={() => swapView(true)}
               showCodeButton={showCodeButton}
             />
