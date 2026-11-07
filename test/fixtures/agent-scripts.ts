@@ -153,6 +153,42 @@ export const agentScripts: Record<string, Script> = {
     }
   },
 
+  // Breaks the app and asks a question in the same step, then, given the answer, mends it and says what it heard.
+  ask: (request) => {
+    const instruction = latestInstruction(request);
+    if (instruction.includes("[script:ask]")) {
+      if (afterToolResult(request)) return { text: "Carried on after asking." };
+      return {
+        toolCalls: [
+          { name: "write", input: { path: "/src/count.ts", content: brokenCount } },
+          { name: "ask", input: { question: "Which address should the emails go to?", choices: ["My sign-in address", "A different address"] } },
+        ],
+      };
+    }
+    // The answer arrives in the same message as ask's result.
+    const last = request.messages.at(-1)!;
+    const answering = typeof last.content === "string" || last.content.some((block) => block.type === "text");
+    if (!answering) return { text: `Going with: ${instruction}` };
+    return { toolCalls: [{ name: "write", input: { path: "/src/count.ts", content: fixedCount } }] };
+  },
+
+  // Asks with the same answer twice, which ask refuses, so the Turn carries on.
+  "ask-badly": (request) =>
+    afterToolResult(request)
+      ? { text: "I'll choose for you." }
+      : { toolCalls: [{ name: "ask", input: { question: "Shall I?", choices: ["Yes", " Yes "] } }] },
+
+  // Ticks off its steps and suggests next changes in one step, then answers.
+  suggest: (request) =>
+    afterToolResult(request)
+      ? { text: "Your app's ready." }
+      : {
+          toolCalls: [
+            { name: "steps", input: { steps: [{ label: "Making a sign-up sheet", done: true }] } },
+            { name: "suggest", input: { suggestions: ["Add a waiting list when it's full", "Make it look sportier"] } },
+          ],
+        },
+
   // Lists files forever, to reach the step limit.
   "keep-going": () => ({ toolCalls: [{ name: "list", input: { path: "/" } }] }),
 

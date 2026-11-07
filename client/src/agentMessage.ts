@@ -19,7 +19,20 @@ type MessageBlock =
   | { kind: "text"; text: string; streaming: boolean }
   /** `fromAgent` when the steps are the Agent's own list, rather than its tool calls described. */
   | { kind: "steps"; steps: Step[]; tools: ToolPart[]; fromAgent: boolean }
+  /** The question the Agent asked with `ask`. The page shows its choices as buttons only while it's open (`openQuestion`). */
+  | { kind: "question"; question: Question }
   | { kind: "thinking" };
+
+/** A question the Agent asked the Developer with `ask`, with the answers they can pick. */
+export interface Question {
+  /** The `ask` call's ID, so only the open question shows its answers. */
+  id: string;
+  question: string;
+  choices: string[];
+}
+
+/** The Agent's tools the page shows in their own way, rather than as steps or under "Technical details". */
+const shownOnThePage = new Set(["steps", "ask", "suggest"]);
 
 /** How each tool reads in plain words, when the Agent hasn't said its steps itself. */
 const plainTools: Record<string, string> = {
@@ -55,9 +68,15 @@ export function agentMessageBlocks(parts: UIMessage["parts"]): MessageBlock[] {
     if (isTextUIPart(part)) {
       if (part.text) blocks.push({ kind: "text", text: part.text, streaming: part.state === "streaming" });
     } else if (isToolUIPart(part)) {
-      if (stepsShown) continue;
+      const name = getToolName(part);
+      if (name === "ask") {
+        const question = questionOf(part);
+        if (question) blocks.push({ kind: "question", question });
+      }
+      // The suggestions show above the message box once the Turn ends (`suggestionsToShow`).
+      if (stepsShown || name === "ask" || name === "suggest") continue;
       stepsShown = true;
-      const others = tools.filter((tool) => getToolName(tool) !== "steps");
+      const others = tools.filter((tool) => !shownOnThePage.has(getToolName(tool)));
       const own = latestSteps(tools);
       const steps = own ?? describeTools(others);
       if (steps.length > 0 || others.length > 0) blocks.push({ kind: "steps", steps, tools: others, fromAgent: own !== null });
@@ -71,7 +90,7 @@ export function agentMessageBlocks(parts: UIMessage["parts"]): MessageBlock[] {
 /** The latest list the Agent gave with `steps`, once the model has finished writing it and the platform took it. */
 function latestSteps(tools: ToolPart[]): Step[] | null {
   for (const tool of tools.toReversed()) {
-    if (getToolName(tool) !== "steps" || !tookSteps.has(tool.state)) continue;
+    if (getToolName(tool) !== "steps" || !taken.has(tool.state)) continue;
     const steps = (tool.input as { steps?: unknown } | undefined)?.steps;
     if (!Array.isArray(steps)) continue;
     const valid = steps.filter(
@@ -82,7 +101,58 @@ function latestSteps(tools: ToolPart[]): Step[] | null {
   return null;
 }
 
-const tookSteps = new Set<ToolPart["state"]>(["input-available", "output-available"]);
+/** A tool call's states once the model has finished writing its input and the platform took it. */
+const taken = new Set<ToolPart["state"]>(["input-available", "output-available"]);
+
+/** The question in an `ask` call, once the platform took it, with its choices, or null if it isn't one. */
+function questionOf(tool: ToolPart): Question | null {
+  if (!taken.has(tool.state)) return null;
+  const { question, choices } = (tool.input ?? {}) as { question?: unknown; choices?: unknown };
+  if (typeof question !== "string" || question.trim() === "") return null;
+  const valid = plainStrings(choices);
+  return valid.length >= 2 ? { id: tool.toolCallId, question, choices: valid } : null;
+}
+
+/** The non-empty strings in `values`, if it's an array, without repeats. */
+function plainStrings(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.trim() !== ""))];
+}
+
+/**
+ * The question to show the answers to as buttons: the last one the
+ * Conversation's last message asked, while `idle`, that is with no Turn
+ * running. The Developer can type an answer instead.
+ */
+export function openQuestion(messages: UIMessage[], idle: boolean): Question | null {
+  const last = messages.at(-1);
+  if (!idle || last?.role !== "assistant") return null;
+  for (const part of last.parts.toReversed()) {
+    if (!isToolUIPart(part) || getToolName(part) !== "ask") continue;
+    const question = questionOf(part);
+    if (question) return question;
+  }
+  return null;
+}
+
+/**
+ * The suggestions to show above the message box: the Agent's latest from
+ * `suggest` since the Developer's last message, while `idle`, unless a
+ * question is open.
+ */
+export function suggestionsToShow(messages: UIMessage<{ from?: string }>[], idle: boolean): string[] {
+  if (!idle || openQuestion(messages, idle)) return [];
+  for (const message of messages.toReversed()) {
+    if (message.role === "user" && message.metadata?.from !== "check") return [];
+    if (message.role !== "assistant") continue;
+    for (const part of message.parts.toReversed()) {
+      if (!isToolUIPart(part) || getToolName(part) !== "suggest" || !taken.has(part.state)) continue;
+      const suggestions = plainStrings((part.input as { suggestions?: unknown } | undefined)?.suggestions);
+      if (suggestions.length > 0) return suggestions;
+    }
+  }
+  return [];
+}
 
 /** Tool calls in plain words, with calls in a row that read the same as one step. A call that failed still finished. */
 function describeTools(tools: ToolPart[]): Step[] {

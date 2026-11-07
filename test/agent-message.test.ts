@@ -1,6 +1,14 @@
 import type { UIMessage } from "ai";
 import { describe, expect, it } from "vitest";
-import { agentMessageBlocks, describeRetry, describeTool, stepsDone, turnProgress } from "../client/src/agentMessage";
+import {
+  agentMessageBlocks,
+  describeRetry,
+  describeTool,
+  openQuestion,
+  stepsDone,
+  suggestionsToShow,
+  turnProgress,
+} from "../client/src/agentMessage";
 
 // What an Agent message shows: its text, its steps in plain words, and the
 // tool calls behind them; and how far a running Turn has got, for the app area.
@@ -79,6 +87,87 @@ describe("an Agent message", () => {
 
   it("shows nothing for steps when it has no tool calls", () => {
     expect(agentMessageBlocks([text("Hello.")])).toEqual([{ kind: "text", text: "Hello.", streaming: false }]);
+  });
+});
+
+describe("a question", () => {
+  const ask = (question: string, choices: unknown, state = "output-available") => tool("ask", { question, choices }, state);
+  const question = { question: "Which address should the emails go to?", choices: ["My sign-in address", "A different address"] };
+  const shown = { ...question, id: expect.stringMatching(/^call-/) };
+  const asking = (parts: Part[] = []): UIMessage => ({
+    id: "2",
+    role: "assistant",
+    parts: [text("Happy to."), ...parts, ask(question.question, question.choices)],
+  });
+  const developer: UIMessage = { id: "1", role: "user", parts: [text("Email me when someone signs up")] };
+
+  it("shows where the Agent asked it, after its steps, and not as a step or under Technical details", () => {
+    const write = tool("write", { path: "/src/App.tsx" });
+    expect(agentMessageBlocks(asking([write]).parts)).toEqual([
+      { kind: "text", text: "Happy to.", streaming: false },
+      { kind: "steps", steps: [{ label: "Changing your app", done: true }], tools: [write], fromAgent: false },
+      { kind: "question", question: shown },
+    ]);
+    expect(agentMessageBlocks([ask(question.question, question.choices)])).toEqual([{ kind: "question", question: shown }]);
+  });
+
+  it("passes over a question the platform refused, or one still being written", () => {
+    for (const part of [ask("Shall I?", ["Yes"], "output-error"), ask("Shall I?", ["Yes", "No"], "input-streaming"), ask("Shall I?", ["Yes", "Yes"])]) {
+      expect(agentMessageBlocks([part])).toEqual([]);
+    }
+  });
+
+  it("has its choices shown as buttons only on the last message, and only when no Turn is running", () => {
+    expect(openQuestion([developer, asking()], true)).toEqual(shown);
+    expect(openQuestion([developer, asking()], false)).toBeNull();
+    // Answered: the answer is the Developer's next message.
+    expect(openQuestion([developer, asking(), { ...developer, id: "3" }], true)).toBeNull();
+    expect(openQuestion([developer, { id: "2", role: "assistant", parts: [text("Done.")] }], true)).toBeNull();
+  });
+
+  it("is the last one, when the Agent asked two at once, so only its choices show", () => {
+    const first = ask("Which colour?", ["Red", "Blue"]);
+    const second = ask("Which day?", ["Saturday", "Sunday"]);
+    const message: UIMessage = { id: "2", role: "assistant", parts: [first, second] };
+    expect(agentMessageBlocks(message.parts).map((block) => block.kind === "question" && block.question.id)).toEqual([
+      (first as { toolCallId: string }).toolCallId,
+      (second as { toolCallId: string }).toolCallId,
+    ]);
+    expect(openQuestion([developer, message], true)).toMatchObject({ id: (second as { toolCallId: string }).toolCallId, question: "Which day?" });
+  });
+});
+
+describe("the suggestions", () => {
+  const suggest = (suggestions: unknown, state = "output-available") => tool("suggest", { suggestions }, state);
+  const developer = (id: string): UIMessage<{ from?: string }> => ({ id, role: "user", parts: [text("Make a sign-up sheet")], metadata: { from: "developer" } });
+  const agent = (id: string, parts: Part[]): UIMessage<{ from?: string }> => ({ id, role: "assistant", parts });
+  const retry = (id: string): UIMessage<{ from?: string }> => ({ id, role: "user", parts: [text("Fix it")], metadata: { from: "check" } });
+  const ideas = ["Add a waiting list when it's full", "Make it look sportier"];
+
+  it("are the Agent's latest since the Developer's last message, once no Turn is running", () => {
+    const messages = [developer("1"), agent("2", [suggest(["Old idea"]), suggest(ideas), text("Your app's ready.")])];
+    expect(suggestionsToShow(messages, true)).toEqual(ideas);
+    expect(suggestionsToShow(messages, false)).toEqual([]);
+    // Across the platform's retries.
+    expect(suggestionsToShow([...messages, retry("3"), agent("4", [text("Fixed it.")])], true)).toEqual(ideas);
+  });
+
+  it("go once the Developer sends another message", () => {
+    const messages = [developer("1"), agent("2", [suggest(ideas)]), developer("3"), agent("4", [text("Done.")])];
+    expect(suggestionsToShow(messages, true)).toEqual([]);
+  });
+
+  it("don't show while a question is open, or when the platform refused them", () => {
+    const asked = tool("ask", { question: "Which colour?", choices: ["Red", "Blue"] });
+    expect(suggestionsToShow([developer("1"), agent("2", [suggest(ideas), asked])], true)).toEqual([]);
+    expect(suggestionsToShow([developer("1"), agent("2", [suggest(["One", "Two", "Three", "Four"], "output-error")])], true)).toEqual([]);
+  });
+
+  it("don't show in the Agent's message, as steps or under Technical details", () => {
+    expect(agentMessageBlocks([suggest(ideas), text("Your app's ready.")])).toEqual([{ kind: "text", text: "Your app's ready.", streaming: false }]);
+    expect(agentMessageBlocks([steps([["Making a sign-up sheet", true]]), suggest(ideas)])).toEqual([
+      { kind: "steps", steps: [{ label: "Making a sign-up sheet", done: true }], tools: [], fromAgent: true },
+    ]);
   });
 });
 

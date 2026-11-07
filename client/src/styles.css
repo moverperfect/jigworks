@@ -1418,6 +1418,39 @@ button.problem:hover {
   border-top: 1px solid var(--border);
 }
 
+/* A question the Agent asked: its answers as Marking-blue outlined buttons, side by side as they fit. */
+.agent-question {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.question-choices {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 9rem), 1fr));
+  gap: 0.5rem;
+}
+
+.button.question-choice {
+  border-color: var(--primary);
+  color: var(--primary);
+  white-space: normal;
+  text-align: center;
+}
+
+/* What to change next, in Marking blue above the message box, like the start page's ideas (`.start-idea`). */
+.suggestions {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0 1.25rem 0.75rem;
+  padding: 0;
+  list-style: none;
+}
+
+.suggestion:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 /* Raw HTML, shown as it was typed. */
 .markdown-html {
   white-space: pre-wrap;
@@ -1522,15 +1555,18 @@ h1.start-question {
 }
 
 .start-idea,
+.suggestion,
 .start-app-name {
   text-decoration: none;
 }
 
-.start-idea {
+.start-idea,
+.suggestion {
   color: var(--primary);
 }
 
 .start-idea:hover,
+.suggestion:hover:not(:disabled),
 .start-app-name:hover {
   text-decoration: underline;
 }

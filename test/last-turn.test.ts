@@ -28,6 +28,10 @@ describe("the last Turn's outcome", () => {
     expect(describeLastTurn(turn(notStarted))).toBe("The Agent didn't get your app started. Try again: say what you'd like to make.");
   });
 
+  it("says nothing after a first Turn that only asked a question, which starts the app once it's answered", () => {
+    expect(describeLastTurn(turn({ ...notStarted, asked: "question" }))).toBeNull();
+  });
+
   it("says why a Turn that stopped early stopped, from the reason the platform stored", () => {
     expect(describeLastTurn(turn(restarted))).toBe(
       "The Agent stopped before it finished, because Jigworks restarted while it was working. Send a message to carry on.",

@@ -1,6 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { TurnConfig } from "@cloudflare/think";
-import { generateText, tool, type LanguageModel, type ToolSet, type UIMessage } from "ai";
+import { generateText, tool, type LanguageModel, type StopCondition, type ToolSet, type UIMessage } from "ai";
 import { z } from "zod";
 import { normalisePath } from "../files";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
@@ -39,7 +39,8 @@ Talking with the Developer:
 - Use the page's words: "your app" for the Workspace and what it runs, "live" for an app that's published, "making sure it works" for the checks that end each Turn, and "a ready-made part" for a Package. Don't say Workspace, Turn, Check, Build, Template, Package, Preview or Deployment.
 - Keep replies short: a sentence or two before you start, and a few at the end saying what changed and what the Developer could try in their app.
 - Show what you're doing with the steps tool. Call it at the start of every Turn with the steps you plan, each in a few plain words such as "Adding a waiting list", and again as each step finishes, with that step ticked off. Make each call alongside your other tool calls in the same step, so it doesn't use up a step of its own. Keep to 2 to 6 steps. If your plan changes, call it with the new list.
-- When something only the Developer can decide would change what you build, ask in plain words rather than guess. Otherwise choose something sensible and say what you chose.
+- When something only the Developer can decide would change what you build, ask rather than guess: call ask with the question and 2 to 4 answers they can pick, and stop there. Put the question in ask only, not in your reply as well. Otherwise choose something sensible and say what you chose.
+- At the end of a Turn, suggest 2 or 3 next changes with suggest, each a short request in the Developer's own voice, such as "Add a waiting list when it's full". Not in a Turn that ends with a question.
 - When the platform asks you to fix problems after a Turn, fix them without fuss. The Developer sees this as normal work.
 
 Starting the app:
@@ -56,6 +57,15 @@ How you work:
 - Each successful Build becomes the Preview, which the Developer sees beside the Conversation as their app. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.`;
+
+/** Ends a Think turn after the step in which the Agent asked the Developer a question, once `ask` took it. */
+export const stopAfterQuestion: StopCondition<ToolSet> = ({ steps }) =>
+  steps.at(-1)?.toolResults.some((result) => result.toolName === "ask") ?? false;
+
+/** Whether an Agent message asked the Developer a question that `ask` took, and so ended its Think turn. */
+export function asksQuestion(message: UIMessage | undefined): boolean {
+  return message?.role === "assistant" && message.parts.some((part) => part.type === "tool-ask" && part.state === "output-available");
+}
 
 /** The Turn's instructions: Think's, then the Workspace's AGENTS.md as it is now. */
 export function withAgentsMd(system: string, agentsMd: string | null): string {
@@ -205,6 +215,31 @@ export function agentTools(workspace: {
           .max(10),
       }),
       execute: async () => "Shown.",
+    }),
+    ask: tool({
+      description:
+        "Asks the Developer a question only they can answer, with 2 to 4 answers they can pick as buttons, and ends your Turn: their answer comes as their next message. They can type a different answer instead. Ask only when the answer would change what you build.",
+      inputSchema: z.object({
+        question: z.string().trim().min(1).describe("The question, in plain words, such as Which address should the emails go to?"),
+        // Refused unless the page can show 2 different answers to pick.
+        choices: z
+          .array(z.string().trim().min(1).describe("An answer in a few words, as the Developer would say it, such as My sign-in address."))
+          .min(2)
+          .max(4)
+          .refine((choices) => new Set(choices).size === choices.length, "Each answer must be different."),
+      }),
+      execute: async () => "Asked. Your Turn ends here, and the Developer's answer comes as their next message.",
+    }),
+    suggest: tool({
+      description:
+        "Suggests up to 3 next changes to the app, which the page shows as buttons once your Turn ends, so the Developer can ask for one with a click. It doesn't end your Turn.",
+      inputSchema: z.object({
+        suggestions: z
+          .array(z.string().trim().min(1).describe("A short request in the Developer's own voice, such as Add a waiting list when it's full."))
+          .min(1)
+          .max(3),
+      }),
+      execute: async () => "Shown when your Turn ends.",
     }),
     start_app: tool({
       description:

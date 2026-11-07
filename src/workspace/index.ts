@@ -16,9 +16,11 @@ import tsRust from "ts-rust-wasm/ts_rust.wasm";
 import {
   agentModel,
   agentTools,
+  asksQuestion,
   fixMessage,
   developerMessage,
   instructions,
+  stopAfterQuestion,
   summarise,
   turnProviderOptions,
   withAgentsMd,
@@ -243,6 +245,8 @@ export class Workspace extends Think<Env, ConversationState> {
       instructions: withAgentsMd(ctx.system, this.files.read("AGENTS.md")),
       // A retry gets the steps the Turn has left.
       maxSteps: turnSteps - (this.turnUsage?.steps ?? 0),
+      // A question ends the Turn: the Developer's answer starts the next.
+      stopWhen: stopAfterQuestion,
       providerOptions: turnProviderOptions,
     };
   }
@@ -827,6 +831,8 @@ export class Workspace extends Think<Env, ConversationState> {
       let ended = await this.endOfTurn();
       while (
         ended &&
+        // A Turn that ends with a question gets its Check and Build, but no retries (ADR 0018).
+        !asksQuestion(this.messages.at(-1)) &&
         result.status === "completed" &&
         (ended.check.counts.error > 0 || !ended.build.ok) &&
         lastTurn.retries < maxRetries &&
@@ -864,6 +870,7 @@ export class Workspace extends Think<Env, ConversationState> {
       const startedNow = this.appStarted();
       lastTurn.startedApp = !hadStarted && startedNow;
       lastTurn.noApp = !startedNow;
+      lastTurn.asked = asksQuestion(this.messages.at(-1)) ? "question" : null;
       // The clock moves only at I/O, so this leaves out the last Check.
       console.log(JSON.stringify({ event: "turn", workspace: this.name, durationMs: Date.now() - started, ...lastTurn, ...usage }));
       this.setState({ ...this.state, turn: null, lastTurn });

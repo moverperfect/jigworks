@@ -42,6 +42,8 @@ export interface LastTurn {
   startedApp?: boolean;
   /** Whether the app still hadn't started when the Turn ended, so no Check, Build or tests ran. Missing from Turns before then. */
   noApp?: boolean;
+  /** "question" when the Turn ended with the Agent asking the Developer one (`ask`), or null. Missing from Turns before the Agent could ask. */
+  asked?: "question" | null;
 }
 
 /**
