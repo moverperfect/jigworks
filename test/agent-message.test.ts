@@ -2,6 +2,7 @@ import type { UIMessage } from "ai";
 import { describe, expect, it } from "vitest";
 import {
   agentMessageBlocks,
+  appStartedIn,
   describeRetry,
   describeTool,
   openQuestion,
@@ -319,5 +320,16 @@ describe("a running Turn's progress", () => {
       current: "Making sure it works",
       steps: [{ label: "Adding a list", done: true }],
     });
+  });
+});
+
+describe("starting the app", () => {
+  const developer: UIMessage = { id: "1", role: "user", parts: [text("A sign-up sheet for my running club")] };
+  const agent = (...parts: Part[]): UIMessage => ({ id: "2", role: "assistant", parts });
+
+  it("is seen once start_app has finished, so the page can show the app's name while the Turn goes on", () => {
+    expect(appStartedIn([developer])).toBe(false);
+    expect(appStartedIn([developer, agent(tool("start_app", { template: "worker-react", name: "Sunday Runs" }, "input-available"))])).toBe(false);
+    expect(appStartedIn([developer, agent(tool("start_app", { template: "worker-react", name: "Sunday Runs" }), tool("write", {}))])).toBe(true);
   });
 });

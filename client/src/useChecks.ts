@@ -46,9 +46,10 @@ const newer = <T extends Shown<{ ranAt: string }>>(old: T | null, next: T): T =>
 
 /**
  * A Workspace's Checks, each followed by a Build. Shows the stored reports on
- * opening, then runs a Check and a Build in case the files changed since.
+ * opening, then runs a Check and a Build in case the files changed since,
+ * unless the app wasn't `started` then: with no files, there's nothing to check.
  */
-export function useChecks(id: string): Checks {
+export function useChecks(id: string, started: boolean): Checks {
   const [shown, setShown] = useState<(Shown<CheckReport> & { isCurrent: boolean }) | null>(null);
   const [checking, setChecking] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
@@ -118,7 +119,7 @@ export function useChecks(id: string): Checks {
       // The Check and Build that follow show their own errors.
       .catch(() => {})
       .finally(() => {
-        if (current) checks.checkNow();
+        if (current && started) checks.checkNow();
       });
 
     return () => {

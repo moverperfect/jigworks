@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   firstPublishNote,
+  publishChangesNote,
   latestGoodHash,
   liveNote,
   forgetBuilds,
@@ -105,5 +106,15 @@ describe("who can use a live app", () => {
       "Only people on this Jigworks's list will be able to use it, at sunday-runs.example.app, once they've signed in.",
     );
     expect(liveNote(false)).toBe("Live. Only people on this Jigworks's list can use it.");
+  });
+});
+
+describe("publishing changes", () => {
+  it("says when the version people have now was published, in plain words", () => {
+    const now = new Date("2026-11-07T15:00:00.000Z");
+    expect(publishChangesNote("2026-11-07T14:55:00.000Z", now)).toBe(
+      "People with the link will get the latest version of your app, in place of the one published 5 minutes ago. That one can't be brought back.",
+    );
+    expect(publishChangesNote("2026-11-06T09:00:00.000Z", now)).toContain("in place of the one published yesterday.");
   });
 });

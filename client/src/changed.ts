@@ -1,4 +1,4 @@
-// When an app last changed, as the start page says it.
+// When something happened to an app, as the page says it.
 
 const minute = 60_000;
 const hour = 60 * minute;
@@ -9,10 +9,13 @@ const words = new Intl.RelativeTimeFormat("en-GB", { numeric: "auto" });
 const midnight = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
 
 /** Such as "changed just now", "changed 3 hours ago", "changed yesterday" or "changed last week". */
-export function changedWhen(changedAt: string, now = new Date()): string {
-  const then = new Date(changedAt);
+export const changedWhen = (changedAt: string, now = new Date()) => `changed ${howLongAgo(changedAt, now)}`;
+
+/** Such as "just now", "3 hours ago", "yesterday" or "last week". */
+export function howLongAgo(at: string, now = new Date()): string {
+  const then = new Date(at);
   const elapsed = now.getTime() - then.getTime();
-  if (elapsed < minute) return "changed just now";
+  if (elapsed < minute) return "just now";
   // Rounded, as a day with a clock change is an hour short or long.
   const days = Math.round((midnight(now) - midnight(then)) / day);
   const [count, unit]: [number, Intl.RelativeTimeFormatUnit] =
@@ -22,5 +25,5 @@ export function changedWhen(changedAt: string, now = new Date()): string {
     : days < 30 ? [Math.floor(days / 7), "week"]
     : days < 365 ? [Math.min(Math.floor(days / 30), 11), "month"]
     : [Math.floor(days / 365), "year"];
-  return `changed ${words.format(-count, unit)}`;
+  return words.format(-count, unit);
 }

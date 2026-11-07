@@ -146,6 +146,13 @@ export function openQuestion(messages: UIMessage[], idle: boolean): Question | n
   return null;
 }
 
+/** Whether the Agent's `start_app` call has finished, so the app has its name although the Turn goes on. */
+export function appStartedIn(messages: UIMessage[]): boolean {
+  return messages.some((message) =>
+    message.parts.some((part) => isToolUIPart(part) && getToolName(part) === "start_app" && part.state === "output-available"),
+  );
+}
+
 /**
  * The suggestions to show above the message box: the Agent's latest from
  * `suggest` since the Developer's last message, while `idle`, unless a

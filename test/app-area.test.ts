@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { appAreaState } from "../client/src/appArea";
+import { appAreaNotes, appAreaState, type AppAreaState } from "../client/src/appArea";
+import type { PublishState } from "../client/src/publish";
 import type { LastTurn } from "../src/shared/conversation";
 
 // What the app's page shows in place of the app: worked out from the
@@ -77,5 +78,29 @@ describe("the app area's state", () => {
     expect(appAreaState(idle, true, "live-with-changes")).toBe("ready");
     expect(appAreaState(running, true, "live")).toBe("updating");
     expect(appAreaState(ended({ buildErrors: 1, restored: true }), true, "live")).toBe("failed");
+  });
+});
+
+describe("what the app area says", () => {
+  const progress = { current: "Adding a waiting list", steps: [] };
+  const said = (state: AppAreaState, publishing: PublishState | null = null) =>
+    appAreaNotes(state, publishing, state === "first-build" || state === "updating" ? progress : null, false);
+
+  it("is that the app is being made during the first build, with the Turn's progress in its place", () => {
+    expect(said("first-build")).toEqual({ beside: "Making your app…", instead: "" });
+  });
+
+  it("is what's being updated while a Turn changes a working app", () => {
+    expect(said("updating").beside).toBe("Updating your app: Adding a waiting list…");
+  });
+
+  it("is who can see a ready app, and who can use a live one", () => {
+    expect(said("ready", "not-published").beside).toBe("Only you can see this until you publish.");
+    expect(said("ready", "live-with-changes").beside).toBe("Changes not yet published. People with the link have the earlier version.");
+    expect(said("live", "live").beside).toBe("Live. Only people on this Jigworks's list can use it.");
+  });
+
+  it("is that the change didn't work after a Turn that was undone", () => {
+    expect(said("failed")).toEqual({ beside: "That didn't work. Your app hasn't changed.", instead: "That didn't work. Nothing's been made yet." });
   });
 });

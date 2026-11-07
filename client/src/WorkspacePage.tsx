@@ -1,7 +1,7 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { ApiError, getDeployment, getWorkspace, listFiles, type Workspace } from "./api";
-import { turnProgress } from "./agentMessage";
+import { appStartedIn, turnProgress } from "./agentMessage";
 import { appAreaState } from "./appArea";
 import { AppName } from "./AppName";
 import { ConversationPanel } from "./ConversationPanel";
@@ -46,9 +46,9 @@ export function WorkspacePage({ id }: { id: string }) {
   const { state } = loaded;
   const workspace = state.status === "ready" ? state.data : undefined;
   useTitle(workspace?.name ?? "Your app");
-  // The Agent names an app when it starts it, so until then the page looks for the name whenever no Turn is running.
+  // The Agent names an app when it starts it, and undoing that Turn takes the name back (ADR 0018), so the page looks
+  // for the name whenever no Turn is running, and once `start_app` has finished.
   const lookForName = () => {
-    if (workspace?.template !== null) return;
     getWorkspace(id).then(
       (latest) => loaded.update(() => latest),
       () => {},
@@ -69,16 +69,16 @@ export function WorkspacePage({ id }: { id: string }) {
           <p>It may have been deleted.</p>
         </div>
       )}
-      {workspace && <WorkspaceView workspace={workspace} onIdle={lookForName} onRenamed={(renamed) => loaded.update(() => renamed)} />}
+      {workspace && <WorkspaceView workspace={workspace} lookForName={lookForName} onRenamed={(renamed) => loaded.update(() => renamed)} />}
     </div>
   );
 }
 
-function WorkspaceView({ workspace, onIdle, onRenamed }: { workspace: Workspace; onIdle(): void; onRenamed(workspace: Workspace): void }) {
+function WorkspaceView({ workspace, lookForName, onRenamed }: { workspace: Workspace; lookForName(): void; onRenamed(workspace: Workspace): void }) {
   const { id } = workspace;
   const pageId = useId();
   const files = useLoad(() => listFiles(id));
-  const checks = useChecks(id);
+  const checks = useChecks(id, workspace.template !== null);
   const tests = useTests(id);
   const conversation = useConversation(id);
   const { state } = conversation;
@@ -124,7 +124,7 @@ function WorkspaceView({ workspace, onIdle, onRenamed }: { workspace: Workspace;
   // A Turn that ran while the socket was closed shows as a new `lastTurn`.
   const turnKey = state && `${state.turn?.startedAt ?? ""} ${state.lastTurn?.endedAt ?? ""}`;
   const seenTurnKey = useRef<string | null>(null);
-  const whenIdle = useEffectEvent(onIdle);
+  const findName = useEffectEvent(lookForName);
   const onTurnEnd = useEffectEvent(() => {
     waitingForBuild.current = { goodHash: preview.goodHash };
     files.reload();
@@ -151,9 +151,15 @@ function WorkspaceView({ workspace, onIdle, onRenamed }: { workspace: Workspace;
     if (locked) waitingForBuild.current = null;
     if (turnKey === null || turnKey === previous || locked) return;
     // Also when the page first sees the Conversation: a first Turn may have named the app before the socket connected.
-    whenIdle();
+    findName();
     if (previous !== null) onTurnEnd();
   }, [turnKey, locked]);
+
+  // The first Turn goes on after naming the app, so the header shows the name from then.
+  const appStarted = appStartedIn(conversation.messages);
+  useEffect(() => {
+    if (appStarted) findName();
+  }, [appStarted]);
 
   // A Turn changed the app when a new Build succeeded, so bring the App tab forward to show it.
   // Focus left in the Conversation would be hidden with it, so it moves to the App tab.

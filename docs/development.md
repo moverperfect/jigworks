@@ -10,7 +10,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
   1. Start the scripted model with `pnpm agent:fake`, which serves 127.0.0.1:8788.
   2. Add `AGENT_BASE_URL=http://127.0.0.1:8788/v1` and `ANTHROPIC_API_KEY=local-fake-key` to `.dev.vars`, and remove them afterwards.
   3. Start the Developer's first message with `[script:<name>]`. The scripts are in `test/fixtures/agent-scripts.ts`.
-- **Stopping servers:** `wrangler` and `workerd` processes outlive the task that started them. From the repo root, `pkill -f "$PWD/node_modules/.*(wrangler|workerd)"`.
+- **Stopping servers:** `wrangler` and `workerd` processes outlive the task that started them. From the repo root, `pkill -f "$PWD/node_modules/.*(wrangler|workerd)"`. That also stops a live check's `wrangler tail` from the same checkout, so during a live check use `pkill -f "$PWD/node_modules/.*(wrangler dev|workerd)"`.
 - **vitest stays on 4,** at 4.1.12, with `@cloudflare/vitest-plugin` 1.4.0 and `wrangler` 4.149.0:
   - Under vitest 5, plugin 1.4.0 fails everywhere.
   - Plugin 1.4.7 needs a miniflare beta. It passes locally, but crashes `builds.test.ts` and `files.test.ts` on GitHub's 2-core runner, even one file at a time.
