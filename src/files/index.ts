@@ -19,6 +19,10 @@ export interface Files {
   /** Every Workspace file as bytes, for files that may not be text. Hidden paths are left out. */
   bytes(): Map<string, Uint8Array>;
   write(path: string, text: string): Promise<void>;
+  /** Copies every Workspace file and directory aside, replacing the last copy. */
+  copyAside(): void;
+  /** Puts the files and directories back as they were copied, all at once. */
+  restoreCopy(): void;
 }
 
 /** The largest file a Workspace or a Package keeps: one SQLite row holds at most 2 MB (ADR 0004). */
@@ -30,6 +34,11 @@ export const maxFileBytes = 1_900_000;
  */
 const root = "/";
 const table = "cf_workspace_default";
+// The copy `copyAside` makes of the store's rows, so `restoreCopy` puts them back as they were.
+const copyTable = "workspace_copy";
+// The store's rows that are Workspace files and directories: not its root, and not hidden (see `isHidden`).
+// GLOB matches case, as `isHidden` does, so `Attachments/` stays a Workspace folder; LIKE wouldn't.
+const workspaceRows = "path != '/' AND path != '/attachments' AND path NOT GLOB '/attachments/*'";
 
 /**
  * Paths the Developer never sees, and that the zip export and the Check skip:
@@ -65,7 +74,8 @@ const textOf = (row: Row) =>
  * its table directly. It stores text as UTF-8, and as base64 when Think's bash
  * writes a file back.
  */
-export function storeFiles(store: FileStore, sql: SqlStorage): Files {
+export function storeFiles(store: FileStore, storage: DurableObjectStorage): Files {
+  const { sql } = storage;
   const select = <T extends { path: string }>(columns: string, where = "", ...bindings: string[]): T[] => {
     try {
       return sql
@@ -80,6 +90,8 @@ export function storeFiles(store: FileStore, sql: SqlStorage): Files {
   };
   const rows = (where = "", ...bindings: string[]) => select<Row>("path, content, content_encoding", where, ...bindings);
 
+  const exists = (name: string) => sql.exec("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", name).toArray().length > 0;
+
   return {
     list: () => select<{ path: string }>("path").map((row) => fromStore(row.path)),
     readBytes: (path) => {
@@ -93,5 +105,18 @@ export function storeFiles(store: FileStore, sql: SqlStorage): Files {
     snapshot: () => new Map(rows().map((row) => [fromStore(row.path), textOf(row)])),
     bytes: () => new Map(rows().map((row) => [fromStore(row.path), bytesOf(row)])),
     write: (path, content) => store.writeFile(toStore(path), content),
+    copyAside: () => {
+      sql.exec(`DROP TABLE IF EXISTS ${copyTable}`);
+      // The store creates its table on first use, so before then there's nothing to copy.
+      if (exists(table)) sql.exec(`CREATE TABLE ${copyTable} AS SELECT * FROM ${table} WHERE ${workspaceRows}`);
+    },
+    restoreCopy: () => {
+      if (!exists(table)) return;
+      // In one transaction, so a restart can't leave the files half put back.
+      storage.transactionSync(() => {
+        sql.exec(`DELETE FROM ${table} WHERE ${workspaceRows}`);
+        if (exists(copyTable)) sql.exec(`INSERT INTO ${table} SELECT * FROM ${copyTable}`);
+      });
+    },
   };
 }

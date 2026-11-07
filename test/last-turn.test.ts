@@ -70,6 +70,30 @@ describe("the last Turn's outcome", () => {
     expect(describeLastTurn(turn({ buildErrors: 1, retries: 3 }))).toBe("The Agent couldn't get the change working after 4 tries.");
   });
 
+  it("says the app hasn't changed after a Turn that was undone, and to try a different way", () => {
+    const undone = { checkErrors: 1, retries: 3, restored: true };
+    expect(describeLastTurn(turn(undone))).toBe("That didn't work. Your app hasn't changed. Try asking for it in a different way.");
+    expect(describeLastTurn(turn({ ...undone, noApp: true }))).toBe(
+      "That didn't work. Nothing's been made yet. Try asking for it in a different way.",
+    );
+    // The Developer answers the question rather than trying another way.
+    expect(describeLastTurn(turn({ ...undone, retries: 0, asked: "question" }))).toBe(
+      "That didn't work. Your app hasn't changed. Answer the Agent's question to carry on.",
+    );
+    expect(describeLastTurn(turn({ ...undone, retries: 0, asked: "secret" }))).toBe(
+      "That didn't work. Your app hasn't changed. Add the secret the Agent asked for to carry on.",
+    );
+    expect(describeLastTurn(turn({ ...undone, outOfSteps: true }))).toBe(
+      "The Agent reached its limit for one message before it got the change working. Your app hasn't changed. Try asking for a smaller change.",
+    );
+    expect(describeLastTurn(turn({ ...undone, ...restarted, checkErrors: 1 }))).toBe(
+      "The Agent stopped before it finished, because Jigworks restarted while it was working, and its changes didn't work. Your app hasn't changed. Send a message to try again.",
+    );
+    expect(describeLastTurn(turn({ ...undone, ...restarted, checkErrors: 1, noApp: true }))).toBe(
+      "The Agent stopped before it finished, because Jigworks restarted while it was working, and its changes didn't work. Nothing's been made yet. Send a message to try again.",
+    );
+  });
+
   it("says when the change is in but the app's tests fail", () => {
     expect(describeLastTurn(turn({ testFailures: 1 }))).toBe("The change is in, but 1 of your app's tests fails.");
     expect(describeLastTurn(turn({ testFailures: 2 }))).toBe("The change is in, but 2 of your app's tests fail.");

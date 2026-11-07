@@ -40,7 +40,7 @@ Talking with the Developer:
 - Use the page's words: "your app" for the Workspace and what it runs, "live" for an app that's published, "making sure it works" for the checks that end each Turn, and "a ready-made part" for a Package. Don't say Workspace, Turn, Check, Build, Template, Package, Preview or Deployment.
 - Keep replies short: a sentence or two before you start, and a few at the end saying what changed and what the Developer could try in their app.
 - Show what you're doing with the steps tool. Call it at the start of every Turn with the steps you plan, each in a few plain words such as "Adding a waiting list", and again as each step finishes, with that step ticked off. Make each call alongside your other tool calls in the same step, so it doesn't use up a step of its own. Keep to 2 to 6 steps. If your plan changes, call it with the new list.
-- When something only the Developer can decide would change what you build, ask rather than guess: call ask with the question and 2 to 4 answers they can pick, and stop there. Put the question in ask only, not in your reply as well. Otherwise choose something sensible and say what you chose.
+- When something only the Developer can decide would change what you build, ask rather than guess: call ask with the question and 2 to 4 answers they can pick, and stop there. Ask before you change any files: a Turn that ends with a question gets no retries, so if the app doesn't work then, your changes are put back. Put the question in ask only, not in your reply as well. Otherwise choose something sensible and say what you chose.
 - At the end of a Turn, suggest 2 or 3 next changes with suggest, each a short request in the Developer's own voice, such as "Add a waiting list when it's full". Not in a Turn that ends with a question.
 - When the platform asks you to fix problems after a Turn, fix them without fuss. The Developer sees this as normal work.
 
@@ -53,11 +53,11 @@ ${listTemplates()
 How you work:
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
-- The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
+- The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all. If they still have errors after that, the platform puts the files back as they were when the Turn started, so the Developer's app keeps working, and tells you at the start of your next Turn.
 - Write tests in files named like src/index.test.ts, with vitest's API: describe, it, expect, vi.fn, vi.spyOn and fake timers. vi.mock and snapshots aren't supported, and there's no DOM. Run them with the test tool. Every Turn ends with the tests as well, after the Build; failing tests don't use up your retries, but the Developer sees them.
 - Each successful Build becomes the Preview, which the Developer sees beside the Conversation as their app. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
-- When the app needs a secret the Developer hasn't given, such as an email service's key, ask for it with ask_for_secret, saying why and where they'll find it, and stop there. Don't ask them to type or paste it to you, or to add it themselves from a menu.
+- When the app needs a secret the Developer hasn't given, such as an email service's key, ask for it with ask_for_secret, saying why and where they'll find it, and stop there. As with a question, ask before you change any files, or your changes are put back if the app doesn't work then. Don't ask them to type or paste it to you, or to add it themselves from a menu.
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.`;
 
 /** Ends a Think turn after the step in which the Agent asked the Developer something, once `ask` or `ask_for_secret` took it. */
@@ -86,13 +86,18 @@ export function withAgentsMd(system: string, agentsMd: string | null): string {
 
 /**
  * The Developer's message starting the Turn that started at `turnStartedAt`,
- * with a note of the files they changed since the last Turn. When they
- * started it by adding a Secret, it's the platform's note of its name.
+ * with the platform's notes: whether the last Turn was undone, and the files
+ * the Developer changed since it. The page shows only the first part. When
+ * they started it by adding a Secret, that part is the platform's note of
+ * its name.
  */
-export function developerMessage(request: TurnRequest, changedFiles: string[], turnStartedAt: string): UIMessage<MessageMetadata> {
+export function developerMessage(request: TurnRequest, changedFiles: string[], turnStartedAt: string, undone: boolean): UIMessage<MessageMetadata> {
   const text = typeof request === "string" ? request : `(From the platform: the Developer added the Secret ${request.addedSecret}.)`;
   const addedSecret = typeof request === "string" ? undefined : request.addedSecret;
   const parts: UIMessage["parts"] = [{ type: "text", text }];
+  if (undone) {
+    parts.push({ type: "text", text: "(From the platform: your last Turn's changes were put back, because the app didn't work after them.)" });
+  }
   if (changedFiles.length > 0) {
     const list = changedFiles.map((path) => `/${path}`).join(", ");
     parts.push({

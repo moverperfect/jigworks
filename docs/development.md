@@ -56,7 +56,7 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
 
 - **Think 0.20.2:** `onChatResponse` can't start another turn, so `runDeveloperTurn` drives Turns with `saveMessages` from an alarm (ADR 0011). The Workspace relies on Think and Agents SDK behaviour that a version bump could change:
   - **The socket only watches:** `webSocketMessage` is overridden to drop client frames, then hands the rest to `this.lifecycle.webSocketMessage`. The SDK installs its own handler only if the class has none.
-  - **No recovery:** `onChatRecovery` returns `{ continue: false }`, so a restart ends a Turn.
+  - **No recovery:** `onChatRecovery` returns `{ continue: false }`, so a restart ends a Turn. `onStart` runs inside `blockConcurrencyWhile`, so the Turn's Check and Build, which undo it if the app is broken (ADR 0018), run afterwards in an alarm: a Build calls the object back, which would wait for `onStart` forever.
   - **Late connections:** `onConnect` sends the history to a socket that connects mid-Turn.
   - **Hooks:** override them as methods, not arrow-function fields, and give them names Think doesn't own. Think owns `queue`, `runTurn`, `session`, `messages` and `state`.
   - **Tests:** `test/conversation.test.ts` covers each of these.
@@ -65,6 +65,7 @@ Most of these are in code comments and ADRs too. Recheck them first when upgradi
   - The provider reads `ANTHROPIC_BASE_URL` itself and throws when it's empty, so ours is `AGENT_BASE_URL`.
   - The Messages API needs the first message to be the user's, so Start fresh keeps the first message.
   - The settings are in `src/agent/index.ts`: effort `high`, `fallbacks: "default"`, `drop_block` for mismatched thinking blocks, and automatic caching.
+- **Undoing a Turn** copies and restores the rows of the file store's own table, `cf_workspace_default` (`src/files/index.ts`), in one transaction, so a restart can't leave the files half put back. The copy takes the table's columns as they are when the Turn starts, so an upgrade of Think or `@cloudflare/shell` that changes them would fail to undo a Turn that was running across the deploy. After upgrading either, check the table, and run `test/files.test.ts`.
 - **Parallel tool calls:** Opus calls `edit`, `bash`, `check` and `build` in the same step. `check` and `build` wait for their siblings, counted with `beforeToolCall` and `afterToolCall`.
 - **Agents SDK upgrades:** `agents` pins its MCP SDK peers (`@modelcontextprotocol/sdk`, `client` and `server`) to exact versions. pnpm keeps the peers it has already installed, so after bumping `agents`, check that `pnpm install` reports no "unmet peer". If it does, add the pinned versions as direct dependencies, install, and then remove them; the lockfile keeps the new versions.
 - **App data (ADR 0015):** an app's Durable Object instances are facets in its app host. The platform relies on facet behaviour that a workerd upgrade could change, and `test/app-data.test.ts` covers each:

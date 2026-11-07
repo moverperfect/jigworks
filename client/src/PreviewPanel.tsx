@@ -33,7 +33,8 @@ const notes: Record<AppAreaState, { beside: string; instead: string }> = {
   updating: { beside: "", instead: "Building your app…" },
   // The Preview learns of its first Build a moment after the page does.
   ready: { beside: "", instead: "Loading your app…" },
-  failed: { beside: "The last change didn't work.", instead: "The last change didn't work, and there's nothing to show yet." },
+  // The Turn was undone (ADR 0018), and there's nothing to show when it was the one that started the app.
+  failed: { beside: "That didn't work. Your app hasn't changed.", instead: "That didn't work. Nothing's been made yet." },
   // Beside it, `liveNote` says who can use it.
   live: { beside: "", instead: "Loading your app…" },
 };

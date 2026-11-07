@@ -70,7 +70,7 @@ export function ConversationPanel({
   const canSend = conversation.idle && !posting && !unsavedChanges;
   const turnRunning = state?.turn != null;
   const question = openQuestion(messages, conversation.idle);
-  const suggestions = suggestionsToShow(messages, conversation.idle);
+  const suggestions = suggestionsToShow(messages, conversation.idle, conversation.state?.lastTurn?.restored === true);
 
   useLayoutEffect(() => {
     const element = list.current;

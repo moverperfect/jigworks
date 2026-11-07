@@ -133,7 +133,14 @@ function WorkspaceView({ workspace, onIdle, onRenamed }: { workspace: Workspace;
     // A Build always follows a Check, so a missing Build runs both. Before the app
     // has started there's nothing to check.
     const lastTurn = state?.lastTurn;
-    if (lastTurn?.noApp) return;
+    if (lastTurn?.noApp) {
+      // Undoing the Turn that started the app took its Preview with it (ADR 0018), which isn't a change to show.
+      if (lastTurn.restored) {
+        waitingForBuild.current = null;
+        preview.forget();
+      }
+      return;
+    }
     if (lastTurn?.checkErrors == null || lastTurn.buildErrors == null) checks.checkNow();
     else checks.showLatest();
     tests.showLatest();

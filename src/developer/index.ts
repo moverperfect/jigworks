@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { newAppName } from "../shared/workspace-name";
 
 /** What the start page shows for one Workspace. A type, not an interface, so it can type a row of the list's table. */
 export type WorkspaceRecord = {
@@ -113,6 +114,11 @@ export class Developer extends DurableObject<Env> {
   /** Gives the list the name and the Template the Agent chose when it started the app. */
   appStarted(id: string, name: string, template: string): void {
     this.ctx.storage.sql.exec("UPDATE workspaces SET name = ?, template = ? WHERE id = ?", name, template, id);
+  }
+
+  /** Lists a Workspace as it was before its app started, after undoing the Turn that started it (ADR 0018). */
+  appForgotten(id: string): void {
+    this.ctx.storage.sql.exec("UPDATE workspaces SET name = ?, template = '' WHERE id = ?", newAppName, id);
   }
 
   /** Renames a Workspace, to a name the caller has checked. Returns it as it is now, or null if there's no such Workspace. */

@@ -49,11 +49,20 @@ export const agentScripts: Record<string, Script> = {
     return { toolCalls: [{ name: "write", input: { path: "/src/index.ts", content: fixing ? buildableIndex : unbuildableIndex } }] };
   },
 
-  // Writes a file with a type error, and never fixes it.
-  "never-fixes": (request) =>
+  // Adds a Package, writes a file with a type error and deletes the Template's test, and never fixes it.
+  // Later messages from the Developer it only repeats, so a test can read the platform's notes.
+  "break-and-give-up": (request) =>
     afterToolResult(request)
       ? { text: "I can't fix it." }
-      : { toolCalls: [{ name: "write", input: { path: "/src/count.ts", content: brokenCount } }] },
+      : laterMessage(request)
+        ? { text: `I was told: ${latestInstruction(request)}` }
+        : {
+          toolCalls: [
+            { name: "add_package", input: { name: "@fake/a" } },
+            { name: "write", input: { path: "/src/count.ts", content: brokenCount } },
+            { name: "delete", input: { path: "/src/index.test.ts" } },
+          ],
+        },
 
   // Pauses mid-reply, so a test can act while the Turn streams.
   slow: () => ({ text: "Done, slowly.", delayMs: 2_000 }),
@@ -118,6 +127,16 @@ export const agentScripts: Record<string, Script> = {
       return { toolCalls: [{ name: "start_app", input: { template: "worker", name: "Second go" } }] };
     }
     return { text: "Couldn't start it again." };
+  },
+
+  // Starts the app, writes a file with a type error, and never fixes it.
+  // A later message from the Developer starts it again, and leaves it working.
+  "start-and-break": (request) => {
+    if (latestInstruction(request).startsWith("After your Turn")) return { text: "I can't fix it." };
+    if (laterMessage(request)) return echoTool("start_app", { template: "worker", name: "Second go" })(request);
+    if (!afterToolResult(request)) return { toolCalls: [{ name: "start_app", input: { template: "worker", name: "Sunday Runs" } }] };
+    if (lastToolResult(request).startsWith("Started")) return { toolCalls: [{ name: "write", input: { path: "/src/count.ts", content: brokenCount } }] };
+    return { text: "Done." };
   },
 
   // Calls every tool that needs the app at once, then stops.
@@ -238,6 +257,12 @@ export const agentScripts: Record<string, Script> = {
 function echoTool(name: string, input: Record<string, unknown>): Script {
   return (request) =>
     afterToolResult(request) ? { text: `The tool said: ${lastToolResult(request)}` } : { toolCalls: [{ name, input }] };
+}
+
+/** Whether the newest instruction is a Developer's message after the first, not the first or the platform's after a Check. */
+function laterMessage(request: MessagesRequest): boolean {
+  const latest = latestInstruction(request);
+  return !latest.includes("[script:") && !latest.startsWith("After your Turn");
 }
 
 /** The newest user message that isn't only tool results: the Developer's, or the platform's after a Check. */

@@ -47,12 +47,18 @@ describe("the app area's state", () => {
     expect(appAreaState(ended({}), true)).toBe("ready");
   });
 
-  it("is failed when the last Turn's Check had errors or its Build failed", () => {
-    expect(appAreaState(ended({ checkErrors: 3, retries: 3 }), true)).toBe("failed");
-    expect(appAreaState(ended({ buildErrors: 1 }), true)).toBe("failed");
-    expect(appAreaState(ended({ status: "error", error: "Overloaded", checkErrors: 1 }), true)).toBe("failed");
-    // With nothing ever built, too.
-    expect(appAreaState(ended({ buildErrors: 2 }), false)).toBe("failed");
+  it("is failed when the last Turn left the app broken, and so was undone (ADR 0018)", () => {
+    expect(appAreaState(ended({ checkErrors: 3, retries: 3, restored: true }), true)).toBe("failed");
+    expect(appAreaState(ended({ buildErrors: 1, restored: true }), true)).toBe("failed");
+    expect(appAreaState(ended({ status: "error", error: "Overloaded", checkErrors: 1, restored: true }), true)).toBe("failed");
+    // With nothing ever built, too, as after undoing the Turn that started the app.
+    expect(appAreaState(ended({ buildErrors: 2, restored: true, noApp: true }), false)).toBe("failed");
+  });
+
+  it("isn't failed for a broken Turn that wasn't undone, since \"Your app hasn't changed\" wouldn't be true", () => {
+    // Such as a Turn that was running when undoing was deployed.
+    expect(appAreaState(ended({ checkErrors: 3, retries: 3 }), true)).toBe("ready");
+    expect(appAreaState(ended({ buildErrors: 2, restored: false }), false)).toBe("empty");
   });
 
   it("isn't failed for failing tests, or for a Turn that stopped without leaving errors (ADR 0018)", () => {
@@ -70,6 +76,6 @@ describe("the app area's state", () => {
     expect(appAreaState(idle, true, "not-published")).toBe("ready");
     expect(appAreaState(idle, true, "live-with-changes")).toBe("ready");
     expect(appAreaState(running, true, "live")).toBe("updating");
-    expect(appAreaState(ended({ buildErrors: 1 }), true, "live")).toBe("failed");
+    expect(appAreaState(ended({ buildErrors: 1, restored: true }), true, "live")).toBe("failed");
   });
 });
