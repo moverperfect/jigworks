@@ -5,7 +5,7 @@ const maxNameLength = 60;
 /** Says what's wrong with a Workspace name, or returns null if it's fine. The name is trimmed first. */
 export function validateWorkspaceName(name: string): string | null {
   const trimmed = name.trim();
-  if (!trimmed) return "Enter a name for the Workspace.";
+  if (!trimmed) return "Enter a name for your app.";
   if (trimmed.length > maxNameLength) {
     return `Use ${maxNameLength} characters or fewer. This name has ${trimmed.length}.`;
   }

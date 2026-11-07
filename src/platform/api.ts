@@ -1,6 +1,5 @@
 import { zipSync } from "fflate";
 import { Hono, type Context } from "hono";
-import type { WorkspaceRecord } from "../developer";
 import { isHidden, maxFileBytes, normalisePath } from "../files";
 import { validateWorkspaceName } from "../shared/workspace-name";
 import { getTemplate, listTemplates } from "../templates";
@@ -42,11 +41,9 @@ api.post("/workspaces", async (c) => {
     template = typeof body?.template === "string" ? (getTemplate(body.template)?.id ?? null) : null;
     if (!template) return c.json({ error: "There's no Template with that name." }, 400);
   }
-  const record: WorkspaceRecord = { id: crypto.randomUUID(), name: name.trim(), template, createdAt: new Date().toISOString() };
-
   // Listed before it's filled, so a Workspace left half-made by a failure can
   // still be seen and deleted.
-  await developer(c).add(record);
+  const record = await developer(c).add({ id: crypto.randomUUID(), name: name.trim(), template, createdAt: new Date().toISOString() });
   try {
     const created = workspace(c, record.id);
     await created.initialise(c.get("email"), record.template ? { template: record.template, name: record.name } : undefined);
@@ -64,6 +61,24 @@ api.post("/workspaces", async (c) => {
 api.get("/workspaces/:id", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json({ workspace: record }) : noSuchWorkspace(c);
+});
+
+/**
+ * Renames the app. The name is only the list's: the app's label, and so its
+ * address, stays as it was. Refused until the Agent has started the app,
+ * whose name would replace the Developer's.
+ */
+api.patch("/workspaces/:id", async (c) => {
+  const record = await ownWorkspace(c);
+  if (!record) return noSuchWorkspace(c);
+  if (record.template === null) return c.json({ error: "Your app hasn't started yet. Wait for the Agent to start it." }, 409);
+  const body = await c.req.json<{ name?: unknown }>().catch(() => null);
+  const name = typeof body?.name === "string" ? body.name : "";
+  const invalid = validateWorkspaceName(name);
+  if (invalid) return c.json({ error: invalid }, 400);
+  // Read back, as a Turn or a save may have changed the record since.
+  const renamed = await developer(c).rename(record.id, name.trim());
+  return renamed ? c.json({ workspace: renamed }) : noSuchWorkspace(c);
 });
 
 api.delete("/workspaces/:id", async (c) => {

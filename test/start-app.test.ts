@@ -83,7 +83,8 @@ describe("start_app", () => {
     const ended = await firstTurnEnd(workspace.id);
     expect(ended).toMatchObject({ status: "completed", startedApp: true, noApp: false, checkErrors: 0, buildErrors: 0, retries: 0 });
 
-    expect(await listed(workspace.id)).toEqual({ ...workspace, name: "Sunday Runs", template: "worker" });
+    // The Turn's end counts as a change.
+    expect(await listed(workspace.id)).toEqual({ ...workspace, name: "Sunday Runs", template: "worker", changedAt: expect.any(String) });
     expect((await files(workspace.id)).files).toEqual(expect.arrayContaining(["AGENTS.md", "package.json", "src/index.ts"]));
     const preview = await (await call(`/api/workspaces/${workspace.id}/preview`)).json();
     expect(preview).toMatchObject({ url: expect.stringMatching(/^https:\/\/sunday-runs-[a-z0-9]{8}-preview\./), ready: true });
@@ -125,7 +126,7 @@ describe("start_app", () => {
     expect(await toolResults(workspace.id)).toEqual([
       { tool: "start_app", result: "Couldn't start the app. The app has already started." },
     ]);
-    expect(await listed(workspace.id)).toEqual(workspace);
+    expect(await listed(workspace.id)).toEqual({ ...workspace, changedAt: expect.any(String) });
   });
 
   it("is refused once the app has started, even after the Agent deletes every file", async () => {
@@ -139,6 +140,6 @@ describe("start_app", () => {
     // The app is still started, so the Turn ended with its Check and Build, and their retries.
     expect(ended).toMatchObject({ startedApp: false, noApp: false, retries: maxRetries });
     expect(ended.buildErrors).toBeGreaterThan(0);
-    expect(await listed(workspace.id)).toEqual(workspace);
+    expect(await listed(workspace.id)).toEqual({ ...workspace, changedAt: expect.any(String) });
   });
 });

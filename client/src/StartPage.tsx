@@ -1,5 +1,6 @@
 import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createWorkspace, listWorkspaces, toApiError, type ApiError } from "./api";
+import { changedWhen } from "./changed";
 import { sendsMessage } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
 import { useLoad, useTitle } from "./hooks";
@@ -107,10 +108,14 @@ export function StartPage() {
         {list.status === "ready" && list.data.length > 0 && (
           <ul className="start-list">
             {list.data.map((workspace) => (
-              <li key={workspace.id}>
-                <Link to={workspacePath(workspace.id)} className="start-app exact">
+              <li key={workspace.id} className="start-app">
+                <Link to={workspacePath(workspace.id)} className="start-app-name exact">
                   {workspace.name}
                 </Link>
+                {workspace.publishedAt ? <span className="start-app-live">Live</span> : <span className="muted">Not published</span>}
+                <time className="start-app-changed muted" dateTime={workspace.changedAt}>
+                  {changedWhen(workspace.changedAt)}
+                </time>
               </li>
             ))}
           </ul>
