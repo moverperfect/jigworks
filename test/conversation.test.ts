@@ -49,9 +49,28 @@ describe("a Turn", () => {
     });
     expect(sent.system).toContain("You are the Agent on a development platform");
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
+    // Each Template, with its description and when it fits.
+    expect(sent.system).toContain(
+      "  - worker (Worker): A Cloudflare Worker using Hono. Choose it only for something with no page, such as a webhook",
+    );
+    expect(sent.system).toContain(
+      "  - worker-react (Worker + React): A Cloudflare Worker using Hono, with a React front end styled with Tailwind. Choose it for most apps",
+    );
     expect(sent.latest).toContain("the Developer changed /src/notes.md");
     expect(sent.tools).toEqual(
-      expect.arrayContaining(["add_package", "bash", "check", "edit", "list", "preview_logs", "read", "request_preview", "test", "write"]),
+      expect.arrayContaining([
+        "add_package",
+        "bash",
+        "check",
+        "edit",
+        "list",
+        "preview_logs",
+        "read",
+        "request_preview",
+        "start_app",
+        "test",
+        "write",
+      ]),
     );
 
     // The note is for the Turn after the change only.

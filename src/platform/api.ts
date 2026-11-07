@@ -22,25 +22,38 @@ api.get("/templates", (c) => c.json({ templates: listTemplates() }));
 
 api.get("/workspaces", async (c) => c.json({ workspaces: await developer(c).list() }));
 
+/**
+ * Creates a Workspace from the Developer's `{ message }`: an empty one named
+ * "New app", whose first Turn starts with the message and starts the app
+ * (ADR 0018). Or, for tests and scripts, from `{ name, template }`.
+ */
 api.post("/workspaces", async (c) => {
-  const body = await c.req.json<{ name?: unknown; template?: unknown }>().catch(() => null);
-  const name = typeof body?.name === "string" ? body.name : "";
-  const invalid = validateWorkspaceName(name);
-  if (invalid) return c.json({ error: invalid }, 400);
-  const template = typeof body?.template === "string" ? getTemplate(body.template) : undefined;
-  if (!template) return c.json({ error: "There's no Template with that name." }, 400);
+  const body = await c.req.json<{ message?: unknown; name?: unknown; template?: unknown }>().catch(() => null);
+  let name = "New app";
+  let template: string | null = null;
+  let message: string | null = null;
+  if (body?.message !== undefined) {
+    message = typeof body.message === "string" ? body.message.trim() : "";
+    if (!message) return c.json({ error: "Say what you'd like to make." }, 400);
+  } else {
+    name = typeof body?.name === "string" ? body.name : "";
+    const invalid = validateWorkspaceName(name);
+    if (invalid) return c.json({ error: invalid }, 400);
+    template = typeof body?.template === "string" ? (getTemplate(body.template)?.id ?? null) : null;
+    if (!template) return c.json({ error: "There's no Template with that name." }, 400);
+  }
+  const record: WorkspaceRecord = { id: crypto.randomUUID(), name: name.trim(), template, createdAt: new Date().toISOString() };
 
-  const record: WorkspaceRecord = {
-    id: crypto.randomUUID(),
-    name: name.trim(),
-    template: template.id,
-    createdAt: new Date().toISOString(),
-  };
   // Listed before it's filled, so a Workspace left half-made by a failure can
   // still be seen and deleted.
   await developer(c).add(record);
   try {
-    await workspace(c, record.id).initialise(template.files, record.name);
+    const created = workspace(c, record.id);
+    await created.initialise(c.get("email"), record.template ? { template: record.template, name: record.name } : undefined);
+    if (message !== null) {
+      const turn = await created.startTurn(message);
+      if (!turn.ok) throw new Error(turn.error);
+    }
   } catch (error) {
     await developer(c).remove(record.id);
     throw error;

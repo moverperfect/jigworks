@@ -11,9 +11,11 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { isSummary, maxRetries, type LastTurn } from "../../src/shared/conversation.ts";
+import { isSummary, maxRetries } from "../../src/shared/conversation.ts";
 import { startTurn, toApiError, type ApiError } from "./api";
+import { sendsMessage } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
+import { describeLastTurn, plural } from "./lastTurn";
 import { renderMarkdown, type MarkdownNode } from "./markdown";
 import type { Conversation, ConversationMessage } from "./useConversation";
 
@@ -83,8 +85,7 @@ export function ConversationPanel({
   }
 
   function onKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    // Enter sends and Shift+Enter starts a new line. Enter that picks an IME suggestion does neither.
-    if (event.key !== "Enter" || event.shiftKey || event.nativeEvent.isComposing) return;
+    if (!sendsMessage(event)) return;
     event.preventDefault();
     void send();
   }
@@ -308,25 +309,6 @@ function ConversationStatus({ conversation }: { conversation: Conversation }) {
   );
 }
 
-/** The last Turn's outcome, if it's worth saying. */
-function describeLastTurn(lastTurn: LastTurn): string | null {
-  if (lastTurn.status === "error") return lastTurn.error ? `The Turn failed: ${lastTurn.error}` : "The Turn failed";
-  if (lastTurn.status === "aborted") return "The Turn stopped before it finished";
-  const said: string[] = [];
-  if (lastTurn.outOfSteps) said.push("The Agent used all the Turn's steps");
-  const left = [
-    lastTurn.checkErrors ? plural(lastTurn.checkErrors, "error") : null,
-    lastTurn.buildErrors ? "an app that doesn't build" : null,
-    lastTurn.testFailures ? plural(lastTurn.testFailures, "test failure") : null,
-  ].filter((part) => part !== null);
-  if (left.length > 0) {
-    const retries = lastTurn.retries > 0 ? ` after ${plural(lastTurn.retries, "retry", "retries")}` : "";
-    const listed = left.length > 1 ? `${left.slice(0, -1).join(", ")} and ${left.at(-1)}` : left[0];
-    said.push(`${said.length > 0 ? "the" : "The"} Turn ended with ${listed}${retries}`);
-  }
-  return said.length > 0 ? said.join(", and ") : null;
-}
-
 /** What a Turn's Check and Build found, for the platform's message asking the Agent to fix it, in the page's words (ADR 0018). */
 function describeFound(checkErrors: number, buildErrors: number): string {
   if (buildErrors === 0) return `Making sure it works: ${plural(checkErrors, "error")}`;
@@ -350,8 +332,4 @@ function formatElapsed(ms: number): string {
   // The platform's clock and this one can disagree a little.
   const seconds = Math.max(0, Math.round(ms / 1000));
   return seconds < 60 ? `${seconds} s` : `${Math.floor(seconds / 60)} min ${seconds % 60} s`;
-}
-
-function plural(count: number, noun: string, plural = `${noun}s`): string {
-  return `${count} ${count === 1 ? noun : plural}`;
 }

@@ -1,10 +1,11 @@
 import { DurableObject } from "cloudflare:workers";
 
-/** What the home page shows for one Workspace. */
+/** What the start page shows for one Workspace. */
 export interface WorkspaceRecord {
   id: string;
   name: string;
-  template: string;
+  /** The Template the app started from, or null until the Agent starts it (ADR 0018). */
+  template: string | null;
   createdAt: string;
 }
 
@@ -16,6 +17,7 @@ export interface WorkspaceRecord {
 export class Developer extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    // A Workspace with no Template yet keeps "" in its `template` column.
     ctx.storage.sql.exec(
       "CREATE TABLE IF NOT EXISTS workspaces (id TEXT PRIMARY KEY, name TEXT NOT NULL, template TEXT NOT NULL, created_at TEXT NOT NULL)",
     );
@@ -35,9 +37,14 @@ export class Developer extends DurableObject<Env> {
       "INSERT INTO workspaces (id, name, template, created_at) VALUES (?, ?, ?, ?)",
       record.id,
       record.name,
-      record.template,
+      record.template ?? "",
       record.createdAt,
     );
+  }
+
+  /** Gives the list the name and the Template the Agent chose when it started the app. */
+  appStarted(id: string, name: string, template: string): void {
+    this.ctx.storage.sql.exec("UPDATE workspaces SET name = ?, template = ? WHERE id = ?", name, template, id);
   }
 
   remove(id: string): boolean {
@@ -51,6 +58,6 @@ export class Developer extends DurableObject<Env> {
         ...bindings,
       )
       .toArray()
-      .map(({ id, name, template, created_at }) => ({ id, name, template, createdAt: created_at }));
+      .map(({ id, name, template, created_at }) => ({ id, name, template: template || null, createdAt: created_at }));
   }
 }

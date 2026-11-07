@@ -1,9 +1,9 @@
 import { lazy, Suspense, useEffect, useRef } from "react";
 import { getMe } from "./api";
 import { ErrorMessage } from "./ErrorMessage";
-import { HomePage } from "./HomePage";
 import { useLoad, useTitle } from "./hooks";
 import { Link, matchRoute, usePath } from "./router";
+import { StartPage } from "./StartPage";
 
 // Loaded when first opened, so the home page doesn't wait for the editor.
 const WorkspacePage = lazy(() => import("./WorkspacePage").then((module) => ({ default: module.WorkspacePage })));
@@ -33,7 +33,7 @@ export function App() {
       </>
     );
   } else if (route.page === "home") {
-    page = <HomePage />;
+    page = <StartPage />;
   } else if (route.page === "workspace") {
     page = (
       <Suspense fallback={<p className="workspace-message muted">Loading your app…</p>}>
@@ -81,7 +81,7 @@ function NotFound() {
     <>
       <h1>Page not found</h1>
       <p>
-        <Link to="/">Go to your Workspaces</Link>
+        <Link to="/">Go to your apps</Link>
       </p>
     </>
   );

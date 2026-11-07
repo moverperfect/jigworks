@@ -44,6 +44,14 @@ export function WorkspacePage({ id }: { id: string }) {
   const { state } = loaded;
   const workspace = state.status === "ready" ? state.data : undefined;
   useTitle(workspace?.name ?? "Your app");
+  // The Agent names an app when it starts it, so until then the page looks for the name whenever no Turn is running.
+  const lookForName = () => {
+    if (workspace?.template !== null) return;
+    getWorkspace(id).then(
+      (latest) => loaded.update(() => latest),
+      () => {},
+    );
+  };
 
   return (
     <div className="workspace-page">
@@ -59,12 +67,12 @@ export function WorkspacePage({ id }: { id: string }) {
           <p>It may have been deleted.</p>
         </div>
       )}
-      {workspace && <WorkspaceView workspace={workspace} />}
+      {workspace && <WorkspaceView workspace={workspace} onIdle={lookForName} />}
     </div>
   );
 }
 
-function WorkspaceView({ workspace }: { workspace: Workspace }) {
+function WorkspaceView({ workspace, onIdle }: { workspace: Workspace; onIdle(): void }) {
   const { id } = workspace;
   const pageId = useId();
   const files = useLoad(() => listFiles(id));
@@ -113,13 +121,16 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
   // A Turn that ran while the socket was closed shows as a new `lastTurn`.
   const turnKey = state && `${state.turn?.startedAt ?? ""} ${state.lastTurn?.endedAt ?? ""}`;
   const seenTurnKey = useRef<string | null>(null);
+  const whenIdle = useEffectEvent(onIdle);
   const onTurnEnd = useEffectEvent(() => {
     waitingForBuild.current = { goodHash: preview.goodHash };
     files.reload();
     void file.reload();
     // The stored reports are the Turn's own Check and Build, unless either didn't run.
-    // A Build always follows a Check, so a missing Build runs both.
+    // A Build always follows a Check, so a missing Build runs both. Before the app
+    // has started there's nothing to check.
     const lastTurn = state?.lastTurn;
+    if (lastTurn?.noApp) return;
     if (lastTurn?.checkErrors == null || lastTurn.buildErrors == null) checks.checkNow();
     else checks.showLatest();
     tests.showLatest();
@@ -128,7 +139,10 @@ function WorkspaceView({ workspace }: { workspace: Workspace }) {
     const previous = seenTurnKey.current;
     seenTurnKey.current = turnKey;
     if (locked) waitingForBuild.current = null;
-    if (previous !== null && turnKey !== null && turnKey !== previous && !locked) onTurnEnd();
+    if (turnKey === null || turnKey === previous || locked) return;
+    // Also when the page first sees the Conversation: a first Turn may have named the app before the socket connected.
+    whenIdle();
+    if (previous !== null) onTurnEnd();
   }, [turnKey, locked]);
 
   // A Turn changed the app when a new Build succeeded, so bring the App tab forward to show it.

@@ -45,3 +45,10 @@ export async function create(name: string, email?: string, template = "worker"):
   expect(response.status).toBe(201);
   return (await response.json<{ workspace: WorkspaceRecord }>()).workspace;
 }
+
+/** Creates a Workspace from the Developer's message, as the start page does. Its first Turn starts at once. */
+export async function createFromMessage(message: string): Promise<WorkspaceRecord> {
+  const response = await call("/api/workspaces", { method: "POST", body: { message } });
+  expect(response.status).toBe(201);
+  return (await response.json<{ workspace: WorkspaceRecord }>()).workspace;
+}

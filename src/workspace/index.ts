@@ -5,6 +5,7 @@ import {
   type StepContext,
   type ThinkSession,
   type ToolCallContext,
+  type ToolCallDecision,
   type ToolCallResultContext,
   type TurnConfig,
   type TurnContext,
@@ -42,9 +43,11 @@ import type { BuildReport } from "../shared/build-report";
 import type { Deployment } from "../shared/deployment";
 import type { Secret } from "../shared/secret";
 import type { CheckReport, Problem, Severity } from "../shared/check-report";
+import { validateWorkspaceName } from "../shared/workspace-name";
 import { testFailures, testReportWithin, type TestCounts, type TestFileReport, type TestReport } from "../shared/test-report";
 import { bundleTestsInDynamicWorker, isTestFile, testInDynamicWorkers, vitestTypes } from "../tester";
 import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
+import { getTemplate } from "../templates";
 
 export type { CheckReport, TestReport };
 
@@ -68,6 +71,10 @@ const appSentKey = "app:sent";
 const saveBuildKey = "build:after-save";
 const saveBuildDelaySeconds = 1;
 const changedKey = "turn:developer-changes";
+// The email of the Developer whose list the Workspace is on, so starting the app can name it there.
+const developerKey = "developer";
+// Whether the app has started from a Template, which happens once (ADR 0018).
+const appStartedKey = "app:started";
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
 const reportBudgetBytes = 1_000_000;
@@ -82,6 +89,11 @@ const turnSteps = 40;
 const watchingFrames = new Set(["cf_agent_stream_resume_request", "cf_agent_stream_resume_ack"]);
 // The Agent's tools that read the files, and so wait for the others in their step.
 const waitingTools = new Set(["check", "build", "test"]);
+// The Agent's tools that refuse until it has started the app, so nothing is written without a Template under it (ADR 0018).
+const needAppTools = new Set(["write", "edit", "delete", "bash", "add_package", "check", "build", "test"]);
+const startAppFirst = "The app hasn't started yet, so this tool can't run. Start it first with start_app.";
+// For the Developer, in the page's words.
+const notStartedYet = { ok: false, error: "Your app hasn't started yet. Wait for the Agent to start it." } as const;
 
 // Records how far esbuild's memory grows during each Build, for the findings.
 // ts-rust runs in its own Dynamic Worker, so only esbuild shows here.
@@ -152,6 +164,8 @@ export class Workspace extends Think<Env, ConversationState> {
       testFailures: null,
       retries: 0,
       outOfSteps: false,
+      startedApp: false,
+      noApp: !this.appStarted(),
     };
     this.setState({ turn: null, startingFresh: false, lastTurn: turn ? stopped : this.state.lastTurn });
   }
@@ -195,6 +209,7 @@ export class Workspace extends Think<Env, ConversationState> {
 
   override getTools(): ToolSet {
     return agentTools({
+      startApp: (template, name) => this.startApp(template, name),
       check: async () => {
         await this.otherToolsFinished();
         return this.check("agent");
@@ -223,8 +238,10 @@ export class Workspace extends Think<Env, ConversationState> {
     };
   }
 
-  override beforeToolCall(ctx: ToolCallContext): void {
+  override beforeToolCall(ctx: ToolCallContext): ToolCallDecision | void {
+    // Counted even when refused: `afterToolCall` follows either way.
     if (!waitingTools.has(ctx.toolName)) this.toolsRunning += 1;
+    if (needAppTools.has(ctx.toolName) && !this.appStarted()) return { action: "block", reason: startAppFirst };
   }
 
   override afterToolCall(ctx: ToolCallResultContext): void {
@@ -268,12 +285,60 @@ export class Workspace extends Think<Env, ConversationState> {
     });
   }
 
-  /** Fills a new Workspace with its Template's files, and installs their Packages. */
-  async initialise(files: Record<string, string>, name = ""): Promise<void> {
-    if (this.files.list().length > 0) throw new Error(`Workspace ${this.name} already has files`);
-    this.ctx.storage.kv.put(appLabelKey, newAppLabel(name));
-    for (const [path, text] of Object.entries(files)) await this.files.write(path, text);
-    await this.installPackages();
+  /**
+   * Sets up a new Workspace on `developer`'s list. With `app`, it starts the
+   * app from that Template under that name; without, the Workspace stays
+   * empty until the Agent starts the app (ADR 0018). The caller has
+   * checked the Template and the name.
+   */
+  async initialise(developer: string, app?: { template: string; name: string }): Promise<void> {
+    this.ctx.storage.kv.put(developerKey, developer);
+    if (!app) return;
+    const started = await this.exclusive(() => this.fill(app.template, app.name));
+    if (!started.ok) throw new Error(started.error);
+  }
+
+  /**
+   * Starts the app for the Agent's `start_app` tool: writes the Template's
+   * files, installs their Packages, makes the app's label from `name`, and
+   * gives the Developer's list the name and the Template. Refused once the
+   * app has started. Returns the new AGENTS.md, which the Turn's
+   * instructions predate.
+   */
+  async startApp(template: string, name: string): Promise<DeveloperChange<{ agentsMd: string | null }>> {
+    const started = await this.exclusive(() => this.fill(template, name));
+    if (!started.ok) return started;
+    const developer = this.ctx.storage.kv.get<string>(developerKey);
+    if (developer) await this.env.DEVELOPERS.getByName(developer).appStarted(this.name, name.trim(), template);
+    return { ok: true, agentsMd: this.files.read("AGENTS.md") };
+  }
+
+  /**
+   * Whether the app has started from a Template (ADR 0018). Until then the
+   * Workspace has no files; afterwards it may have none again, if the Agent
+   * deletes them. A Workspace with files from before Templates were the
+   * Agent's to choose is recorded as started the first time it's asked.
+   */
+  private appStarted(): boolean {
+    if (this.ctx.storage.kv.get<boolean>(appStartedKey)) return true;
+    if (this.files.list().length === 0) return false;
+    this.ctx.storage.kv.put(appStartedKey, true);
+    return true;
+  }
+
+  /** Only from inside `exclusive`. */
+  private async fill(templateId: string, name: string): Promise<DeveloperChange> {
+    if (this.appStarted()) return { ok: false, error: "The app has already started." };
+    const template = getTemplate(templateId);
+    if (!template) return { ok: false, error: `There's no Template called ${templateId}.` };
+    const invalid = validateWorkspaceName(name);
+    if (invalid) return { ok: false, error: invalid };
+    // Any label made before now, as for the Preview's address, belongs to no app yet, so it's replaced.
+    this.ctx.storage.kv.put(appLabelKey, newAppLabel(name.trim()));
+    for (const [path, text] of Object.entries(template.files)) await this.files.write(path, text);
+    this.ctx.storage.kv.put(appStartedKey, true);
+    await this.install();
+    return { ok: true };
   }
 
   /** The Workspace's files as bytes for the zip export, without hidden paths or Packages. */
@@ -523,8 +588,12 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.appHost().secretNames();
   }
 
-  /** Adds or replaces a secret, which reaches the app's env at once. */
+  /**
+   * Adds or replaces a secret, which reaches the app's env at once. Refused
+   * before the app has started, whose label would change (see `fill`).
+   */
   async setSecret(name: string, value: unknown): Promise<DeveloperChange> {
+    if (!this.appStarted()) return notStartedYet;
     const label = this.appLabel();
     return this.env.APP_HOSTS.getByName(label).setSecret(this.name, label, name, value);
   }
@@ -589,6 +658,8 @@ export class Workspace extends Think<Env, ConversationState> {
     // which is told about it, or not at all.
     const result = await this.exclusive(async (): Promise<DeveloperChange> => {
       if (this.state.turn) return busy;
+      // A file of the Developer's would leave no room for a Template (ADR 0018).
+      if (!this.appStarted()) return notStartedYet;
       await this.files.write(normalised, text);
       this.noteDeveloperChange(normalised);
       if (normalised === "package.json") await this.install();
@@ -615,11 +686,6 @@ export class Workspace extends Think<Env, ConversationState> {
     await this.buildInItsOwnCall("save");
   }
 
-  /** Installs what `package.json` lists, unless that's already installed. */
-  async installPackages(): Promise<PackageStatus> {
-    return this.exclusive(() => this.install());
-  }
-
   /** What's installed, and how the last install went. */
   async packageStatus(): Promise<PackageStatus> {
     return this.packages.status();
@@ -639,6 +705,7 @@ export class Workspace extends Think<Env, ConversationState> {
   private addPackageFor(by: "developer" | "agent", name: string, options: AddOptions): Promise<PackageAdded> {
     return this.exclusive(async () => {
       if (by === "developer" && this.state.turn) return busy;
+      if (by === "developer" && !this.appStarted()) return notStartedYet;
       const registry = registryClient();
       const result = await this.packages.add(this.files.read("package.json") ?? "{}", name, { ...options, registry });
       if (!result.ok) return result;
@@ -702,6 +769,7 @@ export class Workspace extends Think<Env, ConversationState> {
   private async runDeveloperTurn(text: string): Promise<void> {
     const started = Date.now();
     const usage: TurnUsage = (this.turnUsage = { steps: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    const hadStarted = this.appStarted();
     let lastTurn: LastTurn = {
       endedAt: "",
       status: "error",
@@ -718,6 +786,7 @@ export class Workspace extends Think<Env, ConversationState> {
       let result = await this.saveMessages([developerMessage(text, changed)]);
       let ended = await this.endOfTurn();
       while (
+        ended &&
         result.status === "completed" &&
         (ended.check.counts.error > 0 || !ended.build.ok) &&
         lastTurn.retries < maxRetries &&
@@ -731,14 +800,14 @@ export class Workspace extends Think<Env, ConversationState> {
         ...lastTurn,
         status: result.status,
         error: result.error ?? null,
-        checkErrors: ended.check.counts.error,
-        buildErrors: ended.build.errors.length,
+        checkErrors: ended?.check.counts.error ?? null,
+        buildErrors: ended?.build.errors.length ?? null,
         outOfSteps: usage.steps >= turnSteps,
       };
       // Once, after the last Check and Build: failing tests don't ask for a
       // retry, and tests that can't run don't fail the Turn.
-      const tests = await this.runTests("turn").catch(() => null);
-      lastTurn.testFailures = tests && testFailures(tests);
+      const tests = ended && (await this.runTests("turn").catch(() => null));
+      lastTurn.testFailures = tests ? testFailures(tests) : null;
     } catch (error) {
       lastTurn.error = error instanceof Error ? error.message : String(error);
       // The Agent may have changed files before the failure, and every Turn
@@ -751,14 +820,22 @@ export class Workspace extends Think<Env, ConversationState> {
     } finally {
       this.turnUsage = null;
       lastTurn.endedAt = new Date().toISOString();
+      const startedNow = this.appStarted();
+      lastTurn.startedApp = !hadStarted && startedNow;
+      lastTurn.noApp = !startedNow;
       // The clock moves only at I/O, so this leaves out the last Check.
       console.log(JSON.stringify({ event: "turn", workspace: this.name, durationMs: Date.now() - started, ...lastTurn, ...usage }));
       this.setState({ ...this.state, turn: null, lastTurn });
     }
   }
 
-  /** A Turn's Check, then its Build, which goes ahead whatever the Check found. The Turn's tests come once, after the last. */
-  private async endOfTurn(): Promise<{ check: CheckReport; build: BuildReport }> {
+  /**
+   * A Turn's Check, then its Build, which goes ahead whatever the Check
+   * found, or null when the app hasn't started and there's nothing to check
+   * (ADR 0018). The Turn's tests come once, after the last.
+   */
+  private async endOfTurn(): Promise<{ check: CheckReport; build: BuildReport } | null> {
+    if (!this.appStarted()) return null;
     const check = await this.check("turn");
     return { check, build: await this.buildInItsOwnCall("turn") };
   }

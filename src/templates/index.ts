@@ -5,6 +5,8 @@ export interface Template {
   id: string;
   name: string;
   description: string;
+  /** When the Agent should choose it, as a sentence for its instructions (ADR 0018). */
+  fits: string;
   /** Path to text: the files copied into a new Workspace. */
   files: Record<string, string>;
 }
@@ -25,7 +27,7 @@ const templates = new Map(
 
 /** Every Template, without its files. */
 export function listTemplates(): Omit<Template, "files">[] {
-  return [...templates.values()].map(({ id, name, description }) => ({ id, name, description }));
+  return [...templates.values()].map(({ id, name, description, fits }) => ({ id, name, description, fits }));
 }
 
 export function getTemplate(id: string): Template | undefined {
