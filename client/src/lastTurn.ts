@@ -14,7 +14,11 @@ export function describeLastTurn(lastTurn: LastTurn): string | null {
   const stopped = why && `The Agent stopped before it finished, because ${why}`;
   const broken = Boolean(lastTurn.checkErrors || lastTurn.buildErrors);
   // Before the app has started there's nothing to check, so say so instead (ADR 0018).
-  if (lastTurn.noApp) return stopped ? `${stopped}, so your app wasn't started. ${tryAgain}` : `The Agent didn't get your app started. ${tryAgain}`;
+  if (lastTurn.noApp) {
+    if (stopped) return `${stopped}, so your app wasn't started. ${tryAgain}`;
+    // A first Turn may only ask a question, and start the app once it's answered.
+    return lastTurn.asked ? null : `The Agent didn't get your app started. ${tryAgain}`;
+  }
   if (stopped) return `${stopped}. ${carryOn}`;
   // The model may have used its last step to finish, so this doesn't say it stopped early.
   if (lastTurn.outOfSteps) {

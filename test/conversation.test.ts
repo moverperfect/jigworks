@@ -56,6 +56,8 @@ describe("a Turn", () => {
     expect(sent.system).toContain("Call it at the start of every Turn with the steps you plan");
     // Alongside other tools, so ticking a step off doesn't use up a model step of its own.
     expect(sent.system).toContain("alongside your other tool calls");
+    expect(sent.system).toContain("ask rather than guess: call ask with the question and 2 to 4 answers");
+    expect(sent.system).toContain("suggest 2 or 3 next changes with suggest");
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
     // Each Template, with its description and when it fits.
     expect(sent.system).toContain(
@@ -68,6 +70,7 @@ describe("a Turn", () => {
     expect(sent.tools).toEqual(
       expect.arrayContaining([
         "add_package",
+        "ask",
         "bash",
         "check",
         "edit",
@@ -77,6 +80,7 @@ describe("a Turn", () => {
         "request_preview",
         "start_app",
         "steps",
+        "suggest",
         "test",
         "write",
       ]),
@@ -233,6 +237,49 @@ describe("the Agent's own tools", () => {
       [true, true],
     ]);
     expect(textOf(reply!)).toBe("Your count is ready.");
+  });
+
+  it("asks a question with ask, which ends the Turn after its Check and Build, with no retries", async () => {
+    const workspace = await create("Asked");
+    const conversation = await connect(workspace.id);
+    const ended = await runTurn(workspace.id, conversation, "[script:ask] Email me when someone signs up");
+    // The question came with a broken file, which would otherwise get a retry.
+    expect(ended).toMatchObject({ status: "completed", asked: "question", checkErrors: 1, buildErrors: 0, retries: 0 });
+    const [, reply] = await history(workspace.id);
+    expect(reply!.parts.find((part) => part.type === "tool-ask")).toMatchObject({
+      state: "output-available",
+      input: { question: "Which address should the emails go to?", choices: ["My sign-in address", "A different address"] },
+    });
+    expect(textOf(reply!)).toBe("");
+
+    // The answer is an ordinary message, starting the next Turn.
+    const answered = await runTurn(workspace.id, conversation, "A different address");
+    expect(answered).toMatchObject({ status: "completed", asked: null, checkErrors: 0, retries: 0 });
+    const messages = await history(workspace.id);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(textOf(messages[3]!)).toBe("Going with: A different address");
+    expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
+  });
+
+  it("carries on when ask refuses a question without two different answers", async () => {
+    const workspace = await create("Asked badly");
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:ask-badly] Go on");
+    expect(ended).toMatchObject({ status: "completed", asked: null });
+    const [, reply] = await history(workspace.id);
+    expect(reply!.parts.find((part) => part.type === "tool-ask")).toMatchObject({ state: "output-error" });
+    expect(textOf(reply!)).toBe("I'll choose for you.");
+  });
+
+  it("suggests next changes with suggest, which doesn't end the Turn", async () => {
+    const workspace = await create("Suggested");
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:suggest] Make a sign-up sheet");
+    expect(ended).toMatchObject({ status: "completed", asked: null });
+    const [, reply] = await history(workspace.id);
+    expect(reply!.parts.find((part) => part.type === "tool-suggest")).toMatchObject({
+      state: "output-available",
+      input: { suggestions: ["Add a waiting list when it's full", "Make it look sportier"] },
+    });
+    expect(textOf(reply!)).toBe("Your app's ready.");
   });
 
   it("adds a Package with add_package", async () => {

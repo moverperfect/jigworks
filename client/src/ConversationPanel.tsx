@@ -12,7 +12,15 @@ import {
   type ReactNode,
 } from "react";
 import { isSummary } from "../../src/shared/conversation.ts";
-import { agentMessageBlocks, describeRetry, type Step, type ToolPart } from "./agentMessage";
+import {
+  agentMessageBlocks,
+  describeRetry,
+  openQuestion,
+  suggestionsToShow,
+  type Question,
+  type Step,
+  type ToolPart,
+} from "./agentMessage";
 import { startTurn, toApiError, type ApiError } from "./api";
 import { sendsMessage } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
@@ -54,30 +62,45 @@ export function ConversationPanel({
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const list = useRef<HTMLOListElement>(null);
+  const input = useRef<HTMLTextAreaElement>(null);
   // Follow new messages unless the Developer has scrolled up to read.
   const following = useRef(true);
   const { messages, state, connected } = conversation;
 
   const canSend = conversation.idle && !posting && !unsavedChanges;
   const turnRunning = state?.turn != null;
+  const question = openQuestion(messages, conversation.idle);
+  const suggestions = suggestionsToShow(messages, conversation.idle);
 
   useLayoutEffect(() => {
     const element = list.current;
     if (element && visible && following.current) element.scrollTop = element.scrollHeight;
   }, [messages, visible]);
 
-  /** Starts a Turn, showing any error beside the composer. */
+  /** Starts a Turn with what the Developer typed, showing any error beside the composer. */
   async function send(event?: FormEvent) {
     event?.preventDefault();
-    if (!canSend) return;
+    if (await sendMessage(text)) setText("");
+  }
+
+  /** Sends an answer or a suggestion as an ordinary message, leaving what the Developer typed, and keeps focus in the Conversation as the buttons go. */
+  async function pick(message: string) {
+    input.current?.focus();
+    await sendMessage(message);
+  }
+
+  /** Starts a Turn with `message`, and says whether it started. */
+  async function sendMessage(message: string): Promise<boolean> {
+    if (!canSend) return false;
     following.current = true;
     setPosting(true);
     setError(null);
     try {
-      await startTurn(id, text);
-      setText("");
+      await startTurn(id, message);
+      return true;
     } catch (caught) {
       setError(toApiError(caught));
+      return false;
     } finally {
       setPosting(false);
     }
@@ -106,22 +129,40 @@ export function ConversationPanel({
         {connected && messages.length === 0 && !turnRunning && (
           <li className="conversation-empty">Tell the Agent what to build or change.</li>
         )}
-        {messages.map((message) => (
-          <MessageItem key={message.id} message={message} turnRunning={turnRunning} />
+        {messages.map((message, index) => (
+          <MessageItem
+            key={message.id}
+            message={message}
+            turnRunning={turnRunning}
+            answers={question && index === messages.length - 1 ? { question: question.id, disabled: !canSend, pick: (choice) => void pick(choice) } : null}
+          />
         ))}
       </ol>
 
       <ConversationStatus conversation={conversation} />
+
+      {suggestions.length > 0 && (
+        <ul className="suggestions" aria-label="Ideas for what to change next">
+          {suggestions.map((suggestion) => (
+            <li key={suggestion}>
+              <button type="button" className="link-button suggestion" disabled={!canSend} onClick={() => void pick(suggestion)}>
+                {suggestion}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <form className="composer" onSubmit={(event) => void send(event)}>
         <label htmlFor={`${headingId}-message`} className="visually-hidden">
           Message to the Agent
         </label>
         <textarea
+          ref={input}
           id={`${headingId}-message`}
           className="composer-input"
           rows={3}
-          placeholder={turnRunning ? "The Agent is working…" : "Ask for a change…"}
+          placeholder={turnRunning ? "The Agent is working…" : question ? "Or type an answer…" : "Ask for a change…"}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
@@ -145,7 +186,15 @@ export function ConversationPanel({
   );
 }
 
-function MessageItem({ message, turnRunning }: { message: ConversationMessage; turnRunning: boolean }) {
+/** The buttons for the open question's answers, on the message that asked it. */
+interface Answers {
+  /** The open question's ID. An earlier question in the same message shows no buttons. */
+  question: string;
+  disabled: boolean;
+  pick: (choice: string) => void;
+}
+
+function MessageItem({ message, turnRunning, answers }: { message: ConversationMessage; turnRunning: boolean; answers: Answers | null }) {
   const texts = message.parts.filter(isTextUIPart);
   const { metadata } = message;
 
@@ -191,6 +240,7 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
       {blocks.map((block, index) => {
         if (block.kind === "text") return <Markdown key={index} text={block.text} streaming={block.streaming} />;
         if (block.kind === "steps") return <Steps key={index} steps={block.steps} tools={block.tools} turnRunning={turnRunning} />;
+        if (block.kind === "question") return <AgentQuestion key={index} question={block.question} answers={answers} />;
         return (
           <p key={index} className="conversation-thinking">
             Thinking…
@@ -213,6 +263,25 @@ function Steps({ steps, tools, turnRunning }: { steps: Step[]; tools: ToolPart[]
             <ToolLine key={part.toolCallId} part={part} turnRunning={turnRunning} />
           ))}
         </details>
+      )}
+    </div>
+  );
+}
+
+/** A question the Agent asked, with its answers as buttons while it's open. The Developer can type an answer instead. */
+function AgentQuestion({ question, answers }: { question: Question; answers: Answers | null }) {
+  const questionId = useId();
+  return (
+    <div className="agent-question">
+      <p id={questionId}>{question.question}</p>
+      {answers?.question === question.id && (
+        <div className="question-choices" role="group" aria-labelledby={questionId}>
+          {question.choices.map((choice) => (
+            <button key={choice} type="button" className="button button-small question-choice" disabled={answers.disabled} onClick={() => answers.pick(choice)}>
+              {choice}
+            </button>
+          ))}
+        </div>
       )}
     </div>
   );
