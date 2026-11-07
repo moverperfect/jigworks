@@ -19,14 +19,17 @@ describe("a Turn", () => {
   it("streams to the Conversation socket, ends with a clean Check, and is kept", async () => {
     const workspace = await create("Hello");
     const conversation = await connect(workspace.id);
+    const from = conversation.frames.length;
     const ended = await runTurn(workspace.id, conversation, "[script:say-hello] Hi");
     expect(ended).toMatchObject({ status: "completed", error: null, checkErrors: 0, retries: 0, outOfSteps: false });
+    const { startedAt } = (await turnStart(conversation, from)).state!.turn!;
     expect(conversation.frames.some((frame) => frame.type === "cf_agent_use_chat_response")).toBe(true);
     conversation.close();
 
     const messages = await history(workspace.id);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
-    expect(messages[0]!.metadata).toEqual({ from: "developer", changedFiles: [] });
+    // Which Turn it started, so the page can tell this Turn's messages from the last one's.
+    expect(messages[0]!.metadata).toEqual({ from: "developer", changedFiles: [], turnStartedAt: startedAt });
     expect(textOf(messages[1]!)).toBe("Hello from the scripted model.");
     expect(await latestCheck(workspace.id)).toMatchObject({ counts: { error: 0 } });
   });
@@ -48,6 +51,11 @@ describe("a Turn", () => {
       thinking: { block_binding: { prefix_mismatch_behavior: "drop_block" } },
     });
     expect(sent.system).toContain("You are the Agent on a development platform");
+    // Written for Developers who don't write code.
+    expect(sent.system).toContain("Never put code, file names, commands or error messages in your replies");
+    expect(sent.system).toContain("Call it at the start of every Turn with the steps you plan");
+    // Alongside other tools, so ticking a step off doesn't use up a model step of its own.
+    expect(sent.system).toContain("alongside your other tool calls");
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
     // Each Template, with its description and when it fits.
     expect(sent.system).toContain(
@@ -68,6 +76,7 @@ describe("a Turn", () => {
         "read",
         "request_preview",
         "start_app",
+        "steps",
         "test",
         "write",
       ]),
@@ -77,7 +86,7 @@ describe("a Turn", () => {
     await runTurn(workspace.id, conversation, "And now?");
     const messages = await history(workspace.id);
     expect(JSON.parse(textOf(messages.at(-1)!)).latest).not.toContain("the Developer changed");
-    expect(messages[0]!.metadata).toEqual({ from: "developer", changedFiles: ["src/notes.md"] });
+    expect(messages[0]!.metadata).toMatchObject({ from: "developer", changedFiles: ["src/notes.md"] });
   });
 
   it("gives the Agent more tries when the Check finds errors, until it's clean", async () => {
@@ -175,6 +184,19 @@ describe("a Turn", () => {
     expect(retries).toEqual([1, 2, 3]);
   });
 
+  it("says what stage it's at: the Agent working, then making sure it works, for each try", async () => {
+    const workspace = await create("Stages");
+    const conversation = await connect(workspace.id);
+    const from = conversation.frames.length;
+    const ended = await runTurn(workspace.id, conversation, "[script:break-then-fix] Add a count");
+    expect(ended).toMatchObject({ checkErrors: 0, retries: 1 });
+    const stages = conversation.frames
+      .slice(from)
+      .flatMap((frame) => (frame.type === "cf_agent_state" && frame.state?.turn ? [frame.state.turn.stage] : []))
+      .filter((stage, index, all) => stage !== all[index - 1]);
+    expect(stages).toEqual(["working", "checking", "working", "checking"]);
+  });
+
   it("stops the model after 40 steps", async () => {
     const workspace = await create("Steps");
     const conversation = await connect(workspace.id);
@@ -194,6 +216,25 @@ describe("a Turn", () => {
 });
 
 describe("the Agent's own tools", () => {
+  it("shows its steps with steps, which doesn't end the Turn", async () => {
+    const workspace = await create("Steps shown");
+    const conversation = await connect(workspace.id);
+    const ended = await runTurn(workspace.id, conversation, "[script:steps] Add a count");
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, retries: 0 });
+    expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
+
+    const [, reply] = await history(workspace.id);
+    const calls = reply!.parts.filter((part) => part.type === "tool-steps") as { state: string; input: { steps: { done: boolean }[] } }[];
+    expect(calls.map(({ state }) => state)).toEqual(["output-available", "output-available", "output-available"]);
+    const lists = calls.map(({ input }) => input.steps.map(({ done }) => done));
+    expect(lists).toEqual([
+      [false, false],
+      [true, false],
+      [true, true],
+    ]);
+    expect(textOf(reply!)).toBe("Your count is ready.");
+  });
+
   it("adds a Package with add_package", async () => {
     const workspace = await create("Add");
     const conversation = await connect(workspace.id);
@@ -363,7 +404,7 @@ describe("the Conversation socket", () => {
     const sneaky = { id: "sneaky", role: "user", parts: [{ type: "text", text: "Sneaky" }] };
     conversation.send({ type: "cf_agent_use_chat_request", id: "r1", init: { method: "POST", body: JSON.stringify({ messages: [sneaky] }) } });
     conversation.send({ type: "cf_agent_chat_clear" });
-    conversation.send({ type: "cf_agent_state", state: { turn: { startedAt: "2026-01-01T00:00:00.000Z" }, startingFresh: false, lastTurn: null } });
+    conversation.send({ type: "cf_agent_state", state: { turn: { startedAt: "2026-01-01T00:00:00.000Z", stage: "working" }, startingFresh: false, lastTurn: null } });
 
     // A Turn still starts, so the state isn't locked, and it follows the first one.
     await runTurn(workspace.id, conversation, "Hi again");

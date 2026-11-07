@@ -1,7 +1,9 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import { previewTabUrl } from "./api";
+import { stepsDone, type TurnProgress } from "./agentMessage";
 import type { AppAreaState } from "./appArea";
 import { liveNote, type PublishState } from "./publish";
+import { StepList } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
 import { formatTime } from "./ProblemsPanel";
 import { usePreviewLogs, type PreviewFrame } from "./usePreview";
@@ -26,8 +28,9 @@ const devices: { device: Device; label: string }[] = [
 /** What the app area says about its state, beside the app, or in its place before there's one to show. */
 const notes: Record<AppAreaState, { beside: string; instead: string }> = {
   empty: { beside: "", instead: "Your app appears here once it's built." },
-  "first-build": { beside: "", instead: "Building your app…" },
-  updating: { beside: "Updating your app…", instead: "Building your app…" },
+  // While a Turn runs, the Turn's progress says what's happening instead.
+  "first-build": { beside: "", instead: "" },
+  updating: { beside: "", instead: "Building your app…" },
   // The Preview learns of its first Build a moment after the page does.
   ready: { beside: "", instead: "Loading your app…" },
   failed: { beside: "The last change didn't work.", instead: "The last change didn't work, and there's nothing to show yet." },
@@ -50,6 +53,7 @@ export function PreviewPanel({
   preview,
   state,
   publishing,
+  progress,
   openToEveryone,
   onShowCode,
   showCodeButton,
@@ -58,6 +62,8 @@ export function PreviewPanel({
   state: AppAreaState;
   /** The publish state, or null until the page knows it. */
   publishing: PublishState | null;
+  /** How far the running Turn has got, or null when none is running. */
+  progress: TurnProgress | null;
   /** Whether the Installation's Deployments are open to everyone. */
   openToEveryone: boolean;
   onShowCode(): void;
@@ -71,7 +77,8 @@ export function PreviewPanel({
   const ready = info?.ready ?? false;
   const note = notes[state];
   let beside = note.beside;
-  if (state === "live") beside = liveNote(openToEveryone);
+  if (state === "updating" && progress) beside = `Updating your app: ${progress.current}…`;
+  else if (state === "live") beside = liveNote(openToEveryone);
   else if (state === "ready" && publishing && publishing !== "live") beside = held[publishing];
 
   function reload(event?: FormEvent) {
@@ -140,7 +147,7 @@ export function PreviewPanel({
             <ErrorMessage error={preview.info.error} retry={preview.retryInfo} />
           </div>
         )}
-        {info && !ready && <p className="app-instead">{note.instead}</p>}
+        {info && !ready && (state === "first-build" && progress ? <FirstBuild progress={progress} /> : <p className="app-instead">{note.instead}</p>)}
         {preview.error && (
           <div className="editor-message">
             <ErrorMessage error={preview.error} retry={() => reload()} />
@@ -170,6 +177,27 @@ export function PreviewPanel({
         )}
       </div>
     </>
+  );
+}
+
+/** The first build's progress, in place of the app: the current step in large type, and the steps done so far. */
+function FirstBuild({ progress }: { progress: TurnProgress }) {
+  const { current, steps } = progress;
+  return (
+    <div className="first-build">
+      <p className="app-instead" role="status">
+        {current}…
+      </p>
+      {steps.length > 0 && (
+        <>
+          <div className="first-build-progress" aria-hidden="true">
+            <span style={{ width: `${Math.max(2, (steps.filter((step) => step.done).length / steps.length) * 100)}%` }} />
+          </div>
+          <p className="first-build-count">{stepsDone(steps)}</p>
+          <StepList steps={steps.filter((step) => step.done)} />
+        </>
+      )}
+    </div>
   );
 }
 

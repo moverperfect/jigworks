@@ -3,10 +3,20 @@
 /** How many more tries the Agent gets when a Turn's Check has errors. */
 export const maxRetries = 3;
 
+/**
+ * What the running Turn is doing: the Agent working, or the platform running
+ * the Check, the Build and the tests that end each try ("making sure it
+ * works", on the page).
+ */
+export type TurnStage = "working" | "checking";
+
+/** Why a Turn ended when the Workspace restarted during it, as `onStart` stores it. */
+export const restartedDuringTurn = "The Workspace restarted during the Turn.";
+
 /** The Workspace agent's state, which every Conversation socket is sent when it changes. */
 export interface ConversationState {
   /** The running Turn. While there is one, the Developer's changes to files and Packages are refused. */
-  turn: { startedAt: string } | null;
+  turn: { startedAt: string; stage: TurnStage } | null;
   /** Whether Start fresh is summarising the Conversation. */
   startingFresh: boolean;
   /** How the last Turn ended, or null before the first. */
@@ -40,7 +50,12 @@ export interface LastTurn {
  * Build's, which messages from before Builds don't have.
  */
 export type MessageMetadata =
-  | { from: "developer"; changedFiles: string[] }
+  | {
+      from: "developer";
+      changedFiles: string[];
+      /** The `startedAt` of the Turn the message started. Missing from messages before Turns had stages. */
+      turnStartedAt?: string;
+    }
   | { from: "check"; errors: number; buildErrors?: number; retry: number };
 
 export const idleState: ConversationState = { turn: null, startingFresh: false, lastTurn: null };

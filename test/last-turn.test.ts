@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { describeLastTurn } from "../client/src/lastTurn";
-import type { LastTurn } from "../src/shared/conversation";
+import { restartedDuringTurn, type LastTurn } from "../src/shared/conversation";
 
-// The Conversation's status line after a Turn.
+// The Conversation's status line after a Turn, in plain words.
 
 const turn = (fields: Partial<LastTurn>): LastTurn => ({
   endedAt: "2026-11-07T10:00:00.000Z",
@@ -17,6 +17,7 @@ const turn = (fields: Partial<LastTurn>): LastTurn => ({
 });
 
 const notStarted = { noApp: true, checkErrors: null, buildErrors: null, testFailures: null };
+const restarted = { status: "aborted", error: restartedDuringTurn, checkErrors: null, buildErrors: null } as const;
 
 describe("the last Turn's outcome", () => {
   it("says nothing after a Turn that went well", () => {
@@ -27,16 +28,46 @@ describe("the last Turn's outcome", () => {
     expect(describeLastTurn(turn(notStarted))).toBe("The Agent didn't get your app started. Try again: say what you'd like to make.");
   });
 
-  it("says why a Turn that failed or stopped before starting the app ended, and that the app wasn't started", () => {
-    expect(describeLastTurn(turn({ ...notStarted, status: "error", error: "Overloaded." }))).toBe(
-      "The Turn failed: Overloaded, so your app wasn't started. Try again: say what you'd like to make.",
+  it("says why a Turn that stopped early stopped, from the reason the platform stored", () => {
+    expect(describeLastTurn(turn(restarted))).toBe(
+      "The Agent stopped before it finished, because Jigworks restarted while it was working. Send a message to carry on.",
     );
-    expect(describeLastTurn(turn({ ...notStarted, status: "aborted" }))).toBe(
-      "The Turn stopped before it finished, so your app wasn't started. Try again: say what you'd like to make.",
+    expect(describeLastTurn(turn({ status: "error", error: "Overloaded." }))).toBe(
+      "The Agent stopped before it finished, because something went wrong: Overloaded. Send a message to carry on.",
+    );
+    expect(describeLastTurn(turn({ status: "error" }))).toBe(
+      "The Agent stopped before it finished, because something went wrong. Send a message to carry on.",
+    );
+    expect(describeLastTurn(turn({ status: "aborted" }))).toBe(
+      "The Agent stopped before it finished, because it was interrupted. Send a message to carry on.",
     );
   });
 
-  it("says what a Turn left broken, as before", () => {
-    expect(describeLastTurn(turn({ checkErrors: 2, retries: 3 }))).toBe("The Turn ended with 2 errors after 3 retries");
+  it("says when the Agent reached its limit for one message, which it may have reached as it finished", () => {
+    expect(describeLastTurn(turn({ outOfSteps: true }))).toBe(
+      "The Agent reached its limit for one message, so it may not have finished. Send a message to carry on.",
+    );
+    expect(describeLastTurn(turn({ outOfSteps: true, checkErrors: 1 }))).toBe(
+      "The Agent reached its limit for one message before it got the change working. Send a message to carry on.",
+    );
+  });
+
+  it("says why a Turn that stopped before starting the app stopped, and that the app wasn't started", () => {
+    expect(describeLastTurn(turn({ ...notStarted, status: "error", error: "Overloaded." }))).toBe(
+      "The Agent stopped before it finished, because something went wrong: Overloaded, so your app wasn't started. Try again: say what you'd like to make.",
+    );
+    expect(describeLastTurn(turn({ ...notStarted, ...restarted }))).toBe(
+      "The Agent stopped before it finished, because Jigworks restarted while it was working, so your app wasn't started. Try again: say what you'd like to make.",
+    );
+  });
+
+  it("says the change didn't work after the Agent's tries", () => {
+    expect(describeLastTurn(turn({ checkErrors: 2, retries: 3 }))).toBe("The Agent couldn't get the change working after 4 tries.");
+    expect(describeLastTurn(turn({ buildErrors: 1, retries: 3 }))).toBe("The Agent couldn't get the change working after 4 tries.");
+  });
+
+  it("says when the change is in but the app's tests fail", () => {
+    expect(describeLastTurn(turn({ testFailures: 1 }))).toBe("The change is in, but 1 of your app's tests fails.");
+    expect(describeLastTurn(turn({ testFailures: 2 }))).toBe("The change is in, but 2 of your app's tests fail.");
   });
 });
