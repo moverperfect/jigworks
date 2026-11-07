@@ -1,11 +1,12 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import type { TurnConfig } from "@cloudflare/think";
-import { generateText, tool, type LanguageModel, type StopCondition, type ToolSet, type UIMessage } from "ai";
+import { generateText, getToolName, isToolUIPart, tool, type LanguageModel, type StopCondition, type ToolSet, type UIMessage } from "ai";
 import { z } from "zod";
+import { isSecretName, secretNameRule } from "../apphost/secrets";
 import { normalisePath } from "../files";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
 import type { CheckReport, Problem } from "../shared/check-report";
-import { maxRetries, type MessageMetadata } from "../shared/conversation";
+import { askingTools, maxRetries, type LastTurn, type MessageMetadata } from "../shared/conversation";
 import { failuresOf, testFailures, type TestCounts, type TestReport } from "../shared/test-report";
 import { listTemplates } from "../templates";
 import type { Workspace } from "../workspace";
@@ -56,16 +57,25 @@ How you work:
 - Write tests in files named like src/index.test.ts, with vitest's API: describe, it, expect, vi.fn, vi.spyOn and fake timers. vi.mock and snapshots aren't supported, and there's no DOM. Run them with the test tool. Every Turn ends with the tests as well, after the Build; failing tests don't use up your retries, but the Developer sees them.
 - Each successful Build becomes the Preview, which the Developer sees beside the Conversation as their app. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
+- When the app needs a secret the Developer hasn't given, such as an email service's key, ask for it with ask_for_secret, saying why and where they'll find it, and stop there. Don't ask them to type or paste it to you, or to add it themselves from a menu.
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.`;
 
-/** Ends a Think turn after the step in which the Agent asked the Developer a question, once `ask` took it. */
+/** Ends a Think turn after the step in which the Agent asked the Developer something, once `ask` or `ask_for_secret` took it. */
 export const stopAfterQuestion: StopCondition<ToolSet> = ({ steps }) =>
-  steps.at(-1)?.toolResults.some((result) => result.toolName === "ask") ?? false;
+  steps.at(-1)?.toolResults.some((result) => askingTools.has(result.toolName)) ?? false;
 
-/** Whether an Agent message asked the Developer a question that `ask` took, and so ended its Think turn. */
-export function asksQuestion(message: UIMessage | undefined): boolean {
-  return message?.role === "assistant" && message.parts.some((part) => part.type === "tool-ask" && part.state === "output-available");
+/** What an Agent message last asked the Developer for with a call its tool took, which ended its Think turn, or null. */
+export function askedIn(message: UIMessage | undefined): LastTurn["asked"] {
+  if (message?.role !== "assistant") return null;
+  for (const part of message.parts.toReversed()) {
+    const asked = isToolUIPart(part) && part.state === "output-available" ? askingTools.get(getToolName(part)) : undefined;
+    if (asked) return asked;
+  }
+  return null;
 }
+
+/** What starts a Turn: the Developer's message, or the Secret they added when the Agent asked for it. */
+export type TurnRequest = string | { addedSecret: string };
 
 /** The Turn's instructions: Think's, then the Workspace's AGENTS.md as it is now. */
 export function withAgentsMd(system: string, agentsMd: string | null): string {
@@ -74,8 +84,14 @@ export function withAgentsMd(system: string, agentsMd: string | null): string {
     : `${system}\n\nThe Workspace's AGENTS.md says:\n\n<agents-md>\n${agentsMd}\n</agents-md>`;
 }
 
-/** The Developer's message starting the Turn that started at `turnStartedAt`, with a note of the files they changed since the last Turn. */
-export function developerMessage(text: string, changedFiles: string[], turnStartedAt: string): UIMessage<MessageMetadata> {
+/**
+ * The Developer's message starting the Turn that started at `turnStartedAt`,
+ * with a note of the files they changed since the last Turn. When they
+ * started it by adding a Secret, it's the platform's note of its name.
+ */
+export function developerMessage(request: TurnRequest, changedFiles: string[], turnStartedAt: string): UIMessage<MessageMetadata> {
+  const text = typeof request === "string" ? request : `(From the platform: the Developer added the Secret ${request.addedSecret}.)`;
+  const addedSecret = typeof request === "string" ? undefined : request.addedSecret;
   const parts: UIMessage["parts"] = [{ type: "text", text }];
   if (changedFiles.length > 0) {
     const list = changedFiles.map((path) => `/${path}`).join(", ");
@@ -84,7 +100,7 @@ export function developerMessage(text: string, changedFiles: string[], turnStart
       text: `(From the platform: since your last Turn, the Developer changed ${list}. Read them before you change them.)`,
     });
   }
-  return { id: crypto.randomUUID(), role: "user", parts, metadata: { from: "developer", changedFiles, turnStartedAt } };
+  return { id: crypto.randomUUID(), role: "user", parts, metadata: { from: "developer", changedFiles, turnStartedAt, addedSecret } };
 }
 
 /** The platform's message asking the Agent to fix the errors a Turn's Check and Build found. */
@@ -198,6 +214,8 @@ export function agentTools(workspace: {
   requestPreview: Workspace["requestPreview"];
   previewLogs: Workspace["previewLogs"];
   secretNames: Workspace["secretNames"];
+  /** Whether the app has started from a Template (ADR 0018). */
+  appStarted: () => boolean;
 }): ToolSet {
   return {
     steps: tool({
@@ -229,6 +247,27 @@ export function agentTools(workspace: {
           .refine((choices) => new Set(choices).size === choices.length, "Each answer must be different."),
       }),
       execute: async () => "Asked. Your Turn ends here, and the Developer's answer comes as their next message.",
+    }),
+    ask_for_secret: tool({
+      description:
+        "Asks the Developer for a secret the app needs, such as an email service's key, and ends your Turn. The page shows why, with a field that saves the value as a secret under the name, which the app reads from env. The value never enters the Conversation and you never see it. Once they save it, your next Turn starts with the platform's note that they added it. They can write to you instead.",
+      inputSchema: z.object({
+        name: z
+          .string()
+          .trim()
+          .refine(isSecretName, secretNameRule)
+          .describe("The secret's name, which the app's code reads from env, such as EMAIL_API_KEY."),
+        why: z
+          .string()
+          .trim()
+          .min(1)
+          .describe("Why the app needs it and where the Developer finds it, in plain words, such as To send the emails, your app needs a key from your email service. You'll find it in its settings."),
+      }),
+      execute: async () => {
+        // The Developer couldn't save it: their Secrets are refused until then (ADR 0018).
+        if (!workspace.appStarted()) throw new Error("The app hasn't started yet, so the Developer can't add a secret. Start it first with start_app.");
+        return "Asked. Your Turn ends here, and the platform tells you when the Developer has added it.";
+      },
     }),
     suggest: tool({
       description:

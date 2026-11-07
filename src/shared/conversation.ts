@@ -42,9 +42,15 @@ export interface LastTurn {
   startedApp?: boolean;
   /** Whether the app still hadn't started when the Turn ended, so no Check, Build or tests ran. Missing from Turns before then. */
   noApp?: boolean;
-  /** "question" when the Turn ended with the Agent asking the Developer one (`ask`), or null. Missing from Turns before the Agent could ask. */
-  asked?: "question" | null;
+  /** What the Turn ended with the Agent asking the Developer for: an answer to a question (`ask`), a Secret (`ask_for_secret`), or nothing (null). Missing from Turns before the Agent could ask. */
+  asked?: "question" | "secret" | null;
 }
+
+/** The Agent's tools that ask the Developer for something and end the Turn, with what each asks for, as `LastTurn.asked` records it. */
+export const askingTools = new Map<string, NonNullable<LastTurn["asked"]>>([
+  ["ask", "question"],
+  ["ask_for_secret", "secret"],
+]);
 
 /**
  * Who wrote a user message: the Developer, or the platform after a Turn's
@@ -57,6 +63,8 @@ export type MessageMetadata =
       changedFiles: string[];
       /** The `startedAt` of the Turn the message started. Missing from messages before Turns had stages. */
       turnStartedAt?: string;
+      /** The Secret the Developer added when the Agent asked for it, which started the Turn: the message is then the platform's note of it. */
+      addedSecret?: string;
     }
   | { from: "check"; errors: number; buildErrors?: number; retry: number };
 

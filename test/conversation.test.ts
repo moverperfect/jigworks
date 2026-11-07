@@ -1,9 +1,9 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { CheckReport } from "../src/workspace";
 import type { TestReport } from "../src/shared/test-report";
-import { brokenCount, buildableIndex, failingTest, fixedCount } from "./fixtures/agent-scripts";
+import { askedSecretValue, brokenCount, buildableIndex, failingTest, fixedCount } from "./fixtures/agent-scripts";
 import { summaryReply } from "./fixtures/fake-anthropic";
 import { call, create } from "./helpers/api";
 import { testAccess } from "./helpers/access";
@@ -58,6 +58,7 @@ describe("a Turn", () => {
     expect(sent.system).toContain("alongside your other tool calls");
     expect(sent.system).toContain("ask rather than guess: call ask with the question and 2 to 4 answers");
     expect(sent.system).toContain("suggest 2 or 3 next changes with suggest");
+    expect(sent.system).toContain("ask for it with ask_for_secret");
     expect(sent.system).toContain("<agents-md>\n# This Workspace");
     // Each Template, with its description and when it fits.
     expect(sent.system).toContain(
@@ -71,6 +72,7 @@ describe("a Turn", () => {
       expect.arrayContaining([
         "add_package",
         "ask",
+        "ask_for_secret",
         "bash",
         "check",
         "edit",
@@ -259,6 +261,63 @@ describe("the Agent's own tools", () => {
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(textOf(messages[3]!)).toBe("Going with: A different address");
     expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
+  });
+
+  it("asks for a Secret with ask_for_secret, which ends the Turn like ask, and carries on once it's added, never seeing its value", async () => {
+    const logged = vi.spyOn(console, "log");
+    const workspace = await create("Asked for a Secret");
+    const conversation = await connect(workspace.id);
+    const ended = await runTurn(workspace.id, conversation, "[script:ask-for-secret] Email me when someone signs up");
+    // The request came with a broken file, which would otherwise get a retry.
+    expect(ended).toMatchObject({ status: "completed", asked: "secret", checkErrors: 1, buildErrors: 0, retries: 0 });
+    const [, reply] = await history(workspace.id);
+    expect(reply!.parts.find((part) => part.type === "tool-ask_for_secret")).toMatchObject({
+      state: "output-available",
+      input: { name: "EMAIL_KEY", why: "Your app needs your email service's key to send the emails." },
+    });
+
+    // The page saves the value through the Secrets route, then starts the next Turn by the Secret's name.
+    const saved = await call(`/api/workspaces/${workspace.id}/secrets/EMAIL_KEY`, { method: "PUT", body: { value: askedSecretValue } });
+    expect(saved.status).toBe(204);
+    const from = conversation.frames.length;
+    const started = await call(`/api/workspaces/${workspace.id}/turns`, { method: "POST", body: { secret: "EMAIL_KEY" } });
+    expect(started.status).toBe(202);
+    const carried = await turnEnd(conversation, from);
+    expect(carried).toMatchObject({ status: "completed", asked: null, checkErrors: 0, retries: 0 });
+    const { startedAt } = (await turnStart(conversation, from)).state!.turn!;
+
+    const messages = await history(workspace.id);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
+    expect(messages[2]!.metadata).toEqual({ from: "developer", changedFiles: [], turnStartedAt: startedAt, addedSecret: "EMAIL_KEY" });
+    expect(textOf(messages[2]!)).toBe("(From the platform: the Developer added the Secret EMAIL_KEY.)");
+    // The Agent carried on from the note, and the value never reached the model.
+    expect(textOf(messages[3]!)).toBe("Told: (From the platform: the Developer added the Secret EMAIL_KEY.) Saw the value: false");
+    expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
+    // Nor the Conversation, nor the logs.
+    expect(JSON.stringify(messages)).not.toContain(askedSecretValue);
+    expect(JSON.stringify(logged.mock.calls)).not.toContain(askedSecretValue);
+    expect(logged.mock.calls.some(([line]) => typeof line === "string" && line.includes('"event":"turn"') && line.includes('"asked":"secret"'))).toBe(true);
+    logged.mockRestore();
+    conversation.close();
+  });
+
+  it("starts a Turn for a Secret only once it's been added", async () => {
+    const workspace = await create("No such Secret");
+    for (const secret of ["EMAIL_KEY", "", 3]) {
+      const started = await call(`/api/workspaces/${workspace.id}/turns`, { method: "POST", body: { secret } });
+      expect(started.status).toBe(400);
+      expect(await started.json()).toEqual({ error: "There's no secret with that name. Save it first." });
+    }
+    expect(await history(workspace.id)).toEqual([]);
+  });
+
+  it("carries on when ask_for_secret refuses a name the app couldn't read", async () => {
+    const workspace = await create("Asked for a Secret badly");
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:ask-for-secret-badly] Send emails");
+    expect(ended).toMatchObject({ status: "completed", asked: null });
+    const [, reply] = await history(workspace.id);
+    expect(reply!.parts.find((part) => part.type === "tool-ask_for_secret")).toMatchObject({ state: "output-error" });
+    expect(textOf(reply!)).toBe("I'll do without it.");
   });
 
   it("carries on when ask refuses a question without two different answers", async () => {

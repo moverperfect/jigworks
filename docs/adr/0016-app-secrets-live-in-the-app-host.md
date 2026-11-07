@@ -10,6 +10,7 @@ The Developer gives a Workspace secrets, such as API keys, which its app reads f
 
   It hides values before cutting text short, and drops the start of a value left at the end of text that was cut. For an hour after a secret is replaced or removed, its old value is kept, only to be hidden too: a request that started before the change can still log it or answer with it.
 - **The API never sends a value back.** It lists names and when each was set, and takes new values.
+- **The Agent asks for a secret by name** (`ask_for_secret`), saying why the app needs it. The Developer saves the value in a field on the page, through the same API, and the Turn that follows starts with a note of the name only (ADR 0018).
 
 ## Consequences
 

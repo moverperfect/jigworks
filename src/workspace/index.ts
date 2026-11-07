@@ -16,11 +16,12 @@ import tsRust from "ts-rust-wasm/ts_rust.wasm";
 import {
   agentModel,
   agentTools,
-  asksQuestion,
+  askedIn,
   fixMessage,
   developerMessage,
   instructions,
   stopAfterQuestion,
+  type TurnRequest,
   summarise,
   turnProviderOptions,
   withAgentsMd,
@@ -237,6 +238,7 @@ export class Workspace extends Think<Env, ConversationState> {
       requestPreview: (init) => this.requestPreview(init),
       previewLogs: (limit) => this.previewLogs(limit),
       secretNames: () => this.secretNames(),
+      appStarted: () => this.appStarted(),
     });
   }
 
@@ -768,7 +770,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * Starts a Turn for the Developer's message, unless one is running. The
    * Turn carries on after this returns; Conversation sockets follow it.
    */
-  async startTurn(text: string): Promise<DeveloperChange> {
+  async startTurn(request: TurnRequest): Promise<DeveloperChange> {
     // In line with Package work, so a save or an add that arrived first lands
     // before the lock, and the Turn is told about it.
     return this.exclusive(async () => {
@@ -778,7 +780,7 @@ export class Workspace extends Think<Env, ConversationState> {
       // The Turn runs in an alarm of its own, which ends when the Turn does,
       // so its logs reach Workers Logs. Run in the background of this call
       // instead, they never did.
-      await this.schedule(0, "driveTurn", { text, startedAt }, { retry: { maxAttempts: 1 } });
+      await this.schedule(0, "driveTurn", { request, startedAt }, { retry: { maxAttempts: 1 } });
       return { ok: true };
     });
   }
@@ -788,8 +790,8 @@ export class Workspace extends Think<Env, ConversationState> {
    * (see `onStart`), so an alarm retried after a restart doesn't send the
    * Developer's message twice. Only `startTurn` schedules it.
    */
-  async driveTurn({ text, startedAt }: { text: string; startedAt: string }): Promise<void> {
-    if (this.state.turn?.startedAt === startedAt) await this.runDeveloperTurn(text, startedAt);
+  async driveTurn({ request, startedAt }: { request: TurnRequest; startedAt: string }): Promise<void> {
+    if (this.state.turn?.startedAt === startedAt) await this.runDeveloperTurn(request, startedAt);
   }
 
   /** Folds the Conversation into a summary, unless a Turn is running. */
@@ -810,7 +812,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * tries while the Check has errors and the Turn has steps left. Each try is
    * a Think turn of its own.
    */
-  private async runDeveloperTurn(text: string, startedAt: string): Promise<void> {
+  private async runDeveloperTurn(request: TurnRequest, startedAt: string): Promise<void> {
     const started = Date.now();
     const usage: TurnUsage = (this.turnUsage = { steps: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
     const hadStarted = this.appStarted();
@@ -827,12 +829,12 @@ export class Workspace extends Think<Env, ConversationState> {
     try {
       const changed = this.ctx.storage.kv.get<string[]>(changedKey) ?? [];
       this.ctx.storage.kv.delete(changedKey);
-      let result = await this.saveMessages([developerMessage(text, changed, startedAt)]);
+      let result = await this.saveMessages([developerMessage(request, changed, startedAt)]);
       let ended = await this.endOfTurn();
       while (
         ended &&
         // A Turn that ends with a question gets its Check and Build, but no retries (ADR 0018).
-        !asksQuestion(this.messages.at(-1)) &&
+        !askedIn(this.messages.at(-1)) &&
         result.status === "completed" &&
         (ended.check.counts.error > 0 || !ended.build.ok) &&
         lastTurn.retries < maxRetries &&
@@ -870,7 +872,7 @@ export class Workspace extends Think<Env, ConversationState> {
       const startedNow = this.appStarted();
       lastTurn.startedApp = !hadStarted && startedNow;
       lastTurn.noApp = !startedNow;
-      lastTurn.asked = asksQuestion(this.messages.at(-1)) ? "question" : null;
+      lastTurn.asked = askedIn(this.messages.at(-1));
       // The clock moves only at I/O, so this leaves out the last Check.
       console.log(JSON.stringify({ event: "turn", workspace: this.name, durationMs: Date.now() - started, ...lastTurn, ...usage }));
       this.setState({ ...this.state, turn: null, lastTurn });

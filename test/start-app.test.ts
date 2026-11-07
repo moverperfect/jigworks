@@ -119,6 +119,14 @@ describe("start_app", () => {
     });
   });
 
+  it("refuses ask_for_secret until then, since the Developer couldn't add the Secret, so the Turn carries on", async () => {
+    const workspace = await createFromMessage("[script:ask-for-secret-before-start] Email me when someone signs up");
+    expect(await firstTurnEnd(workspace.id)).toMatchObject({ status: "completed", asked: null, noApp: true });
+    expect(await toolResults(workspace.id)).toEqual([
+      { tool: "ask_for_secret", result: "The app hasn't started yet, so the Developer can't add a secret. Start it first with start_app." },
+    ]);
+  });
+
   it("is refused in a Workspace that has files", async () => {
     const workspace = await create("Already started");
     const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:start-app] Start again");

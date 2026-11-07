@@ -216,10 +216,15 @@ export async function getPreviewLogs(id: string): Promise<AppLogEntry[]> {
 /** The Conversation socket's path, for `useAgent`'s `basePath`, which takes it without the leading slash. */
 export const conversationBasePath = (id: string) => `${workspaceApiPath(id).slice(1)}/conversation`;
 
-/** Starts a Turn for the Developer's message. The Turn itself arrives on the Conversation socket. */
-export async function startTurn(id: string, message: string): Promise<void> {
+/**
+ * Starts a Turn for the Developer's message, or, once they've added the
+ * Secret the Agent asked for, `{ secret }` with its name. The Turn itself
+ * arrives on the Conversation socket.
+ */
+export async function startTurn(id: string, message: string | { secret: string }): Promise<void> {
+  const body = typeof message === "string" ? { message } : message;
   // The platform answers 202 with no body, which `request` can't read.
-  await send("POST", `${workspaceApiPath(id)}/turns`, { type: "application/json", text: JSON.stringify({ message }) });
+  await send("POST", `${workspaceApiPath(id)}/turns`, { type: "application/json", text: JSON.stringify(body) });
 }
 
 /** Summarises the Conversation into one message, which the Agent carries on from. */

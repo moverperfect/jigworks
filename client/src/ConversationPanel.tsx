@@ -21,7 +21,7 @@ import {
   type Step,
   type ToolPart,
 } from "./agentMessage";
-import { startTurn, toApiError, type ApiError } from "./api";
+import { setSecret, startTurn, toApiError, type ApiError } from "./api";
 import { sendsMessage } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
 import { describeLastTurn } from "./lastTurn";
@@ -89,6 +89,19 @@ export function ConversationPanel({
     await sendMessage(message);
   }
 
+  /** Saves the Secret the Agent asked for through the Secrets route, then starts the next Turn from it. Throws what went wrong, for the field to show. */
+  async function addSecret(name: string, value: string) {
+    following.current = true;
+    setPosting(true);
+    setError(null);
+    try {
+      await setSecret(id, name, value);
+      await startTurn(id, { secret: name });
+    } finally {
+      setPosting(false);
+    }
+  }
+
   /** Starts a Turn with `message`, and says whether it started. */
   async function sendMessage(message: string): Promise<boolean> {
     if (!canSend) return false;
@@ -134,7 +147,11 @@ export function ConversationPanel({
             key={message.id}
             message={message}
             turnRunning={turnRunning}
-            answers={question && index === messages.length - 1 ? { question: question.id, disabled: !canSend, pick: (choice) => void pick(choice) } : null}
+            answers={
+              question && index === messages.length - 1
+                ? { question: question.id, disabled: !canSend, pick: (choice) => void pick(choice), addSecret }
+                : null
+            }
           />
         ))}
       </ol>
@@ -162,7 +179,16 @@ export function ConversationPanel({
           id={`${headingId}-message`}
           className="composer-input"
           rows={3}
-          placeholder={turnRunning ? "The Agent is working…" : question ? "Or type an answer…" : "Ask for a change…"}
+          // While a Secret is asked for, the placeholder doesn't invite its value, which would enter the Conversation.
+          placeholder={
+            turnRunning
+              ? "The Agent is working…"
+              : question?.asked === "secret"
+                ? "Or ask for something else…"
+                : question
+                  ? "Or type an answer…"
+                  : "Ask for a change…"
+          }
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
@@ -186,12 +212,13 @@ export function ConversationPanel({
   );
 }
 
-/** The buttons for the open question's answers, on the message that asked it. */
+/** The buttons for the open question's answers, or the field for the Secret asked for, on the message that asked. */
 interface Answers {
-  /** The open question's ID. An earlier question in the same message shows no buttons. */
+  /** The open question's ID. An earlier question in the same message shows no buttons or field. */
   question: string;
   disabled: boolean;
   pick: (choice: string) => void;
+  addSecret: (name: string, value: string) => Promise<void>;
 }
 
 function MessageItem({ message, turnRunning, answers }: { message: ConversationMessage; turnRunning: boolean; answers: Answers | null }) {
@@ -213,10 +240,12 @@ function MessageItem({ message, turnRunning, answers }: { message: ConversationM
   if (message.role === "user") {
     // Any second text part is the platform's note to the Agent, so say it from `changedFiles` instead.
     const changedFiles = metadata?.from === "developer" ? metadata.changedFiles : [];
+    // Adding a Secret the Agent asked for starts a Turn with the platform's note, which is said from `addedSecret` instead.
+    const addedSecret = metadata?.from === "developer" ? metadata.addedSecret : undefined;
     return (
       <li className="conversation-item from-developer">
         <span className="speaker">You</span>
-        <p className="conversation-text">{texts[0]?.text}</p>
+        <p className="conversation-text">{addedSecret === undefined ? texts[0]?.text : `Added the secret ${addedSecret}`}</p>
         {changedFiles.length > 0 && <p className="conversation-note">Told the Agent you changed {changedFiles.join(", ")}</p>}
       </li>
     );
@@ -240,7 +269,14 @@ function MessageItem({ message, turnRunning, answers }: { message: ConversationM
       {blocks.map((block, index) => {
         if (block.kind === "text") return <Markdown key={index} text={block.text} streaming={block.streaming} />;
         if (block.kind === "steps") return <Steps key={index} steps={block.steps} tools={block.tools} turnRunning={turnRunning} />;
-        if (block.kind === "question") return <AgentQuestion key={index} question={block.question} answers={answers} />;
+        if (block.kind === "question") {
+          const { question } = block;
+          return question.asked === "secret" ? (
+            <SecretRequest key={index} request={question} answers={answers} />
+          ) : (
+            <AgentQuestion key={index} question={question} answers={answers} />
+          );
+        }
         return (
           <p key={index} className="conversation-thinking">
             Thinking…
@@ -269,7 +305,7 @@ function Steps({ steps, tools, turnRunning }: { steps: Step[]; tools: ToolPart[]
 }
 
 /** A question the Agent asked, with its answers as buttons while it's open. The Developer can type an answer instead. */
-function AgentQuestion({ question, answers }: { question: Question; answers: Answers | null }) {
+function AgentQuestion({ question, answers }: { question: Extract<Question, { asked: "question" }>; answers: Answers | null }) {
   const questionId = useId();
   return (
     <div className="agent-question">
@@ -282,6 +318,56 @@ function AgentQuestion({ question, answers }: { question: Question; answers: Ans
             </button>
           ))}
         </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The Agent asking for a Secret: why the app needs it, and while it's open, a
+ * field that saves the value as a Secret through the Secrets route, so the
+ * value never enters the Conversation (ADR 0016). Saving starts the next Turn.
+ */
+function SecretRequest({ request, answers }: { request: Extract<Question, { asked: "secret" }>; answers: Answers | null }) {
+  const fieldId = useId();
+  const [value, setValue] = useState("");
+  const [error, setError] = useState<ApiError | null>(null);
+
+  async function save(event: FormEvent) {
+    event.preventDefault();
+    if (!answers) return;
+    setError(null);
+    try {
+      await answers.addSecret(request.name, value);
+      setValue("");
+    } catch (caught) {
+      setError(toApiError(caught));
+    }
+  }
+
+  return (
+    <div className="agent-question">
+      <p>{request.why}</p>
+      {answers?.question === request.id && (
+        <form className="field" onSubmit={(event) => void save(event)}>
+          <label htmlFor={fieldId}>{request.name}</label>
+          <div className="secret-request-field">
+            <input
+              id={fieldId}
+              type="password"
+              value={value}
+              onChange={(event) => setValue(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              required
+            />
+            <button type="submit" className="button button-primary" disabled={answers.disabled || !value}>
+              Save
+            </button>
+          </div>
+          <p className="hint">Only your app can read it. It isn't kept in the chat, and the Agent never sees it.</p>
+          {error && <ErrorMessage error={error} />}
+        </form>
       )}
     </div>
   );

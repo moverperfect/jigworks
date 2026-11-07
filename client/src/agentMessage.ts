@@ -1,5 +1,5 @@
 import { getToolName, isTextUIPart, isToolUIPart, type DynamicToolUIPart, type ToolUIPart, type UIMessage } from "ai";
-import { maxRetries, type ConversationState } from "../../src/shared/conversation.ts";
+import { askingTools, maxRetries, type ConversationState } from "../../src/shared/conversation.ts";
 import { plural } from "./lastTurn";
 
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
@@ -19,20 +19,22 @@ type MessageBlock =
   | { kind: "text"; text: string; streaming: boolean }
   /** `fromAgent` when the steps are the Agent's own list, rather than its tool calls described. */
   | { kind: "steps"; steps: Step[]; tools: ToolPart[]; fromAgent: boolean }
-  /** The question the Agent asked with `ask`. The page shows its choices as buttons only while it's open (`openQuestion`). */
+  /** What the Agent asked the Developer for. The page shows a question's choices as buttons, or a Secret's field, only while it's open (`openQuestion`). */
   | { kind: "question"; question: Question }
   | { kind: "thinking" };
 
-/** A question the Agent asked the Developer with `ask`, with the answers they can pick. */
-export interface Question {
-  /** The `ask` call's ID, so only the open question shows its answers. */
-  id: string;
-  question: string;
-  choices: string[];
-}
+/**
+ * What the Agent asked the Developer for, as `LastTurn.asked` names it: an
+ * answer to a question with `ask`, with the answers they can pick, or a
+ * Secret with `ask_for_secret`, with why the app needs it. `id` is the
+ * call's, so only the open one shows its buttons or field.
+ */
+export type Question =
+  | { asked: "question"; id: string; question: string; choices: string[] }
+  | { asked: "secret"; id: string; name: string; why: string };
 
 /** The Agent's tools the page shows in their own way, rather than as steps or under "Technical details". */
-const shownOnThePage = new Set(["steps", "ask", "suggest"]);
+const shownOnThePage = new Set(["steps", "suggest", ...askingTools.keys()]);
 
 /** How each tool reads in plain words, when the Agent hasn't said its steps itself. */
 const plainTools: Record<string, string> = {
@@ -69,12 +71,12 @@ export function agentMessageBlocks(parts: UIMessage["parts"]): MessageBlock[] {
       if (part.text) blocks.push({ kind: "text", text: part.text, streaming: part.state === "streaming" });
     } else if (isToolUIPart(part)) {
       const name = getToolName(part);
-      if (name === "ask") {
+      if (askingTools.has(name)) {
         const question = questionOf(part);
         if (question) blocks.push({ kind: "question", question });
       }
       // The suggestions show above the message box once the Turn ends (`suggestionsToShow`).
-      if (stepsShown || name === "ask" || name === "suggest") continue;
+      if (stepsShown || askingTools.has(name) || name === "suggest") continue;
       stepsShown = true;
       const others = tools.filter((tool) => !shownOnThePage.has(getToolName(tool)));
       const own = latestSteps(tools);
@@ -104,31 +106,40 @@ function latestSteps(tools: ToolPart[]): Step[] | null {
 /** A tool call's states once the model has finished writing its input and the platform took it. */
 const taken = new Set<ToolPart["state"]>(["input-available", "output-available"]);
 
-/** The question in an `ask` call, once the platform took it, with its choices, or null if it isn't one. */
+/** What an `ask` or `ask_for_secret` call asked for, once the platform took it, or null if it isn't something the page can show. */
 function questionOf(tool: ToolPart): Question | null {
   if (!taken.has(tool.state)) return null;
-  const { question, choices } = (tool.input ?? {}) as { question?: unknown; choices?: unknown };
-  if (typeof question !== "string" || question.trim() === "") return null;
-  const valid = plainStrings(choices);
-  return valid.length >= 2 ? { id: tool.toolCallId, question, choices: valid } : null;
+  const input = (tool.input ?? {}) as { question?: unknown; choices?: unknown; name?: unknown; why?: unknown };
+  if (askingTools.get(getToolName(tool)) === "secret") {
+    const [name, why] = [input.name, input.why];
+    return plainString(name) && plainString(why) ? { asked: "secret", id: tool.toolCallId, name, why } : null;
+  }
+  if (!plainString(input.question)) return null;
+  const valid = plainStrings(input.choices);
+  return valid.length >= 2 ? { asked: "question", id: tool.toolCallId, question: input.question, choices: valid } : null;
+}
+
+/** Whether `value` is a string with something in it. */
+function plainString(value: unknown): value is string {
+  return typeof value === "string" && value.trim() !== "";
 }
 
 /** The non-empty strings in `values`, if it's an array, without repeats. */
 function plainStrings(values: unknown): string[] {
   if (!Array.isArray(values)) return [];
-  return [...new Set(values.filter((value): value is string => typeof value === "string" && value.trim() !== ""))];
+  return [...new Set(values.filter(plainString))];
 }
 
 /**
- * The question to show the answers to as buttons: the last one the
- * Conversation's last message asked, while `idle`, that is with no Turn
- * running. The Developer can type an answer instead.
+ * The question to show the answers to as buttons, or the Secret to show the
+ * field for: the last one the Conversation's last message asked, while
+ * `idle`, that is with no Turn running. The Developer can write instead.
  */
 export function openQuestion(messages: UIMessage[], idle: boolean): Question | null {
   const last = messages.at(-1);
   if (!idle || last?.role !== "assistant") return null;
   for (const part of last.parts.toReversed()) {
-    if (!isToolUIPart(part) || getToolName(part) !== "ask") continue;
+    if (!isToolUIPart(part) || !askingTools.has(getToolName(part))) continue;
     const question = questionOf(part);
     if (question) return question;
   }
