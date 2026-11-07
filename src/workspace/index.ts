@@ -175,6 +175,8 @@ export class Workspace extends Think<Env, ConversationState> {
       noApp: !this.appStarted(),
     };
     this.setState({ turn: null, startingFresh: false, lastTurn: turn ? stopped : this.state.lastTurn });
+    // The Agent may have changed files before the restart.
+    if (turn) await this.updateList();
   }
 
   /**
@@ -318,6 +320,34 @@ export class Workspace extends Think<Env, ConversationState> {
     const developer = this.ctx.storage.kv.get<string>(developerKey);
     if (developer) await this.env.DEVELOPERS.getByName(developer).appStarted(this.name, name.trim(), template);
     return { ok: true, agentsMd: this.files.read("AGENTS.md") };
+  }
+
+  /**
+   * For a Developer's list made before it kept the times: records whose list
+   * the Workspace is on, and says when it was last published and its last
+   * Turn ended.
+   */
+  async joinList(developer: string): Promise<{ publishedAt: string | null; changedAt: string | null }> {
+    this.ctx.storage.kv.put(developerKey, developer);
+    const label = this.ctx.storage.kv.get<string>(appLabelKey);
+    const published = label ? await this.env.APP_HOSTS.getByName(label).published() : null;
+    return { publishedAt: published?.publishedAt ?? null, changedAt: this.state.lastTurn?.endedAt ?? null };
+  }
+
+  /**
+   * Tells the Developer's list that the app changed just now, or was
+   * published at `publishedAt`. The change itself has already happened, so
+   * a list that can't be told is only logged.
+   */
+  private async updateList(publishedAt?: string): Promise<void> {
+    const developer = this.ctx.storage.kv.get<string>(developerKey);
+    if (!developer) return;
+    const list = this.env.DEVELOPERS.getByName(developer);
+    try {
+      await (publishedAt ? list.recordPublish(this.name, publishedAt) : list.recordChange(this.name));
+    } catch (error) {
+      console.log(JSON.stringify({ event: "list-update-failed", workspace: this.name, error: String(error) }));
+    }
   }
 
   /**
@@ -579,6 +609,7 @@ export class Workspace extends Think<Env, ConversationState> {
       return { ok: false, error };
     }
     console.log(JSON.stringify({ event: "publish", workspace: this.name, hash: result.published.hash }));
+    await this.updateList(result.published.publishedAt);
     return { ok: true, deployment: { ...result.published, ...this.deploymentAt(label) } };
   }
 
@@ -672,7 +703,7 @@ export class Workspace extends Think<Env, ConversationState> {
       if (normalised === "package.json") await this.install();
       return { ok: true };
     });
-    if (result.ok) await this.buildSoon();
+    if (result.ok) await Promise.all([this.buildSoon(), this.updateList()]);
     return result;
   }
 
@@ -700,7 +731,9 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** Adds a Package for the Developer, unless a Turn is running. The next Turn is told `package.json` changed. */
   async addPackage(name: string, options: AddOptions = {}): Promise<PackageAdded> {
-    return this.addPackageFor("developer", name, options);
+    const result = await this.addPackageFor("developer", name, options);
+    if (result.ok) await this.updateList();
+    return result;
   }
 
   /** Adds a Package for the Agent's `add_package` tool, during its Turn. */
@@ -834,6 +867,7 @@ export class Workspace extends Think<Env, ConversationState> {
       // The clock moves only at I/O, so this leaves out the last Check.
       console.log(JSON.stringify({ event: "turn", workspace: this.name, durationMs: Date.now() - started, ...lastTurn, ...usage }));
       this.setState({ ...this.state, turn: null, lastTurn });
+      await this.updateList();
     }
   }
 

@@ -115,7 +115,7 @@ describe("Workspaces", () => {
   });
 
   it.each([
-    [{ name: "   ", template: "worker" }, "Enter a name for the Workspace."],
+    [{ name: "   ", template: "worker" }, "Enter a name for your app."],
     [{ name: "x".repeat(61), template: "worker" }, "Use 60 characters or fewer. This name has 61."],
     [{ name: "Fine", template: "no-such-template" }, "There's no Template with that name."],
   ])("refuses %j", async (body, error) => {

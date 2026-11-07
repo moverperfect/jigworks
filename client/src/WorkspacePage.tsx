@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { ApiError, getDeployment, getWorkspace, listFiles, type Workspace } from "./api";
 import { turnProgress } from "./agentMessage";
 import { appAreaState } from "./appArea";
+import { AppName } from "./AppName";
 import { ConversationPanel } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
 import { FileTree } from "./FileTree";
@@ -68,12 +69,12 @@ export function WorkspacePage({ id }: { id: string }) {
           <p>It may have been deleted.</p>
         </div>
       )}
-      {workspace && <WorkspaceView workspace={workspace} onIdle={lookForName} />}
+      {workspace && <WorkspaceView workspace={workspace} onIdle={lookForName} onRenamed={(renamed) => loaded.update(() => renamed)} />}
     </div>
   );
 }
 
-function WorkspaceView({ workspace, onIdle }: { workspace: Workspace; onIdle(): void }) {
+function WorkspaceView({ workspace, onIdle, onRenamed }: { workspace: Workspace; onIdle(): void; onRenamed(workspace: Workspace): void }) {
   const { id } = workspace;
   const pageId = useId();
   const files = useLoad(() => listFiles(id));
@@ -188,7 +189,7 @@ function WorkspaceView({ workspace, onIdle }: { workspace: Workspace; onIdle(): 
   return (
     <>
       <div className="workspace-header">
-        <h1 className="workspace-title">{workspace.name}</h1>
+        <AppName workspace={workspace} onRenamed={onRenamed} />
         <PublishControl
           id={id}
           name={workspace.name}

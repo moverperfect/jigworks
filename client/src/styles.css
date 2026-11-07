@@ -354,11 +354,41 @@ main.workspace-main {
   border-bottom: 1px solid var(--border);
 }
 
-h1.workspace-title {
+.workspace-title {
   flex: 1 1 8rem;
+  min-width: 0;
   margin: 0;
   font-size: 1.125rem;
   overflow-wrap: anywhere;
+}
+
+/* The name reads as the heading it is, and shows it can be renamed when pointed at. */
+.app-name {
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  background: none;
+  border: 0;
+  cursor: text;
+}
+
+.app-name:hover,
+.app-name:focus-visible {
+  text-decoration: underline dashed;
+  text-underline-offset: 0.2em;
+}
+
+.app-name-form {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.app-name-form input.app-name-input {
+  max-width: 24rem;
+  font-size: inherit;
+  font-weight: 700;
+  font-stretch: 118%;
 }
 
 .publish {
@@ -1492,7 +1522,7 @@ h1.start-question {
 }
 
 .start-idea,
-.start-app {
+.start-app-name {
   text-decoration: none;
 }
 
@@ -1501,8 +1531,30 @@ h1.start-question {
 }
 
 .start-idea:hover,
-.start-app:hover {
+.start-app-name:hover {
   text-decoration: underline;
+}
+
+/* Each app: its name, whether it's live, and when it last changed. */
+.start-app {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.25rem 1.5rem;
+  align-items: baseline;
+}
+
+.start-app-live {
+  color: var(--primary);
+}
+
+@media (width < 760px) {
+  .start-app {
+    grid-template-columns: 1fr auto;
+  }
+
+  .start-app-changed {
+    grid-column: 1 / -1;
+  }
 }
 
 .start-apps {

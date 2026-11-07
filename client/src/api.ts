@@ -12,6 +12,10 @@ export interface Workspace {
   template: string | null;
   /** ISO 8601. */
   createdAt: string;
+  /** When a Turn, or the Developer's own save, last changed the app. ISO 8601. */
+  changedAt: string;
+  /** When the app was last published, or null if it never has been. ISO 8601. */
+  publishedAt: string | null;
 }
 
 /** A failed API call. `status` is 0 when the platform couldn't be reached at all. */
@@ -89,6 +93,12 @@ export async function getWorkspace(id: string): Promise<Workspace> {
 /** Creates an app from the Developer's description. Its first Turn is already running when this returns. */
 export async function createWorkspace(message: string): Promise<Workspace> {
   const { workspace } = await request<{ workspace: Workspace }>("POST", "/api/workspaces", { message });
+  return workspace;
+}
+
+/** Renames the app. Its address stays as it was. Fails with status 400, saying why, for a name it can't have. */
+export async function renameWorkspace(id: string, name: string): Promise<Workspace> {
+  const { workspace } = await request<{ workspace: Workspace }>("PATCH", workspaceApiPath(id), { name });
   return workspace;
 }
 
