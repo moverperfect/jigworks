@@ -6,7 +6,7 @@ import type { LastTurn } from "../src/shared/conversation";
 // Conversation's state, whether a Build has succeeded, so the Preview has
 // something to run, and whether the app is live.
 
-const running = { turn: { startedAt: "2026-11-06T10:00:00.000Z" }, lastTurn: null };
+const running = { turn: { startedAt: "2026-11-06T10:00:00.000Z", stage: "working" as const }, lastTurn: null };
 const idle = { turn: null, lastTurn: null };
 
 const ended = (fields: Partial<LastTurn>): { turn: null; lastTurn: LastTurn } => ({

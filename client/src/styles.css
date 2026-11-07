@@ -1154,10 +1154,84 @@ button.problem:hover {
   overflow-wrap: anywhere;
 }
 
+/* A retry is normal work, so it's marked in Marking blue, not as a warning. */
 .conversation-notice {
   padding-left: 0.6rem;
   color: var(--muted);
-  border-left: 3px solid var(--warning);
+  border-left: 3px solid var(--primary);
+}
+
+/* The Agent's steps: ticked off in Graphite, still to do in muted text, with the tool calls folded below. */
+.step-list {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.step {
+  display: flex;
+  gap: 0.45rem;
+  color: var(--muted);
+}
+
+.step-done {
+  color: var(--text);
+}
+
+.step-mark {
+  flex: none;
+  width: 1ch;
+}
+
+.technical-details {
+  margin-top: 0.3rem;
+  color: var(--muted);
+}
+
+.technical-details summary {
+  cursor: pointer;
+}
+
+.technical-details > .tool-line {
+  margin-top: 0.15rem;
+  padding-left: 1rem;
+}
+
+/* The first build, in place of the app: the current step as the sheet's title, a progress rule, and the steps done. */
+.first-build {
+  display: grid;
+  gap: 0.75rem;
+  padding-bottom: 2rem;
+}
+
+.first-build > .app-instead {
+  padding-bottom: 0;
+}
+
+.first-build-progress {
+  height: 3px;
+  margin-inline: 1.75rem;
+  background: var(--border);
+}
+
+.first-build-progress > span {
+  display: block;
+  height: 100%;
+  background: var(--primary);
+  transition: width 300ms ease-in-out;
+}
+
+.first-build-count,
+.first-build > .step-list {
+  margin-inline: 1.75rem;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .first-build-progress > span {
+    transition: none;
+  }
 }
 
 .conversation-summary {
@@ -1479,7 +1553,10 @@ h1.start-question {
 .conversation-note,
 .conversation-notice,
 .conversation-thinking,
-.tool-line {
+.tool-line,
+.step-list,
+.technical-details,
+.first-build-count {
   font-size: 0.875rem;
   font-weight: 500;
   font-stretch: 86%;

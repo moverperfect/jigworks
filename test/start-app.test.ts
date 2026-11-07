@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceRecord } from "../src/developer";
 import { maxRetries } from "../src/shared/conversation";
 import { call, create, createFromMessage } from "./helpers/api";
-import { connect, history, runTurn, turnEnd } from "./helpers/conversation";
+import { connect, firstTurnEnd, history, runTurn, turnEnd } from "./helpers/conversation";
 import type { UIMessage } from "ai";
 
 // A new app starts from the Developer's message, and the Agent starts it
@@ -80,7 +80,7 @@ describe("creating a Workspace from a message", () => {
 describe("start_app", () => {
   it("starts the app from the Template the Agent chose, names it, and makes its address from the name", async () => {
     const workspace = await createFromMessage("[script:start-app] A sign-up sheet for my running club");
-    const ended = await turnEnd(await connect(workspace.id), 0);
+    const ended = await firstTurnEnd(workspace.id);
     expect(ended).toMatchObject({ status: "completed", startedApp: true, noApp: false, checkErrors: 0, buildErrors: 0, retries: 0 });
 
     expect(await listed(workspace.id)).toEqual({ ...workspace, name: "Sunday Runs", template: "worker" });
@@ -96,7 +96,7 @@ describe("start_app", () => {
 
   it("refuses the other file tools until the app has started", async () => {
     const workspace = await createFromMessage("[script:write-before-start] A sign-up sheet");
-    const ended = await turnEnd(await connect(workspace.id), 0);
+    const ended = await firstTurnEnd(workspace.id);
     expect(ended).toMatchObject({ startedApp: true, checkErrors: 0 });
     expect(await toolResults(workspace.id)).toEqual([
       { tool: "write", result: startAppFirst },
@@ -107,7 +107,7 @@ describe("start_app", () => {
 
   it("refuses every tool that changes, checks, builds or tests files before then", async () => {
     const workspace = await createFromMessage("[script:use-tools-before-start] Anything");
-    await turnEnd(await connect(workspace.id), 0);
+    await firstTurnEnd(workspace.id);
     const results = await toolResults(workspace.id);
     expect(results.map(({ tool }) => tool)).toEqual(["write", "edit", "delete", "bash", "add_package", "check", "build", "test"]);
     expect(results.map(({ result }) => result)).toEqual(Array(8).fill(startAppFirst));

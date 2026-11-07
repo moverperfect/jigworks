@@ -1,4 +1,4 @@
-import { getToolName, isTextUIPart, isToolUIPart, type DynamicToolUIPart, type ToolUIPart } from "ai";
+import { getToolName, isTextUIPart } from "ai";
 import {
   createElement,
   memo,
@@ -11,15 +11,14 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
-import { isSummary, maxRetries } from "../../src/shared/conversation.ts";
+import { isSummary } from "../../src/shared/conversation.ts";
+import { agentMessageBlocks, describeRetry, type Step, type ToolPart } from "./agentMessage";
 import { startTurn, toApiError, type ApiError } from "./api";
 import { sendsMessage } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
-import { describeLastTurn, plural } from "./lastTurn";
+import { describeLastTurn } from "./lastTurn";
 import { renderMarkdown, type MarkdownNode } from "./markdown";
 import type { Conversation, ConversationMessage } from "./useConversation";
-
-type ToolPart = ToolUIPart | DynamicToolUIPart;
 
 /** How each tool reads: after "Couldn't", while it runs, and once it's done. */
 const toolVerbs: Record<string, [failed: string, running: string, done: string]> = {
@@ -122,15 +121,20 @@ export function ConversationPanel({
           id={`${headingId}-message`}
           className="composer-input"
           rows={3}
+          placeholder={turnRunning ? "The Agent is working…" : "Ask for a change…"}
           value={text}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={onKeyDown}
-          aria-describedby={unsavedChanges ? `${headingId}-unsaved` : undefined}
+          aria-describedby={turnRunning || unsavedChanges ? `${headingId}-hint` : undefined}
         />
         {error && <ErrorMessage error={error} />}
         <div className="composer-actions">
-          <p id={`${headingId}-unsaved`} className="hint">
-            {unsavedChanges ? "Save your changes before you send a message" : "Shift+Enter starts a new line"}
+          <p id={`${headingId}-hint`} className="hint">
+            {turnRunning
+              ? "The Agent is working. You can send a message when it's done."
+              : unsavedChanges
+                ? "Save your changes before you send a message"
+                : "Shift+Enter starts a new line"}
           </p>
           <button type="submit" className="button button-primary button-small" disabled={!canSend}>
             Send
@@ -148,10 +152,7 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
   if (message.role === "user" && metadata?.from === "check") {
     return (
       <li className="conversation-notice">
-        <p>
-          {describeFound(metadata.errors, metadata.buildErrors ?? 0)}, so the Agent is trying again (retry {metadata.retry}{" "}
-          of {maxRetries})
-        </p>
+        <p>{describeRetry(metadata.retry)}</p>
         <details>
           <summary>What the Agent was told</summary>
           <pre className="conversation-pre">{texts.map((part) => part.text).join("\n\n")}</pre>
@@ -182,26 +183,55 @@ function MessageItem({ message, turnRunning }: { message: ConversationMessage; t
     );
   }
 
-  const parts = message.parts.map((part, index): ReactNode => {
-    if (isTextUIPart(part)) {
-      return part.text ? <Markdown key={index} text={part.text} streaming={part.state === "streaming"} /> : null;
-    }
-    if (isToolUIPart(part)) return <ToolLine key={index} part={part} turnRunning={turnRunning} />;
-    if (part.type === "reasoning" && part.state === "streaming") {
-      return (
-        <p key={index} className="conversation-thinking">
-          Thinking…
-        </p>
-      );
-    }
-    return null;
-  });
-  if (parts.every((part) => part === null)) return null;
+  const blocks = agentMessageBlocks(message.parts);
+  if (blocks.length === 0) return null;
   return (
     <li className="conversation-item from-agent">
       <span className="speaker">Agent</span>
-      {parts}
+      {blocks.map((block, index) => {
+        if (block.kind === "text") return <Markdown key={index} text={block.text} streaming={block.streaming} />;
+        if (block.kind === "steps") return <Steps key={index} steps={block.steps} tools={block.tools} turnRunning={turnRunning} />;
+        return (
+          <p key={index} className="conversation-thinking">
+            Thinking…
+          </p>
+        );
+      })}
     </li>
+  );
+}
+
+/** The Agent's steps in plain words, ticked off as it goes, with the tool calls behind them folded away. */
+function Steps({ steps, tools, turnRunning }: { steps: Step[]; tools: ToolPart[]; turnRunning: boolean }) {
+  return (
+    <div className="agent-steps">
+      {steps.length > 0 && <StepList steps={steps} />}
+      {tools.length > 0 && (
+        <details className="technical-details">
+          <summary>Technical details</summary>
+          {tools.map((part) => (
+            <ToolLine key={part.toolCallId} part={part} turnRunning={turnRunning} />
+          ))}
+        </details>
+      )}
+    </div>
+  );
+}
+
+/** Steps, each ticked off when it's done. Also the first build's list of steps done. */
+export function StepList({ steps }: { steps: Step[] }) {
+  return (
+    <ul className="step-list">
+      {steps.map((step, index) => (
+        <li key={index} className={step.done ? "step step-done" : "step"}>
+          <span className="step-mark" aria-hidden="true">
+            {step.done ? "✓" : "○"}
+          </span>
+          <span className="visually-hidden">{step.done ? "Done: " : "To do: "}</span>
+          {step.label}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -294,7 +324,8 @@ function ConversationStatus({ conversation }: { conversation: Conversation }) {
   if (failed) status = "Couldn't connect to the Conversation. Reload the page to try again.";
   else if (!connected) status = state ? "Disconnected. Reconnecting…" : "Connecting…";
   else if (state?.startingFresh) status = "Starting fresh…";
-  else if (startedAt !== undefined) status = "The Agent is working…";
+  // The page calls the end-of-Turn Check, Build and tests "making sure it works" (ADR 0018).
+  else if (startedAt !== undefined) status = state?.turn?.stage === "checking" ? "Making sure it works…" : "The Agent is working…";
   else if (state?.lastTurn) {
     status = describeLastTurn(state.lastTurn);
     warning = status !== null;
@@ -307,13 +338,6 @@ function ConversationStatus({ conversation }: { conversation: Conversation }) {
       {startedAt !== undefined && <span>{formatElapsed(now - Date.parse(startedAt))}</span>}
     </div>
   );
-}
-
-/** What a Turn's Check and Build found, for the platform's message asking the Agent to fix it, in the page's words (ADR 0018). */
-function describeFound(checkErrors: number, buildErrors: number): string {
-  if (buildErrors === 0) return `Making sure it works: ${plural(checkErrors, "error")}`;
-  if (checkErrors === 0) return "Making sure it works: the app doesn't build";
-  return `Making sure it works: ${plural(checkErrors, "error")}, and the app doesn't build`;
 }
 
 /** The time now, updated every second while `ticking`. */

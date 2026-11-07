@@ -98,6 +98,19 @@ export async function turnEnd(conversation: Conversation, from: number): Promise
   return ended.state!.lastTurn!;
 }
 
+/**
+ * How the Turn that a Workspace created from a message started ended. That
+ * Turn may end before a socket connects, so the state the socket is first
+ * sent may already have it.
+ */
+export async function firstTurnEnd(id: string): Promise<LastTurn> {
+  const conversation = await connect(id);
+  const { state } = await conversation.next((frame) => frame.type === "cf_agent_state");
+  const ended = state!.turn ? await turnEnd(conversation, 0) : state!.lastTurn!;
+  conversation.close();
+  return ended;
+}
+
 /** The state frame saying a Turn started, at or after frame `from`. */
 export function turnStart(conversation: Conversation, from: number): Promise<Frame> {
   return conversation.next((frame) => frame.type === "cf_agent_state" && Boolean(frame.state?.turn), from);

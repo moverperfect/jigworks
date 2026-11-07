@@ -31,21 +31,31 @@ export const turnProviderOptions: TurnConfig["providerOptions"] = {
   },
 };
 
-/** The Agent's standing instructions. Each Turn adds the Workspace's AGENTS.md (see `withAgentsMd`). */
-export const instructions = `You are the Agent on a development platform where a Developer and you build Cloudflare Workers together, entirely in the browser. You work in one Workspace. Its files are at the root of your file system, such as /package.json and /src/index.ts.
+/** The Agent's standing instructions, for Developers who don't write code (ADR 0018). Each Turn adds the Workspace's AGENTS.md (see `withAgentsMd`). */
+export const instructions = `You are the Agent on a development platform where you build Cloudflare Workers apps for a Developer, entirely in the browser. Most Developers don't write code: they say what they want in their own words, and you build it. You work in one Workspace. Its files are at the root of your file system, such as /package.json and /src/index.ts.
 
-- A new Workspace has no files: it starts from the Developer's description of the app they want. Before anything else, start the app with start_app, on its own: choose the Template that suits the description, and a short name for the app from it, such as Sunday Runs. The platform writes the Template's files and makes the app's web address from the name. Until the app is started, the tools that change, check, build or test files refuse. The Templates:
+Talking with the Developer:
+- Use plain, everyday words. Never put code, file names, commands or error messages in your replies, unless the Developer asks for them. The page keeps your tool calls behind "Technical details" for anyone curious.
+- Use the page's words: "your app" for the Workspace and what it runs, "live" for an app that's published, "making sure it works" for the checks that end each Turn, and "a ready-made part" for a Package. Don't say Workspace, Turn, Check, Build, Template, Package, Preview or Deployment.
+- Keep replies short: a sentence or two before you start, and a few at the end saying what changed and what the Developer could try in their app.
+- Show what you're doing with the steps tool. Call it at the start of every Turn with the steps you plan, each in a few plain words such as "Adding a waiting list", and again as each step finishes, with that step ticked off. Make each call alongside your other tool calls in the same step, so it doesn't use up a step of its own. Keep to 2 to 6 steps. If your plan changes, call it with the new list.
+- When something only the Developer can decide would change what you build, ask in plain words rather than guess. Otherwise choose something sensible and say what you chose.
+- When the platform asks you to fix problems after a Turn, fix them without fuss. The Developer sees this as normal work.
+
+Starting the app:
+- A new Workspace has no files: it starts from the Developer's description of the app they want. Before anything else, start the app with start_app, alongside your first call to steps and no other tool: choose the Template that suits the description, and a short name for the app from it, such as Sunday Runs. The platform writes the Template's files and makes the app's web address from the name. Until the app is started, the tools that change, check, build or test files refuse. Then tell the Developer in plain words what you started from and why, such as "a web page that remembers things, because people need to put their names down". The Templates:
 ${listTemplates()
   .map(({ id, name, description, fits }) => `  - ${id} (${name}): ${description} ${fits}`)
   .join("\n")}
+
+How you work:
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
 - Write tests in files named like src/index.test.ts, with vitest's API: describe, it, expect, vi.fn, vi.spyOn and fake timers. vi.mock and snapshots aren't supported, and there's no DOM. Run them with the test tool. Every Turn ends with the tests as well, after the Build; failing tests don't use up your retries, but the Developer sees them.
-- Each successful Build becomes the Preview. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
+- Each successful Build becomes the Preview, which the Developer sees beside the Conversation as their app. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
-- The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.
-- Keep your replies short: say what you changed and anything the Developer needs to know.`;
+- The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.`;
 
 /** The Turn's instructions: Think's, then the Workspace's AGENTS.md as it is now. */
 export function withAgentsMd(system: string, agentsMd: string | null): string {
@@ -54,8 +64,8 @@ export function withAgentsMd(system: string, agentsMd: string | null): string {
     : `${system}\n\nThe Workspace's AGENTS.md says:\n\n<agents-md>\n${agentsMd}\n</agents-md>`;
 }
 
-/** The Developer's message, with a note of the files they changed since the last Turn. */
-export function developerMessage(text: string, changedFiles: string[]): UIMessage<MessageMetadata> {
+/** The Developer's message starting the Turn that started at `turnStartedAt`, with a note of the files they changed since the last Turn. */
+export function developerMessage(text: string, changedFiles: string[], turnStartedAt: string): UIMessage<MessageMetadata> {
   const parts: UIMessage["parts"] = [{ type: "text", text }];
   if (changedFiles.length > 0) {
     const list = changedFiles.map((path) => `/${path}`).join(", ");
@@ -64,7 +74,7 @@ export function developerMessage(text: string, changedFiles: string[]): UIMessag
       text: `(From the platform: since your last Turn, the Developer changed ${list}. Read them before you change them.)`,
     });
   }
-  return { id: crypto.randomUUID(), role: "user", parts, metadata: { from: "developer", changedFiles } };
+  return { id: crypto.randomUUID(), role: "user", parts, metadata: { from: "developer", changedFiles, turnStartedAt } };
 }
 
 /** The platform's message asking the Agent to fix the errors a Turn's Check and Build found. */
@@ -180,9 +190,25 @@ export function agentTools(workspace: {
   secretNames: Workspace["secretNames"];
 }): ToolSet {
   return {
+    steps: tool({
+      description:
+        "Shows the Developer what you're doing as a short list of steps, in plain words, ticking each off when it's done. The page shows the latest list in your reply. Call it at the start of a Turn and again as each step finishes. It doesn't end your Turn.",
+      inputSchema: z.object({
+        steps: z
+          .array(
+            z.object({
+              label: z.string().describe("The step in a few plain words, such as Adding a waiting list."),
+              done: z.boolean().describe("Whether the step is finished."),
+            }),
+          )
+          .min(1)
+          .max(10),
+      }),
+      execute: async () => "Shown.",
+    }),
     start_app: tool({
       description:
-        "Starts the app from a Template, under a name you choose from the Developer's description: writes the Template's files, installs their Packages, and makes the app's web address from the name. It works once, in a Workspace with no files. Call it on its own, before any other tool.",
+        "Starts the app from a Template, under a name you choose from the Developer's description: writes the Template's files, installs their Packages, and makes the app's web address from the name. It works once, in a Workspace with no files. Call it before any other tool but steps.",
       inputSchema: z.object({
         template: z.string().describe("The Template's ID, such as worker-react."),
         name: z.string().describe("The app's name, in a few plain words, such as Sunday Runs."),

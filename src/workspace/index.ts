@@ -46,7 +46,14 @@ import type { CheckReport, Problem, Severity } from "../shared/check-report";
 import { validateWorkspaceName } from "../shared/workspace-name";
 import { testFailures, testReportWithin, type TestCounts, type TestFileReport, type TestReport } from "../shared/test-report";
 import { bundleTestsInDynamicWorker, isTestFile, testInDynamicWorkers, vitestTypes } from "../tester";
-import { idleState, maxRetries, type ConversationState, type LastTurn } from "../shared/conversation";
+import {
+  idleState,
+  maxRetries,
+  restartedDuringTurn,
+  type ConversationState,
+  type LastTurn,
+  type TurnStage,
+} from "../shared/conversation";
 import { getTemplate } from "../templates";
 
 export type { CheckReport, TestReport };
@@ -158,7 +165,7 @@ export class Workspace extends Think<Env, ConversationState> {
     const stopped: LastTurn = {
       endedAt: new Date().toISOString(),
       status: "aborted",
-      error: "The Workspace restarted during the Turn.",
+      error: restartedDuringTurn,
       checkErrors: null,
       buildErrors: null,
       testFailures: null,
@@ -730,7 +737,7 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.exclusive(async () => {
       if (this.state.turn || this.state.startingFresh) return busy;
       const startedAt = new Date().toISOString();
-      this.setState({ ...this.state, turn: { startedAt } });
+      this.setState({ ...this.state, turn: { startedAt, stage: "working" } });
       // The Turn runs in an alarm of its own, which ends when the Turn does,
       // so its logs reach Workers Logs. Run in the background of this call
       // instead, they never did.
@@ -745,7 +752,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * Developer's message twice. Only `startTurn` schedules it.
    */
   async driveTurn({ text, startedAt }: { text: string; startedAt: string }): Promise<void> {
-    if (this.state.turn?.startedAt === startedAt) await this.runDeveloperTurn(text);
+    if (this.state.turn?.startedAt === startedAt) await this.runDeveloperTurn(text, startedAt);
   }
 
   /** Folds the Conversation into a summary, unless a Turn is running. */
@@ -766,7 +773,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * tries while the Check has errors and the Turn has steps left. Each try is
    * a Think turn of its own.
    */
-  private async runDeveloperTurn(text: string): Promise<void> {
+  private async runDeveloperTurn(text: string, startedAt: string): Promise<void> {
     const started = Date.now();
     const usage: TurnUsage = (this.turnUsage = { steps: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
     const hadStarted = this.appStarted();
@@ -783,7 +790,7 @@ export class Workspace extends Think<Env, ConversationState> {
     try {
       const changed = this.ctx.storage.kv.get<string[]>(changedKey) ?? [];
       this.ctx.storage.kv.delete(changedKey);
-      let result = await this.saveMessages([developerMessage(text, changed)]);
+      let result = await this.saveMessages([developerMessage(text, changed, startedAt)]);
       let ended = await this.endOfTurn();
       while (
         ended &&
@@ -793,6 +800,7 @@ export class Workspace extends Think<Env, ConversationState> {
         usage.steps < turnSteps
       ) {
         lastTurn.retries += 1;
+        this.setStage("working");
         result = await this.saveMessages([fixMessage(ended.check, ended.build, lastTurn.retries)]);
         ended = await this.endOfTurn();
       }
@@ -836,8 +844,16 @@ export class Workspace extends Think<Env, ConversationState> {
    */
   private async endOfTurn(): Promise<{ check: CheckReport; build: BuildReport } | null> {
     if (!this.appStarted()) return null;
+    // The tests that follow the last of these run at this stage too.
+    this.setStage("checking");
     const check = await this.check("turn");
     return { check, build: await this.buildInItsOwnCall("turn") };
+  }
+
+  /** Tells Conversation sockets what the running Turn is doing. */
+  private setStage(stage: TurnStage): void {
+    const { turn } = this.state;
+    if (turn && turn.stage !== stage) this.setState({ ...this.state, turn: { ...turn, stage } });
   }
 
   private noteDeveloperChange(path: string): void {

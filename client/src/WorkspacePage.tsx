@@ -1,6 +1,7 @@
 import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { ApiError, getDeployment, getWorkspace, listFiles, type Workspace } from "./api";
+import { turnProgress } from "./agentMessage";
 import { appAreaState } from "./appArea";
 import { ConversationPanel } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
@@ -99,6 +100,7 @@ function WorkspaceView({ workspace, onIdle }: { workspace: Workspace; onIdle(): 
   const deployed = deployment.state.status === "ready" ? deployment.state.data : null;
   const publishing = deployed && publishState(deployed.hash, preview.goodHash);
   const areaState = appAreaState(state, preview.built, publishing);
+  const progress = state?.turn ? turnProgress(conversation.messages, state.turn) : null;
 
   // Another tab may have built or published meanwhile, so look again when the page comes back into view.
   const pageVisible = usePageVisible();
@@ -236,6 +238,7 @@ function WorkspaceView({ workspace, onIdle }: { workspace: Workspace; onIdle(): 
               preview={preview}
               state={areaState}
               publishing={publishing}
+              progress={progress}
               openToEveryone={deployed?.openToEveryone ?? false}
               onShowCode={() => swapView(true)}
               showCodeButton={showCodeButton}

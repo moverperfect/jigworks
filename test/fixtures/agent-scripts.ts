@@ -135,6 +135,24 @@ export const agentScripts: Record<string, Script> = {
           ],
         },
 
+  // Shows its steps, ticks the first off while writing a file, then ticks the second and answers.
+  steps: (request) => {
+    const plan = (first: boolean, second: boolean) => ({
+      name: "steps",
+      input: { steps: [{ label: "Adding a count", done: first }, { label: "Showing it on the page", done: second }] },
+    });
+    switch (toolStepsTaken(request)) {
+      case 0:
+        return { toolCalls: [plan(false, false)] };
+      case 1:
+        return { toolCalls: [plan(true, false), { name: "write", input: { path: "/src/count.ts", content: fixedCount } }] };
+      case 2:
+        return { toolCalls: [plan(true, true)] };
+      default:
+        return { text: "Your count is ready." };
+    }
+  },
+
   // Lists files forever, to reach the step limit.
   "keep-going": () => ({ toolCalls: [{ name: "list", input: { path: "/" } }] }),
 
@@ -160,6 +178,13 @@ function latestInstruction(request: MessagesRequest): string {
     if (text.length > 0) return textOf(text);
   }
   return "";
+}
+
+/** How many of the model's steps so far called tools. */
+function toolStepsTaken(request: MessagesRequest): number {
+  return request.messages.filter(
+    (message) => message.role === "user" && typeof message.content !== "string" && message.content.some((block) => block.type === "tool_result"),
+  ).length;
 }
 
 /** Whether the model's last step called tools, whose results are now in. */
