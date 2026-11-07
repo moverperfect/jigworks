@@ -3,8 +3,7 @@ import { getDeployment, publish, toApiError, type ApiError, type Deployment } fr
 import { ConfirmDialog } from "./ConfirmDialog";
 import { ErrorMessage } from "./ErrorMessage";
 import type { Loader } from "./hooks";
-import { formatTime } from "./ProblemsPanel";
-import { firstPublishNote, publishState } from "./publish";
+import { firstPublishNote, publishChangesNote, publishState } from "./publish";
 
 /**
  * Publishing, in the page's header and its words (ADR 0018): whether the app
@@ -113,10 +112,7 @@ export function PublishControl({
               changes only when you publish them.
             </>
           ) : (
-            <>
-              People with the link will get the latest version of your app, in place of the one published{" "}
-              {formatTime(asking.publishedAt!)}. That one can't be brought back.
-            </>
+            publishChangesNote(asking.publishedAt!)
           )}
         </ConfirmDialog>
       )}

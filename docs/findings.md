@@ -614,3 +614,61 @@ The first live check, the same day after #51's deploy, ran each Template's tests
   - `javascript:`, `JAVASCRIPT:`, `data:` and relative links, and `<javascript:alert(1)>`, showed as their text. `HTTPS://example.com` and `mailto:` became links.
   - Nothing called `alert`, the page had no `<img>`, and no request went to `example.com`.
 - **Unchanged:** the Developer's messages stayed plain text, as typed.
+
+## For people who don't write code (#56)
+
+### The whole journey, live (#67)
+
+**Verdict: yes.** On the deployed platform, a Developer described an app in their own words and got it working without choosing a Template or reading code. The Agent chose the Template, named the app, showed its steps, asked a question and for Secrets, and a change that left the app broken was put back. Every moment of #50's Variant E was there. Four fixes in #67 cover six of the differences, and the rest are #78, #79 and #80.
+
+- **Platform:** the deployed platform at `main` (`ecef3ee`), checked on 2026-11-07 from the Developer's signed-in browser (Chrome) in the UK. The window was 1280 × 800 for the computer, and 390 × 844 for the phone. `DEPLOYMENTS_OPEN_TO_EVERYONE` was `false`.
+- **Turns:** 10 Turns of Opus 5.5 in three Workspaces made for the check, against a budget of $5. They cost $1.97 at the tail script's prices. The Workspaces were deleted afterwards.
+- **Times:** the browser's from the click in the page; the Turns' from their log lines.
+
+**Starting an app and its first build:**
+
+| App, as described | Template | Name | `POST /api/workspaces` | Turn log | Steps | Retries | Cost |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| "A sign-up sheet for my running club's Sunday runs" | Worker + React | Sunday Runs | 1.25 s to the app's page | 100.4 s | 8 | 0 | $0.38 |
+| "A page where neighbours can borrow my lawnmower" | Worker + React | Borrow the Mower | 1.06 s | 119.0 s | 14 | 0 | $0.46 |
+| "A webhook that my payment provider calls each time someone pays, adding the amount to a running total" | Worker | Payment Tally | 1.20 s | 9.6 s to start, then asked; not built | 2 | 0 | $0.06 |
+
+- **Sunday Runs in the browser:** the click on "Make it" took 1.25 s to reach the app's page, and the Agent's steps showed at once. The reply arrived 101.7 s after the click, and the app in its frame at 105.5 s.
+- **The webhook** started from the Worker Template, "a simple web address with no page, since only your payment provider needs to call it", then asked which payment provider. Given Stripe, it asked for the provider's signing secret, and the check stopped there.
+
+**Each Turn:**
+
+| Turn | Asked | Put back | Retries | Turn log | Cost |
+| --- | --- | --- | ---: | ---: | ---: |
+| Sunday Runs: the first build | – | no | 0 | 100.4 s | $0.38 |
+| "Email me when someone signs up" | a Secret (the email service's key) | no | 0 | 13.1 s | $0.17 |
+| After the key was added | a Secret (the address to send to) | no | 0 | 3.8 s | $0.01 |
+| After the address was added: the emails | a Secret (a new key: the service refused the made-up one) | no | 0 | 83.9 s | $0.30 |
+| "Set a limit on places with a waiting list. Ask me how many places before you build it." | a question, 4 answers | no | 0 | 2.7 s | $0.01 |
+| "10 places" | – | no | 0 | 90.5 s | $0.41 |
+| A deliberate type error, kept through every retry | – | **yes** | 3 | 29.3 s | $0.11 |
+| Borrow the Mower: the first build | – | no | 0 | 119.0 s | $0.46 |
+| Payment Tally: the first Turn | a question, 4 answers | no | 0 | 9.6 s | $0.06 |
+| "Stripe" | a Secret (the signing secret) | no | 0 | 3.5 s | $0.06 |
+
+- **How often the Agent picks each Template:** Worker + React for both apps with a page, and Worker for the webhook. 3 starts are too few to give rates.
+- **How often a Turn asks:** 6 of 10 Turns ended by asking, 2 with a question and 4 for a Secret. Only one question was prompted ("Ask me how many places"). This journey went looking for questions and Secrets, so the rate is higher than ordinary use would give.
+- **How often changes are put back:** 1 of 10 Turns, the one asked to keep a type error. No other Turn needed a retry.
+
+**Each moment, against Variant E:**
+- **Start:** "What would you like to make?", the box in its corner brackets, the three ideas and Your apps, each with its live state and when it last changed, as in Variant E. Picking an idea fills the box. The page adds "Signed in as" and "Shift+Enter starts a new line" (#78).
+- **Working:** two bars above the app where Variant E has one (#78). The steps, ticked as they finished, without Variant E's second line of detail (#80), the current one in large type on the canvas with "1 of 4 steps done", "The Agent is working…" with the time, and "Making sure it works…" while the platform checked. **Fixed:** the header said "New app" until the Turn ended, where Variant E shows the name once the app is started; and the canvas had no label, where Variant E says "Making your app".
+- **Ready:** the app in its frame, "Only you can see this until you publish.", Publish, and three suggestions above the message box. **Fixed:** the suggestions arrived after the Conversation had scrolled, which hid the end of the reply.
+- **A Secret:** the field showed under the Agent's reason, said "Only your app can read it. It isn't kept in the chat, and the Agent never sees it", and saving it started the next Turn at once. The made-up value appeared nowhere on the page. **Fixed:** the field arrived below the fold, 113 px short of the bottom.
+- **A question:** the four answers as buttons, "Or type an answer…" in the box, and picking one started the next Turn. **Fixed:** the buttons were cut off below the fold, as with the Secret's field.
+- **Problem:** after "Found a problem, fixing it (try 1 of 3)" to 3 of 3, the frame turned red with "That didn't work. Your app hasn't changed.", the files were put back, and "Try a different way" was suggested. Variant E also offers "Leave it for now" (#80).
+- **Published:** the first Publish said "Only people on this Jigworks's list will be able to use it, at …, once they've signed in." Then the header said "Live at …" with Copy the link, and the frame "Live. Only people on this Jigworks's list can use it." Variant E's frame says "Live at" the address instead; who can use it replaced that in #60, and the address is in the header. After an edit through See the code, it said "with changes not yet published", Publish changes, and "Changes not yet published. People with the link have the earlier version.", as in Variant E. **Fixed:** Publish changes said "in place of the one published 09:43:43", which is now "published 5 minutes ago".
+- **The phone:** Chat and App tabs, and the App tab came forward when a change was done. The app starts 44% of the way down the screen, where Variant E's starts about 30% (#78).
+- **Light and dark:** both modes kept the bench's colours, the brackets and the type, on the start page and the app's page, on a computer. The phone was checked in light mode only.
+- **Your apps and renaming:** renaming from the header changed the name in the header, the title and Your apps, and the address stayed `sunday-runs-…`.
+- **The Preview and the Deployment:** the Preview's frame loaded from `<label>-preview.jigworks.app` after its sign-in exchange. The Deployment opened at `<label>.jigworks.app` in 661 ms, through Access. After Delete, it said "There's no app here." From outside, `anything-preview.jigworks.app` reached the platform (404), and `anything.jigworks.app` redirected to Access.
+
+### Found along the way
+
+- **The page ran a Check and a Build when it opened an app with no files,** before the Agent had started it. They failed ("Could not determine entry point", and no `tsconfig.json`) and filled the hidden problems list. The page now runs them on opening only once the app is started.
+- **The Agent's replies are longer than Variant E's,** with headings and lists, and it asked for an email address as a Secret (#79).

@@ -1,4 +1,5 @@
 import type { BuildReport } from "../../src/shared/build-report.ts";
+import { howLongAgo } from "./changed";
 
 /**
  * What people with the app's link see, in the page's words (ADR 0018):
@@ -73,6 +74,10 @@ const whoCanUse = (openToEveryone: boolean) =>
 /** What the first Publish says about who'll be able to use the app at `host`. */
 export const firstPublishNote = (openToEveryone: boolean, host: string) =>
   `${whoCanUse(openToEveryone)} will be able to use it, at ${host}${openToEveryone ? "" : ", once they've signed in"}.`;
+
+/** What publishing changes says, given when the version people have now was published. */
+export const publishChangesNote = (publishedAt: string, now = new Date()) =>
+  `People with the link will get the latest version of your app, in place of the one published ${howLongAgo(publishedAt, now)}. That one can't be brought back.`;
 
 /** The jig's label while the app is live. */
 export const liveNote = (openToEveryone: boolean) => `Live. ${whoCanUse(openToEveryone)} can use it.`;

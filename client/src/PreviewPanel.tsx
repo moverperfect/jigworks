@@ -1,8 +1,8 @@
 import { useId, useLayoutEffect, useRef, useState, type FormEvent, type Ref } from "react";
 import { previewTabUrl } from "./api";
 import { stepsDone, type TurnProgress } from "./agentMessage";
-import type { AppAreaState } from "./appArea";
-import { liveNote, type PublishState } from "./publish";
+import { appAreaNotes, type AppAreaState } from "./appArea";
+import type { PublishState } from "./publish";
 import { StepList } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
 import { formatTime } from "./ProblemsPanel";
@@ -24,26 +24,6 @@ const devices: { device: Device; label: string }[] = [
   { device: "phone", label: "Phone" },
   { device: "computer", label: "Computer" },
 ];
-
-/** What the app area says about its state, beside the app, or in its place before there's one to show. */
-const notes: Record<AppAreaState, { beside: string; instead: string }> = {
-  empty: { beside: "", instead: "Your app appears here once it's built." },
-  // While a Turn runs, the Turn's progress says what's happening instead.
-  "first-build": { beside: "", instead: "" },
-  updating: { beside: "", instead: "Building your app…" },
-  // The Preview learns of its first Build a moment after the page does.
-  ready: { beside: "", instead: "Loading your app…" },
-  // The Turn was undone (ADR 0018), and there's nothing to show when it was the one that started the app.
-  failed: { beside: "That didn't work. Your app hasn't changed.", instead: "That didn't work. Nothing's been made yet." },
-  // Beside it, `liveNote` says who can use it.
-  live: { beside: "", instead: "Loading your app…" },
-};
-
-/** What a ready app's label says about who sees it, while it isn't live. */
-const held: Record<Exclude<PublishState, "live">, string> = {
-  "not-published": "Only you can see this until you publish.",
-  "live-with-changes": "Changes not yet published. People with the link have the earlier version.",
-};
 
 /**
  * The app view: the Preview in a Phone or Computer view, the path it shows,
@@ -76,11 +56,7 @@ export function PreviewPanel({
   const info = preview.info.status === "ready" ? preview.info.data : null;
   const host = info && new URL(info.url).hostname;
   const ready = info?.ready ?? false;
-  const note = notes[state];
-  let beside = note.beside;
-  if (state === "updating" && progress) beside = `Updating your app: ${progress.current}…`;
-  else if (state === "live") beside = liveNote(openToEveryone);
-  else if (state === "ready" && publishing && publishing !== "live") beside = held[publishing];
+  const note = appAreaNotes(state, publishing, progress, openToEveryone);
 
   function reload(event?: FormEvent) {
     event?.preventDefault();
@@ -140,7 +116,7 @@ export function PreviewPanel({
       <div className={`preview-view preview-${device}`} data-state={state}>
         {/* Always there, so screen readers hear each change of state. */}
         <p className="jig-label" role="status">
-          {ready ? [beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : ""}
+          {ready ? [note.beside, preview.loading ? "Loading…" : ""].filter(Boolean).join(" ") : state === "first-build" ? note.beside : ""}
         </p>
         {preview.info.status === "loading" && <p className="editor-message muted">Loading your app…</p>}
         {preview.info.status === "failed" && (

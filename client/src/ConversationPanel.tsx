@@ -72,10 +72,11 @@ export function ConversationPanel({
   const question = openQuestion(messages, conversation.idle);
   const suggestions = suggestionsToShow(messages, conversation.idle, conversation.state?.lastTurn?.restored === true);
 
+  // After every render, not only new messages: a question's answers, a Secret's field and the suggestions come when the Turn ends.
   useLayoutEffect(() => {
     const element = list.current;
     if (element && visible && following.current) element.scrollTop = element.scrollHeight;
-  }, [messages, visible]);
+  });
 
   /** Starts a Turn with what the Developer typed, showing any error beside the composer. */
   async function send(event?: FormEvent) {
