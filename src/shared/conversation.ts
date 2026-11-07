@@ -28,6 +28,10 @@ export interface LastTurn {
   retries: number;
   /** Whether the Turn stopped because it used all its model steps. */
   outOfSteps: boolean;
+  /** Whether the Agent started the app in this Turn (ADR 0018). Missing from Turns before Templates were the Agent's to choose. */
+  startedApp?: boolean;
+  /** Whether the app still hadn't started when the Turn ended, so no Check, Build or tests ran. Missing from Turns before then. */
+  noApp?: boolean;
 }
 
 /**

@@ -1,1 +1,5 @@
-{ "name": "Worker", "description": "A Cloudflare Worker using Hono." }
+{
+  "name": "Worker",
+  "description": "A Cloudflare Worker using Hono.",
+  "fits": "Choose it only for something with no page, such as a webhook that another service calls."
+}

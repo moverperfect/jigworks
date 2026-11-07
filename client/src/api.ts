@@ -5,17 +5,11 @@ import type { Deployment } from "../../src/shared/deployment.ts";
 import type { Secret } from "../../src/shared/secret.ts";
 import type { TestReport } from "../../src/shared/test-report.ts";
 
-export interface Template {
-  id: string;
-  name: string;
-  description: string;
-}
-
 export interface Workspace {
   id: string;
   name: string;
-  /** The Template's id. */
-  template: string;
+  /** The Template's id, or null until the Agent starts the app. */
+  template: string | null;
   /** ISO 8601. */
   createdAt: string;
 }
@@ -82,11 +76,6 @@ export async function getMe(): Promise<{ email: string }> {
   return request("GET", "/api/me");
 }
 
-export async function listTemplates(): Promise<Template[]> {
-  const { templates } = await request<{ templates: Template[] }>("GET", "/api/templates");
-  return templates;
-}
-
 export async function listWorkspaces(): Promise<Workspace[]> {
   const { workspaces } = await request<{ workspaces: Workspace[] }>("GET", "/api/workspaces");
   return workspaces;
@@ -97,8 +86,9 @@ export async function getWorkspace(id: string): Promise<Workspace> {
   return workspace;
 }
 
-export async function createWorkspace(name: string, template: string): Promise<Workspace> {
-  const { workspace } = await request<{ workspace: Workspace }>("POST", "/api/workspaces", { name, template });
+/** Creates an app from the Developer's description. Its first Turn is already running when this returns. */
+export async function createWorkspace(message: string): Promise<Workspace> {
+  const { workspace } = await request<{ workspace: Workspace }>("POST", "/api/workspaces", { message });
   return workspace;
 }
 

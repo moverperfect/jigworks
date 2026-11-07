@@ -96,6 +96,45 @@ export const agentScripts: Record<string, Script> = {
           ],
         },
 
+  // Starts the app, then says what start_app said.
+  "start-app": echoTool("start_app", { template: "worker", name: "Sunday Runs" }),
+
+  // Tries to write a file before starting the app, then starts it when refused.
+  "write-before-start": (request) => {
+    if (!afterToolResult(request)) return { toolCalls: [{ name: "write", input: { path: "/src/count.ts", content: fixedCount } }] };
+    if (lastToolResult(request).includes("start_app")) {
+      return { toolCalls: [{ name: "start_app", input: { template: "worker", name: "Sunday Runs" } }] };
+    }
+    return { text: "Started the app." };
+  },
+
+  // Deletes every file, tries to start the app again, and doesn't fix what the Check and the Build then find.
+  "empty-then-start": (request) => {
+    if (latestInstruction(request).includes("After your Turn")) return { text: "I'll leave it." };
+    if (!afterToolResult(request)) return { toolCalls: [{ name: "bash", input: { script: "rm -rf /*" } }] };
+    if (!lastToolResult(request).includes("start the app")) {
+      return { toolCalls: [{ name: "start_app", input: { template: "worker", name: "Second go" } }] };
+    }
+    return { text: "Couldn't start it again." };
+  },
+
+  // Calls every tool that needs the app at once, then stops.
+  "use-tools-before-start": (request) =>
+    afterToolResult(request)
+      ? { text: "They all refused." }
+      : {
+          toolCalls: [
+            { name: "write", input: { path: "/src/count.ts", content: fixedCount } },
+            { name: "edit", input: { path: "/src/count.ts", old_string: "3", new_string: "4" } },
+            { name: "delete", input: { path: "/src/count.ts" } },
+            { name: "bash", input: { script: "echo hi > /hi.txt" } },
+            { name: "add_package", input: { name: "@fake/a" } },
+            { name: "check", input: {} },
+            { name: "build", input: {} },
+            { name: "test", input: {} },
+          ],
+        },
+
   // Lists files forever, to reach the step limit.
   "keep-going": () => ({ toolCalls: [{ name: "list", input: { path: "/" } }] }),
 

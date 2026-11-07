@@ -7,6 +7,7 @@ import type { BuildProblem, BuildReport } from "../shared/build-report";
 import type { CheckReport, Problem } from "../shared/check-report";
 import { maxRetries, type MessageMetadata } from "../shared/conversation";
 import { failuresOf, testFailures, type TestCounts, type TestReport } from "../shared/test-report";
+import { listTemplates } from "../templates";
 import type { Workspace } from "../workspace";
 
 /** The Agent's model: `AGENT_MODEL` on the Anthropic API, or on the scripted model at `AGENT_BASE_URL`. */
@@ -33,6 +34,10 @@ export const turnProviderOptions: TurnConfig["providerOptions"] = {
 /** The Agent's standing instructions. Each Turn adds the Workspace's AGENTS.md (see `withAgentsMd`). */
 export const instructions = `You are the Agent on a development platform where a Developer and you build Cloudflare Workers together, entirely in the browser. You work in one Workspace. Its files are at the root of your file system, such as /package.json and /src/index.ts.
 
+- A new Workspace has no files: it starts from the Developer's description of the app they want. Before anything else, start the app with start_app, on its own: choose the Template that suits the description, and a short name for the app from it, such as Sunday Runs. The platform writes the Template's files and makes the app's web address from the name. Until the app is started, the tools that change, check, build or test files refuse. The Templates:
+${listTemplates()
+  .map(({ id, name, description, fits }) => `  - ${id} (${name}): ${description} ${fits}`)
+  .join("\n")}
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all.
@@ -162,6 +167,7 @@ function countBy<T extends string>(values: T[]): Partial<Record<T, number>> {
 
 /** The Agent's own tools. Think adds its file tools and bash. */
 export function agentTools(workspace: {
+  startApp: Workspace["startApp"];
   /** A Check, after the step's other tools have finished. */
   check: () => Promise<CheckReport>;
   /** A Build, after the step's other tools have finished. */
@@ -174,6 +180,22 @@ export function agentTools(workspace: {
   secretNames: Workspace["secretNames"];
 }): ToolSet {
   return {
+    start_app: tool({
+      description:
+        "Starts the app from a Template, under a name you choose from the Developer's description: writes the Template's files, installs their Packages, and makes the app's web address from the name. It works once, in a Workspace with no files. Call it on its own, before any other tool.",
+      inputSchema: z.object({
+        template: z.string().describe("The Template's ID, such as worker-react."),
+        name: z.string().describe("The app's name, in a few plain words, such as Sunday Runs."),
+      }),
+      execute: async ({ template, name }) => {
+        const result = await workspace.startApp(template, name);
+        // Thrown, so the Conversation shows the call as failed. The model still reads the message.
+        if (!result.ok) throw new Error(`Couldn't start the app. ${result.error}`);
+        // This Turn's instructions were written before the app had an AGENTS.md.
+        const agentsMd = result.agentsMd === null ? "" : `\n\nIts AGENTS.md says:\n\n<agents-md>\n${result.agentsMd}\n</agents-md>`;
+        return `Started ${name.trim()} from the ${template} Template.${agentsMd}`;
+      },
+    }),
     check: tool({
       description:
         "Type-checks the Workspace with each tsconfig and returns its errors and Package warnings. Installs Packages first if package.json changed. It sees the changes made by tools called in the same step.",
