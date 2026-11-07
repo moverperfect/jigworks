@@ -3,6 +3,7 @@ import {
   firstPublishNote,
   latestGoodHash,
   liveNote,
+  forgetBuilds,
   noBuildsSeen,
   publishState,
   seeBuilds,
@@ -73,6 +74,21 @@ describe("the Builds the page has seen", () => {
     const seen = seeBuilds(noBuildsSeen, built("a"), read("a"));
     expect(seeBuilds(seen, seen.report, seen.preview)).toBe(seen);
     expect(seeBuilds(seen, seen.report, read(null)).goodHash).toBe("a");
+  });
+});
+
+describe("forgetting the Builds seen", () => {
+  const read = (hash: string | null) => ({ hash });
+
+  it("forgets the app that went, counting only Build reports and reads of the Preview newer than it", () => {
+    // Undoing the Turn that started the app removed the app the page last saw.
+    const report = built("a");
+    const preview = read("a");
+    let seen = forgetBuilds(report, preview);
+    expect(seeBuilds(seen, report, preview).goodHash).toBe(null);
+    seen = seeBuilds(seen, report, read(null));
+    expect(seen.goodHash).toBe(null);
+    expect(seeBuilds(seen, built("b"), seen.preview).goodHash).toBe("b");
   });
 });
 

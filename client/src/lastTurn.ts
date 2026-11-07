@@ -3,6 +3,12 @@ import { restartedDuringTurn, type LastTurn } from "../../src/shared/conversatio
 const tryAgain = "Try again: say what you'd like to make.";
 const carryOn = "Send a message to carry on.";
 
+/** What to do about what the Agent asked for, after a Turn that was undone. */
+const answerIt: Record<NonNullable<LastTurn["asked"]>, string> = {
+  question: "Answer the Agent's question to carry on.",
+  secret: "Add the secret the Agent asked for to carry on.",
+};
+
 /** The reasons the platform stores for a Turn it ended, in plain words. */
 const plainReasons: Record<string, string> = {
   [restartedDuringTurn]: "Jigworks restarted while it was working",
@@ -13,6 +19,15 @@ export function describeLastTurn(lastTurn: LastTurn): string | null {
   const why = whyItStopped(lastTurn);
   const stopped = why && `The Agent stopped before it finished, because ${why}`;
   const broken = Boolean(lastTurn.checkErrors || lastTurn.buildErrors);
+  // A Turn that left the app broken was undone, so whatever happened, the app is as it was (ADR 0018).
+  if (lastTurn.restored) {
+    const unchanged = lastTurn.noApp ? "Nothing's been made yet." : "Your app hasn't changed.";
+    if (stopped) return `${stopped}, and its changes didn't work. ${unchanged} Send a message to try again.`;
+    // The Developer answers what the Agent asked for, rather than trying another way.
+    if (lastTurn.asked) return `That didn't work. ${unchanged} ${answerIt[lastTurn.asked]}`;
+    if (lastTurn.outOfSteps) return `The Agent reached its limit for one message before it got the change working. ${unchanged} Try asking for a smaller change.`;
+    return `That didn't work. ${unchanged} Try asking for it in a different way.`;
+  }
   // Before the app has started there's nothing to check, so say so instead (ADR 0018).
   if (lastTurn.noApp) {
     if (stopped) return `${stopped}, so your app wasn't started. ${tryAgain}`;

@@ -2,7 +2,7 @@ import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "rea
 import type { BuildReport } from "../../src/shared/build-report.ts";
 import { getPreview, getPreviewLogs, previewFrameLink, toApiError, type ApiError, type AppLogEntry } from "./api";
 import { useLoad, usePageVisible, type LoadState } from "./hooks";
-import { noBuildsSeen, seeBuilds } from "./publish";
+import { forgetBuilds, noBuildsSeen, seeBuilds } from "./publish";
 
 /** A sign-out this soon after the last one came straight after a fresh link, so the browser isn't keeping the cookie. */
 const refusedWithinMs = 10_000;
@@ -14,6 +14,8 @@ export interface PreviewFrame {
   retryInfo(): void;
   /** Reads the Preview again quietly, to learn of Builds made elsewhere, as in another tab. */
   refreshInfo(): void;
+  /** Forgets the Builds seen and the app shown, and reads the Preview afresh, after undoing the Turn that started the app removed it. */
+  forget(): void;
   /** The hash of the latest successful Build this page has seen, which the Preview runs, or null before one. */
   goodHash: string | null;
   /** Whether a Build has succeeded, so the Preview has one to run. */
@@ -129,6 +131,13 @@ export function usePreviewFrame(id: string, build: BuildReport | null, visible: 
     info: info.state,
     retryInfo: info.retry,
     refreshInfo: info.reload,
+    forget() {
+      setSeen(forgetBuilds(build, previewRead));
+      shownKey.current = null;
+      setSrc(null);
+      // Not quietly, so the frame waits for the new read rather than showing the old app's.
+      info.retry();
+    },
     goodHash,
     built: ready || goodHash !== null,
     src,

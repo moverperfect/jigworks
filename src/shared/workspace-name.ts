@@ -2,6 +2,9 @@
 
 const maxNameLength = 60;
 
+/** What a Workspace is called until the Agent starts its app and names it (ADR 0018). */
+export const newAppName = "New app";
+
 /** Says what's wrong with a Workspace name, or returns null if it's fine. The name is trimmed first. */
 export function validateWorkspaceName(name: string): string | null {
   const trimmed = name.trim();

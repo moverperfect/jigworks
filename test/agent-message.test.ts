@@ -193,6 +193,15 @@ describe("the suggestions", () => {
     expect(suggestionsToShow([...messages, retry("3"), agent("4", [text("Fixed it.")])], true)).toEqual(ideas);
   });
 
+  it("are to try a different way after a Turn that was undone, in place of the Agent's own", () => {
+    const messages = [developer("1"), agent("2", [suggest(ideas), text("I couldn't fix it.")])];
+    expect(suggestionsToShow(messages, true, true)).toEqual(["Try a different way"]);
+    expect(suggestionsToShow(messages, false, true)).toEqual([]);
+    // The Developer answers an open question instead.
+    const asked = tool("ask", { question: "Which colour?", choices: ["Red", "Blue"] });
+    expect(suggestionsToShow([developer("1"), agent("2", [asked])], true, true)).toEqual([]);
+  });
+
   it("go once the Developer sends another message", () => {
     const messages = [developer("1"), agent("2", [suggest(ideas)]), developer("3"), agent("4", [text("Done.")])];
     expect(suggestionsToShow(messages, true)).toEqual([]);

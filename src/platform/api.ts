@@ -1,7 +1,7 @@
 import { zipSync } from "fflate";
 import { Hono, type Context } from "hono";
 import { isHidden, maxFileBytes, normalisePath } from "../files";
-import { validateWorkspaceName } from "../shared/workspace-name";
+import { newAppName, validateWorkspaceName } from "../shared/workspace-name";
 import { getTemplate, listTemplates } from "../templates";
 
 export type Platform = { Bindings: Env; Variables: { email: string } };
@@ -28,7 +28,7 @@ api.get("/workspaces", async (c) => c.json({ workspaces: await developer(c).list
  */
 api.post("/workspaces", async (c) => {
   const body = await c.req.json<{ message?: unknown; name?: unknown; template?: unknown }>().catch(() => null);
-  let name = "New app";
+  let name = newAppName;
   let template: string | null = null;
   let message: string | null = null;
   if (body?.message !== undefined) {

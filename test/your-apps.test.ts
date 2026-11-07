@@ -6,7 +6,7 @@ import type { Deployment } from "../src/shared/deployment";
 import type { Workspace } from "../src/workspace";
 import { testAccess } from "./helpers/access";
 import { call, create, createFromMessage } from "./helpers/api";
-import { connect, runTurn } from "./helpers/conversation";
+import { connect, runTurn, turnEnd } from "./helpers/conversation";
 
 // The start page's list of apps: whether each is live and when it last
 // changed, and renaming an app from its page (#62).
@@ -70,11 +70,15 @@ describe("the Developer's list", () => {
 
   it("records a change when a restart ends a Turn", async () => {
     const workspace = await create("Restarted");
+    const conversation = await connect(workspace.id);
+    const from = conversation.frames.length;
     // A Turn the isolate that stopped was running, as a new isolate finds it.
     await runInDurableObject(env.WORKSPACES.getByName(workspace.id), async (instance: Workspace) => {
       instance.setState({ ...instance.state, turn: { startedAt: new Date().toISOString(), stage: "working" } });
       await instance.onStart();
     });
+    // It ends once its Check and Build have run.
+    await turnEnd(conversation, from);
     expect(time((await listed(workspace.id)).changedAt)).toBeGreaterThan(time(workspace.changedAt));
   });
 

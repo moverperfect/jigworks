@@ -13,7 +13,7 @@ describe("storeFiles", () => {
     await stub.exportFiles();
     await runInDurableObject(stub, async (instance, state) => {
       const store = instance.workspace;
-      const files = storeFiles(store, state.storage.sql);
+      const files = storeFiles(store, state.storage);
       expect(files.list()).toEqual([]);
 
       const logo = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00]);
@@ -29,6 +29,36 @@ describe("storeFiles", () => {
       expect(files.snapshot().get("src/index.ts")).toBe("export {};\n");
       expect(files.bytes().get("public/logo.png")).toEqual(logo);
       expect(files.read("attachments/photo.txt")).toBeNull();
+    });
+  });
+
+  it("puts the files and directories back as they were copied, leaving attachments as they are", async () => {
+    const stub = env.WORKSPACES.getByName("files-copy");
+    await stub.exportFiles();
+    await runInDurableObject(stub, async (instance, state) => {
+      const store = instance.workspace;
+      const files = storeFiles(store, state.storage);
+      const logo = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00]);
+      await files.write("src/index.ts", "export {};\n");
+      await store.writeFileBytes("/public/logo.png", logo);
+      // An ordinary Workspace file, whose folder only differs in case from the hidden one.
+      await files.write("Attachments/code.ts", "export {};\n");
+      files.copyAside();
+
+      await files.write("src/index.ts", "broken");
+      await store.rm("/public", { recursive: true });
+      await files.write("src/parts/new.ts", "export {};\n");
+      await files.write("Attachments/code.ts", "broken");
+      await files.write("Attachments/new.ts", "export {};\n");
+      await store.writeFile("/attachments/photo.txt", "an attachment sent meanwhile");
+      files.restoreCopy();
+
+      expect(files.list()).toEqual(["Attachments/code.ts", "public/logo.png", "src/index.ts"]);
+      expect(files.read("Attachments/code.ts")).toBe("export {};\n");
+      expect(files.read("src/index.ts")).toBe("export {};\n");
+      expect(files.readBytes("public/logo.png")).toEqual(logo);
+      expect(await store.exists("/src/parts")).toBe(false);
+      expect(await store.readFile("/attachments/photo.txt")).toBe("an attachment sent meanwhile");
     });
   });
 });

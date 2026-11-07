@@ -1,18 +1,21 @@
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
-import type { CheckReport } from "../src/workspace";
+import type { PackageStatus } from "../src/packages";
+import { restartedDuringTurn, type ConversationState, type LastTurn } from "../src/shared/conversation";
+import type { CheckReport, Workspace } from "../src/workspace";
 import type { TestReport } from "../src/shared/test-report";
 import { askedSecretValue, brokenCount, buildableIndex, failingTest, fixedCount } from "./fixtures/agent-scripts";
 import { summaryReply } from "./fixtures/fake-anthropic";
 import { call, create } from "./helpers/api";
 import { testAccess } from "./helpers/access";
-import { connect, history, runTurn, startTurn, textOf, turnEnd, turnStart, upgrade } from "./helpers/conversation";
+import { connect, history, runTurn, startTurn, textOf, turnEnd, turnStart, upgrade, type Conversation } from "./helpers/conversation";
 
 // Turns, through the platform's WebSocket and HTTP interface. The model is the
 // scripted one in test/fixtures/agent-scripts.ts, behind a fake Anthropic API.
 
 const latestCheck = async (id: string) => (await call(`/api/workspaces/${id}/check`)).json<CheckReport>();
+const fileList = async (id: string) => (await (await call(`/api/workspaces/${id}/files`)).json<{ files: string[] }>()).files;
 const fileText = async (id: string, path: string) => (await call(`/api/workspaces/${id}/files/${path}`)).text();
 
 describe("a Turn", () => {
@@ -108,6 +111,24 @@ describe("a Turn", () => {
     expect(textOf(fromCheck[0]!)).toContain("/src/count.ts:1:14 error TS2322");
   });
 
+  it("counts as undone once its files are put back, even if checking them then fails", async () => {
+    const workspace = await create("Undo interrupted");
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (instance: Workspace) => {
+      const check = instance.check.bind(instance);
+      let broken = false;
+      // The first clean Check after a broken one is of the files put back.
+      instance.check = async (by) => {
+        const report = await check(by);
+        if (broken && report.counts.error === 0) throw new Error("Restarted.");
+        broken ||= report.counts.error > 0;
+        return report;
+      };
+    });
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:break-and-give-up] Add a count");
+    expect(ended).toMatchObject({ restored: true, error: "Restarted." });
+    expect(await fileList(workspace.id)).not.toContain("src/count.ts");
+  });
+
   it("gives the Agent more tries when the Build fails, even when the Check is clean", async () => {
     const workspace = await create("Build fixed");
     const conversation = await connect(workspace.id);
@@ -122,11 +143,11 @@ describe("a Turn", () => {
     expect(report.ok).toBe(true);
   });
 
-  it("ends with the tests, whose failures don't ask for a retry but stay in the problems list", async () => {
+  it("ends with the tests, whose failures don't ask for a retry or undo the Turn, but stay in the problems list", async () => {
     const workspace = await create("Failing test");
     const conversation = await connect(workspace.id);
     const ended = await runTurn(workspace.id, conversation, "[script:write-failing-test] Add a test");
-    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 1, retries: 0 });
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 1, retries: 0, restored: false });
     expect(await fileText(workspace.id, "src/sum.test.ts")).toBe(failingTest);
     expect((await history(workspace.id)).filter((message) => message.metadata?.from === "check")).toEqual([]);
 
@@ -177,17 +198,35 @@ describe("a Turn", () => {
     );
   });
 
-  it("stops after three more tries, leaving the errors in the problems list", async () => {
+  it("stops after three more tries, and puts the files back as they were before it", async () => {
     const workspace = await create("Unfixed");
+    const before = { files: await fileList(workspace.id), packageJson: await fileText(workspace.id, "package.json") };
     const conversation = await connect(workspace.id);
-    const ended = await runTurn(workspace.id, conversation, "[script:never-fixes] Add a count");
-    expect(ended).toMatchObject({ status: "completed", checkErrors: 1, retries: 3 });
-    expect(await fileText(workspace.id, "src/count.ts")).toBe(brokenCount);
-    expect(await latestCheck(workspace.id)).toMatchObject({ counts: { error: 1 } });
-    const retries = (await history(workspace.id)).flatMap((message) =>
-      message.metadata?.from === "check" ? [message.metadata.retry] : [],
-    );
-    expect(retries).toEqual([1, 2, 3]);
+    const ended = await runTurn(workspace.id, conversation, "[script:break-and-give-up] Add a count");
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 1, retries: 3, restored: true });
+
+    // The file it wrote is gone, the one it deleted is back, and so is package.json, with its Packages.
+    expect(await fileList(workspace.id)).toEqual(before.files);
+    expect(await fileText(workspace.id, "package.json")).toBe(before.packageJson);
+    const packages = await (await call(`/api/workspaces/${workspace.id}/packages`)).json<PackageStatus>();
+    expect(packages.packages.map(({ name }) => name)).not.toContain("@fake/a");
+    // The reports are of the files as they are now.
+    expect(await latestCheck(workspace.id)).toMatchObject({ counts: { error: 0 } });
+    expect(await (await call(`/api/workspaces/${workspace.id}/build`)).json()).toMatchObject({ ok: true });
+    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(tests.files.map(({ file }) => file)).toEqual(["src/index.test.ts"]);
+
+    // The Conversation keeps every message.
+    const messages = await history(workspace.id);
+    expect(messages.flatMap((message) => (message.metadata?.from === "check" ? [message.metadata.retry] : []))).toEqual([1, 2, 3]);
+    expect(messages).toHaveLength(8);
+
+    // The next Turn tells the Agent, and the one after doesn't.
+    const note = "(From the platform: your last Turn's changes were put back, because the app didn't work after them.)";
+    expect(await runTurn(workspace.id, conversation, "What now?")).toMatchObject({ restored: false });
+    expect(textOf((await history(workspace.id)).at(-1)!)).toBe(`I was told: What now?\n${note}`);
+    await runTurn(workspace.id, conversation, "And now?");
+    expect(textOf((await history(workspace.id)).at(-1)!)).toBe("I was told: And now?");
   });
 
   it("says what stage it's at: the Agent working, then making sure it works, for each try", async () => {
@@ -212,12 +251,13 @@ describe("a Turn", () => {
     expect(reply!.parts.filter((part) => part.type === "tool-list")).toHaveLength(40);
   });
 
-  it("gives no more tries once the Turn has used its 40 steps", async () => {
+  it("gives no more tries once the Turn has used its 40 steps, and is undone if that leaves the app broken", async () => {
     const workspace = await create("Spent");
     const conversation = await connect(workspace.id);
     const ended = await runTurn(workspace.id, conversation, "[script:break-and-keep-going] Add a count");
-    expect(ended).toMatchObject({ checkErrors: 1, retries: 0, outOfSteps: true });
+    expect(ended).toMatchObject({ checkErrors: 1, retries: 0, outOfSteps: true, restored: true });
     expect(await history(workspace.id)).toHaveLength(2);
+    expect(await fileList(workspace.id)).not.toContain("src/count.ts");
   });
 });
 
@@ -245,8 +285,9 @@ describe("the Agent's own tools", () => {
     const workspace = await create("Asked");
     const conversation = await connect(workspace.id);
     const ended = await runTurn(workspace.id, conversation, "[script:ask] Email me when someone signs up");
-    // The question came with a broken file, which would otherwise get a retry.
-    expect(ended).toMatchObject({ status: "completed", asked: "question", checkErrors: 1, buildErrors: 0, retries: 0 });
+    // The question came with a broken file, which would otherwise get a retry. Without one, the Turn is undone.
+    expect(ended).toMatchObject({ status: "completed", asked: "question", checkErrors: 1, buildErrors: 0, retries: 0, restored: true });
+    expect(await fileList(workspace.id)).not.toContain("src/count.ts");
     const [, reply] = await history(workspace.id);
     expect(reply!.parts.find((part) => part.type === "tool-ask")).toMatchObject({
       state: "output-available",
@@ -259,7 +300,10 @@ describe("the Agent's own tools", () => {
     expect(answered).toMatchObject({ status: "completed", asked: null, checkErrors: 0, retries: 0 });
     const messages = await history(workspace.id);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
-    expect(textOf(messages[3]!)).toBe("Going with: A different address");
+    // The answer carries the platform's note that the files were put back.
+    expect(textOf(messages[3]!)).toBe(
+      "Going with: A different address\n(From the platform: your last Turn's changes were put back, because the app didn't work after them.)",
+    );
     expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
   });
 
@@ -268,8 +312,9 @@ describe("the Agent's own tools", () => {
     const workspace = await create("Asked for a Secret");
     const conversation = await connect(workspace.id);
     const ended = await runTurn(workspace.id, conversation, "[script:ask-for-secret] Email me when someone signs up");
-    // The request came with a broken file, which would otherwise get a retry.
-    expect(ended).toMatchObject({ status: "completed", asked: "secret", checkErrors: 1, buildErrors: 0, retries: 0 });
+    // The request came with a broken file, which would otherwise get a retry. Without one, the Turn is undone.
+    expect(ended).toMatchObject({ status: "completed", asked: "secret", checkErrors: 1, buildErrors: 0, retries: 0, restored: true });
+    expect(await fileList(workspace.id)).not.toContain("src/count.ts");
     const [, reply] = await history(workspace.id);
     expect(reply!.parts.find((part) => part.type === "tool-ask_for_secret")).toMatchObject({
       state: "output-available",
@@ -289,9 +334,11 @@ describe("the Agent's own tools", () => {
     const messages = await history(workspace.id);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "user", "assistant"]);
     expect(messages[2]!.metadata).toEqual({ from: "developer", changedFiles: [], turnStartedAt: startedAt, addedSecret: "EMAIL_KEY" });
-    expect(textOf(messages[2]!)).toBe("(From the platform: the Developer added the Secret EMAIL_KEY.)");
-    // The Agent carried on from the note, and the value never reached the model.
-    expect(textOf(messages[3]!)).toBe("Told: (From the platform: the Developer added the Secret EMAIL_KEY.) Saw the value: false");
+    // With the note that the last Turn's changes were put back.
+    const undone = "(From the platform: your last Turn's changes were put back, because the app didn't work after them.)";
+    expect(textOf(messages[2]!)).toBe(`(From the platform: the Developer added the Secret EMAIL_KEY.)${undone}`);
+    // The Agent carried on from the notes, and the value never reached the model.
+    expect(textOf(messages[3]!)).toBe(`Told: (From the platform: the Developer added the Secret EMAIL_KEY.)\n${undone} Saw the value: false`);
     expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
     // Nor the Conversation, nor the logs.
     expect(JSON.stringify(messages)).not.toContain(askedSecretValue);
@@ -428,6 +475,73 @@ describe("the Agent's own tools", () => {
     await runTurn(workspace.id, conversation, "[script:use-check] Check");
     const [, reply] = await history(workspace.id);
     expect(textOf(reply!)).toBe("The tool said: The Check found no problems.");
+  });
+});
+
+describe("a restart during a Turn", () => {
+  /**
+   * Restarts the Workspace during the Turn that started at the end of the
+   * Conversation so far, as a new isolate finds it, and says how the Turn
+   * ended. `turn` is the Turn as the isolate that stopped left it.
+   */
+  async function restart(id: string, conversation: Conversation, turn: Partial<ConversationState["turn"]> = {}): Promise<LastTurn> {
+    const metadata = (await history(id)).findLast((message) => message.metadata?.from === "developer")?.metadata;
+    const startedAt = metadata?.from === "developer" ? metadata.turnStartedAt! : "";
+    const from = conversation.frames.length;
+    await runInDurableObject(env.WORKSPACES.getByName(id), async (instance: Workspace) => {
+      instance.setState({ ...instance.state, turn: { startedAt, stage: "working", ...turn } });
+      await instance.onStart();
+      // As if the alarm that ran the Turn ran again in the new isolate.
+      await instance.driveTurn({ request: "Hi", startedAt });
+    });
+    return turnEnd(conversation, from);
+  }
+
+  it("checks and builds the files, and undoes the Turn when they leave the app broken", async () => {
+    const workspace = await create("Restarted, broken");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:say-hello] Hi");
+    // What the Agent had done when the Workspace restarted.
+    await call(`/api/workspaces/${workspace.id}/files/src/count.ts`, { method: "PUT", text: brokenCount });
+
+    const ended = await restart(workspace.id, conversation);
+    expect(ended).toMatchObject({ status: "aborted", error: restartedDuringTurn, checkErrors: 1, restored: true });
+    expect(await fileList(workspace.id)).not.toContain("src/count.ts");
+    expect(await latestCheck(workspace.id)).toMatchObject({ counts: { error: 0 } });
+    // The Developer's message isn't sent again.
+    expect(await history(workspace.id)).toHaveLength(2);
+  });
+
+  it("still says the Turn was undone when the Workspace restarts again after putting its files back", async () => {
+    const workspace = await create("Restarted after undoing");
+    const conversation = await connect(workspace.id);
+    // The files are put back as the Turn ends, as they would be just before a second restart.
+    await runTurn(workspace.id, conversation, "[script:break-and-give-up] Add a count");
+
+    const ended = await restart(workspace.id, conversation, { stage: "checking", restarted: true });
+    expect(ended).toMatchObject({ status: "aborted", error: restartedDuringTurn, restored: true });
+  });
+
+  it("keeps the files when they work", async () => {
+    const workspace = await create("Restarted, working");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:say-hello] Hi");
+    await call(`/api/workspaces/${workspace.id}/files/src/count.ts`, { method: "PUT", text: fixedCount });
+
+    const ended = await restart(workspace.id, conversation);
+    expect(ended).toMatchObject({ status: "aborted", error: restartedDuringTurn, checkErrors: 0, buildErrors: 0, restored: false });
+    expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
+  });
+
+  it("ends the Turn without a Check when the Workspace restarts again while ending it", async () => {
+    const workspace = await create("Restarted twice");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:say-hello] Hi");
+    await call(`/api/workspaces/${workspace.id}/files/src/count.ts`, { method: "PUT", text: brokenCount });
+
+    const ended = await restart(workspace.id, conversation, { stage: "checking", restarted: true });
+    expect(ended).toMatchObject({ status: "aborted", error: restartedDuringTurn, checkErrors: null, buildErrors: null, restored: false });
+    expect(await fileText(workspace.id, "src/count.ts")).toBe(brokenCount);
   });
 });
 

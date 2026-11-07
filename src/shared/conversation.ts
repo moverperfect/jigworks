@@ -16,7 +16,12 @@ export const restartedDuringTurn = "The Workspace restarted during the Turn.";
 /** The Workspace agent's state, which every Conversation socket is sent when it changes. */
 export interface ConversationState {
   /** The running Turn. While there is one, the Developer's changes to files and Packages are refused. */
-  turn: { startedAt: string; stage: TurnStage } | null;
+  turn: {
+    startedAt: string;
+    stage: TurnStage;
+    /** Set once the Workspace restarted during the Turn, which the platform is now ending (see `Workspace.onStart`). */
+    restarted?: boolean;
+  } | null;
   /** Whether Start fresh is summarising the Conversation. */
   startingFresh: boolean;
   /** How the last Turn ended, or null before the first. */
@@ -44,6 +49,14 @@ export interface LastTurn {
   noApp?: boolean;
   /** What the Turn ended with the Agent asking the Developer for: an answer to a question (`ask`), a Secret (`ask_for_secret`), or nothing (null). Missing from Turns before the Agent could ask. */
   asked?: "question" | "secret" | null;
+  /**
+   * Whether the Turn left the app broken, so the platform put the files back
+   * as they were when it started (ADR 0018). `checkErrors` and `buildErrors`
+   * are then what the Turn left (unless a restart came while it was being
+   * undone), and the reports are of the files put back.
+   * Missing from Turns before undoing.
+   */
+  restored?: boolean;
 }
 
 /** The Agent's tools that ask the Developer for something and end the Turn, with what each asks for, as `LastTurn.asked` records it. */

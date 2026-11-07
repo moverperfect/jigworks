@@ -127,6 +127,25 @@ describe("start_app", () => {
     ]);
   });
 
+  it("can start the app again after the Turn that started it is undone", async () => {
+    const workspace = await createFromMessage("[script:start-and-break] A sign-up sheet for my running club");
+    const ended = await firstTurnEnd(workspace.id);
+    // The Turn left the app broken, so it's undone: the Workspace is empty again, with nothing to check or build.
+    expect(ended).toMatchObject({ checkErrors: 1, retries: maxRetries, restored: true, startedApp: false, noApp: true, testFailures: null });
+    expect(await files(workspace.id)).toEqual({ files: [] });
+    expect(await latest(workspace.id, "check")).toBeNull();
+    expect(await latest(workspace.id, "build")).toBeNull();
+    // The Template's Build that went to the Preview went with it, and the list names it as before.
+    expect(await (await call(`/api/workspaces/${workspace.id}/preview`)).json()).toMatchObject({ ready: false });
+    expect(await listed(workspace.id)).toMatchObject({ name: "New app", template: null });
+
+    const again = await runTurn(workspace.id, await connect(workspace.id), "Try again");
+    expect(again).toMatchObject({ startedApp: true, noApp: false, checkErrors: 0, buildErrors: 0, restored: false });
+    expect(await listed(workspace.id)).toMatchObject({ name: "Second go", template: "worker" });
+    const preview = await (await call(`/api/workspaces/${workspace.id}/preview`)).json();
+    expect(preview).toMatchObject({ url: expect.stringMatching(/^https:\/\/second-go-[a-z0-9]{8}-preview\./), ready: true });
+  });
+
   it("is refused in a Workspace that has files", async () => {
     const workspace = await create("Already started");
     const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:start-app] Start again");
@@ -139,15 +158,17 @@ describe("start_app", () => {
 
   it("is refused once the app has started, even after the Agent deletes every file", async () => {
     const workspace = await create("Emptied");
+    const before = await files(workspace.id);
     const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:empty-then-start] Start over");
     expect(await toolResults(workspace.id)).toEqual([
       { tool: "bash", result: expect.anything() },
       { tool: "start_app", result: "Couldn't start the app. The app has already started." },
     ]);
-    expect(await files(workspace.id)).toEqual({ files: [] });
-    // The app is still started, so the Turn ended with its Check and Build, and their retries.
-    expect(ended).toMatchObject({ startedApp: false, noApp: false, retries: maxRetries });
+    // The app is still started, so the Turn ended with its Check and Build, and their retries,
+    // and was undone, since an app with no files doesn't build.
+    expect(ended).toMatchObject({ startedApp: false, noApp: false, retries: maxRetries, restored: true });
     expect(ended.buildErrors).toBeGreaterThan(0);
+    expect(await files(workspace.id)).toEqual(before);
     expect(await listed(workspace.id)).toEqual({ ...workspace, changedAt: expect.any(String) });
   });
 });

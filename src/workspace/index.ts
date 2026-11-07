@@ -85,6 +85,11 @@ const changedKey = "turn:developer-changes";
 const developerKey = "developer";
 // Whether the app has started from a Template, which happens once (ADR 0018).
 const appStartedKey = "app:started";
+// Which Turn the files were last copied for, and whether the app had started then, so the Turn can be undone (ADR 0018).
+const copyKey = "turn:copy";
+// What the Workspace keeps about its app, which undoing the Turn that started the app forgets.
+// A new key about the app belongs here too.
+const appKeys = [appStartedKey, appLabelKey, appSentKey, checkKey, buildKey, testKey];
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
 const reportBudgetBytes = 1_000_000;
@@ -140,7 +145,7 @@ export class Workspace extends Think<Env, ConversationState> {
   // context is large, and Start fresh shortens a long Conversation.
   override truncationStep = Infinity;
 
-  private readonly files: Files = storeFiles(this.workspace, this.ctx.storage.sql);
+  private readonly files: Files = storeFiles(this.workspace, this.ctx.storage);
   private readonly packages = new Packages(this.ctx.storage);
   // Installs and Package changes run one at a time, in the order they arrive.
   // (Think already has a `queue`.)
@@ -159,27 +164,36 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /**
    * A Turn or Start fresh can't outlive the isolate it ran in (see
-   * `onChatRecovery`), so a new isolate starts idle, and says how a Turn the
-   * old one was running ended.
+   * `onChatRecovery`). A Turn the old isolate was running still ends with a
+   * Check and a Build, and is undone if they find the app broken (ADR 0018),
+   * so it keeps its lock until `endRestartedTurn` has done that. A Build
+   * calls this object, which can't answer until `onStart` returns, so they
+   * run in an alarm of their own.
    */
   override async onStart(): Promise<void> {
     const { turn, startingFresh } = this.state;
+    if (turn && !turn.restarted) {
+      this.setState({ ...this.state, turn: { ...turn, stage: "checking", restarted: true } });
+      await this.schedule(0, "endRestartedTurn", { startedAt: turn.startedAt }, { retry: { maxAttempts: 1 } });
+      return;
+    }
     if (!turn && !startingFresh) return;
-    const stopped: LastTurn = {
-      endedAt: new Date().toISOString(),
-      status: "aborted",
-      error: restartedDuringTurn,
-      checkErrors: null,
-      buildErrors: null,
-      testFailures: null,
-      retries: 0,
-      outOfSteps: false,
-      startedApp: false,
-      noApp: !this.appStarted(),
-    };
+    // Start fresh, or a restart while ending a Turn after a restart, which
+    // ends without a Check, so a restart that keeps happening can't loop.
+    // Its files may have been put back before the second restart.
+    const copy = this.ctx.storage.kv.get<TurnCopy>(copyKey);
+    const restored = Boolean(turn && copy?.startedAt === turn.startedAt && copy.undone);
+    const stopped: LastTurn = { ...stoppedByRestart(), endedAt: new Date().toISOString(), startedApp: false, noApp: !this.appStarted(), restored };
     this.setState({ turn: null, startingFresh: false, lastTurn: turn ? stopped : this.state.lastTurn });
     // The Agent may have changed files before the restart.
     if (turn) await this.updateList();
+  }
+
+  /** Ends the Turn a restart stopped (see `onStart`). Only `onStart` schedules it. */
+  async endRestartedTurn({ startedAt }: { startedAt: string }): Promise<void> {
+    const { turn } = this.state;
+    if (turn?.startedAt !== startedAt || !turn.restarted) return;
+    await this.endTurn(startedAt, stoppedByRestart(), await this.endOfTurn().catch(() => null));
   }
 
   /**
@@ -647,7 +661,7 @@ export class Workspace extends Think<Env, ConversationState> {
     await this.appHost().removeSecret(this.name, name);
   }
 
-  /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). */
+  /** Deletes the app's app host, before the Workspace itself is deleted (ADR 0009). Undoing the Turn that started the app removes it too (see `forgetApp`). */
   async removeApp(): Promise<void> {
     const label = this.ctx.storage.kv.get<string>(appLabelKey);
     if (label) await this.env.APP_HOSTS.getByName(label).remove(this.name);
@@ -776,6 +790,9 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.exclusive(async () => {
       if (this.state.turn || this.state.startingFresh) return busy;
       const startedAt = new Date().toISOString();
+      // In case the Turn leaves the app broken and has to be undone.
+      this.files.copyAside();
+      this.ctx.storage.kv.put<TurnCopy>(copyKey, { startedAt, appStarted: this.appStarted() });
       this.setState({ ...this.state, turn: { startedAt, stage: "working" } });
       // The Turn runs in an alarm of its own, which ends when the Turn does,
       // so its logs reach Workers Logs. Run in the background of this call
@@ -786,12 +803,13 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /**
-   * Runs the Turn `startTurn` scheduled, unless a restart has ended it since
+   * Runs the Turn `startTurn` scheduled, unless a restart has stopped it since
    * (see `onStart`), so an alarm retried after a restart doesn't send the
    * Developer's message twice. Only `startTurn` schedules it.
    */
   async driveTurn({ request, startedAt }: { request: TurnRequest; startedAt: string }): Promise<void> {
-    if (this.state.turn?.startedAt === startedAt) await this.runDeveloperTurn(request, startedAt);
+    const { turn } = this.state;
+    if (turn?.startedAt === startedAt && !turn.restarted) await this.runDeveloperTurn(request, startedAt);
   }
 
   /** Folds the Conversation into a summary, unless a Turn is running. */
@@ -815,28 +833,21 @@ export class Workspace extends Think<Env, ConversationState> {
   private async runDeveloperTurn(request: TurnRequest, startedAt: string): Promise<void> {
     const started = Date.now();
     const usage: TurnUsage = (this.turnUsage = { steps: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
-    const hadStarted = this.appStarted();
-    let lastTurn: LastTurn = {
-      endedAt: "",
-      status: "error",
-      error: null,
-      checkErrors: null,
-      buildErrors: null,
-      testFailures: null,
-      retries: 0,
-      outOfSteps: false,
-    };
+    const lastTurn = newLastTurn();
+    let ended: CheckAndBuild | null = null;
     try {
       const changed = this.ctx.storage.kv.get<string[]>(changedKey) ?? [];
       this.ctx.storage.kv.delete(changedKey);
-      let result = await this.saveMessages([developerMessage(request, changed, startedAt)]);
-      let ended = await this.endOfTurn();
+      // The last Turn's files may have been put back, which the Agent can't otherwise know.
+      const undone = this.state.lastTurn?.restored === true;
+      let result = await this.saveMessages([developerMessage(request, changed, startedAt, undone)]);
+      ended = await this.endOfTurn();
       while (
         ended &&
         // A Turn that ends with a question gets its Check and Build, but no retries (ADR 0018).
         !askedIn(this.messages.at(-1)) &&
         result.status === "completed" &&
-        (ended.check.counts.error > 0 || !ended.build.ok) &&
+        broken(ended) &&
         lastTurn.retries < maxRetries &&
         usage.steps < turnSteps
       ) {
@@ -845,39 +856,91 @@ export class Workspace extends Think<Env, ConversationState> {
         result = await this.saveMessages([fixMessage(ended.check, ended.build, lastTurn.retries)]);
         ended = await this.endOfTurn();
       }
-      lastTurn = {
-        ...lastTurn,
-        status: result.status,
-        error: result.error ?? null,
-        checkErrors: ended?.check.counts.error ?? null,
-        buildErrors: ended?.build.errors.length ?? null,
-        outOfSteps: usage.steps >= turnSteps,
-      };
+      lastTurn.status = result.status;
+      lastTurn.error = result.error ?? null;
+      lastTurn.outOfSteps = usage.steps >= turnSteps;
+    } catch (error) {
+      lastTurn.error = error instanceof Error ? error.message : String(error);
+      // The Agent may have changed files before the failure, and every Turn
+      // ends with a Check and a Build.
+      ended = await this.endOfTurn().catch(() => null);
+    } finally {
+      this.turnUsage = null;
+      await this.endTurn(startedAt, lastTurn, ended, { durationMs: Date.now() - started, ...usage });
+    }
+  }
+
+  /**
+   * Ends a Turn after its last Check and Build: undoes it if they left the
+   * app broken (ADR 0018), runs the tests once, and lifts the Turn lock.
+   * `log` goes into the Turn's log line. The clock moves only at I/O, so a
+   * duration in it leaves out the last Check.
+   */
+  private async endTurn(startedAt: string, lastTurn: LastTurn, ended: CheckAndBuild | null, log: TurnLog = {}): Promise<void> {
+    // Only this Turn's copy: a Turn that was running when undoing was deployed has none.
+    const turnCopy = () => {
+      const copy = this.ctx.storage.kv.get<TurnCopy>(copyKey);
+      return copy?.startedAt === startedAt ? copy : null;
+    };
+    const copy = turnCopy();
+    const hadStarted = copy ? copy.appStarted : this.appStarted();
+    try {
+      lastTurn.checkErrors = ended?.check.counts.error ?? null;
+      lastTurn.buildErrors = ended?.build.errors.length ?? null;
+      // A Turn the Workspace restarted during may have been undone already.
+      if (copy && !copy.undone && ended && broken(ended)) ended = await this.undo(copy);
       // Once, after the last Check and Build: failing tests don't ask for a
       // retry, and tests that can't run don't fail the Turn.
       const tests = ended && (await this.runTests("turn").catch(() => null));
       lastTurn.testFailures = tests ? testFailures(tests) : null;
     } catch (error) {
-      lastTurn.error = error instanceof Error ? error.message : String(error);
-      // The Agent may have changed files before the failure, and every Turn
-      // ends with a Check and a Build.
-      const ended = await this.endOfTurn().catch(() => null);
-      lastTurn.checkErrors = ended?.check.counts.error ?? null;
-      lastTurn.buildErrors = ended?.build.errors.length ?? null;
-      const tests = ended && (await this.runTests("turn").catch(() => null));
-      lastTurn.testFailures = tests ? testFailures(tests) : null;
+      lastTurn.error ??= error instanceof Error ? error.message : String(error);
     } finally {
-      this.turnUsage = null;
+      lastTurn.restored = turnCopy()?.undone === true;
       lastTurn.endedAt = new Date().toISOString();
       const startedNow = this.appStarted();
       lastTurn.startedApp = !hadStarted && startedNow;
       lastTurn.noApp = !startedNow;
       lastTurn.asked = askedIn(this.messages.at(-1));
-      // The clock moves only at I/O, so this leaves out the last Check.
-      console.log(JSON.stringify({ event: "turn", workspace: this.name, durationMs: Date.now() - started, ...lastTurn, ...usage }));
+      console.log(JSON.stringify({ event: "turn", workspace: this.name, ...lastTurn, ...log }));
       this.setState({ ...this.state, turn: null, lastTurn });
       await this.updateList();
     }
+  }
+
+  /**
+   * Puts the files back as they were copied when the Turn started, installs
+   * the Packages their `package.json` lists, and checks and builds them, so
+   * the reports match the files (ADR 0018). Returns that Check and Build, or
+   * null when the app hadn't started: undoing the Turn that started it
+   * leaves nothing to check or build.
+   */
+  private async undo(copy: TurnCopy): Promise<CheckAndBuild | null> {
+    await this.exclusive(async () => {
+      const label = this.ctx.storage.kv.get<string>(appLabelKey);
+      // With no await between them, these writes are kept together, so once
+      // the files are back, a restart or a failure still finds the Turn undone.
+      this.files.restoreCopy();
+      this.ctx.storage.kv.put<TurnCopy>(copyKey, { ...copy, undone: true });
+      if (!copy.appStarted) for (const key of appKeys) this.ctx.storage.kv.delete(key);
+      // deferred: a restart before this line leaves the old app host unreached and the list naming the old app, until a later start renames it; fix if undoing starts shows up in the restart logs.
+      if (!copy.appStarted && label) await this.forgetApp(label);
+      await this.install();
+    });
+    return this.endOfTurn();
+  }
+
+  /**
+   * After undoing the Turn that started the app, which a later Turn starts
+   * afresh under a new name and address (see `fill`): removes the app host
+   * that had `label`, with the Template's Build its Preview ran, since
+   * nothing will reach it again, and lists the Workspace as before its app
+   * started. The Workspace itself is already as it was.
+   */
+  private async forgetApp(label: string): Promise<void> {
+    await this.env.APP_HOSTS.getByName(label).remove(this.name);
+    const developer = this.ctx.storage.kv.get<string>(developerKey);
+    if (developer) await this.env.DEVELOPERS.getByName(developer).appForgotten(this.name);
   }
 
   /**
@@ -885,7 +948,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * found, or null when the app hasn't started and there's nothing to check
    * (ADR 0018). The Turn's tests come once, after the last.
    */
-  private async endOfTurn(): Promise<{ check: CheckReport; build: BuildReport } | null> {
+  private async endOfTurn(): Promise<CheckAndBuild | null> {
     if (!this.appStarted()) return null;
     // The tests that follow the last of these run at this stage too.
     this.setStage("checking");
@@ -929,6 +992,44 @@ function frameType(message: string | ArrayBuffer): string {
   } catch {
     return "";
   }
+}
+
+/** A Turn's last Check and Build. */
+type CheckAndBuild = { check: CheckReport; build: BuildReport };
+
+/** Whether a Turn's last Check and Build leave the app broken. Failing tests don't (ADR 0018). */
+const broken = ({ check, build }: CheckAndBuild) => check.counts.error > 0 || !build.ok;
+
+/** The files' copy for a Turn (see `startTurn`). */
+interface TurnCopy {
+  startedAt: string;
+  /** Whether the app had started when the files were copied. */
+  appStarted: boolean;
+  /** Set once the files have been put back. */
+  undone?: boolean;
+}
+
+/** What a Turn's log line adds to its outcome. */
+type TurnLog = Partial<TurnUsage> & { durationMs?: number };
+
+/** A Turn's outcome when the Workspace restarted during it. */
+function stoppedByRestart(): LastTurn {
+  return { ...newLastTurn(), status: "aborted", error: restartedDuringTurn };
+}
+
+/** A Turn's outcome before it has one. */
+function newLastTurn(): LastTurn {
+  return {
+    endedAt: "",
+    status: "error",
+    error: null,
+    checkErrors: null,
+    buildErrors: null,
+    testFailures: null,
+    retries: 0,
+    outOfSteps: false,
+    restored: false,
+  };
 }
 
 interface TurnUsage {

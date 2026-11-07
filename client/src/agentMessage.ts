@@ -149,10 +149,12 @@ export function openQuestion(messages: UIMessage[], idle: boolean): Question | n
 /**
  * The suggestions to show above the message box: the Agent's latest from
  * `suggest` since the Developer's last message, while `idle`, unless a
- * question is open.
+ * question is open. After a Turn that was `undone`, the Agent's suggestions
+ * build on changes that are gone, so the page suggests trying again instead.
  */
-export function suggestionsToShow(messages: UIMessage<{ from?: string }>[], idle: boolean): string[] {
+export function suggestionsToShow(messages: UIMessage<{ from?: string }>[], idle: boolean, undone = false): string[] {
   if (!idle || openQuestion(messages, idle)) return [];
+  if (undone) return ["Try a different way"];
   for (const message of messages.toReversed()) {
     if (message.role === "user" && message.metadata?.from !== "check") return [];
     if (message.role !== "assistant") continue;

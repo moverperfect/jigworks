@@ -42,6 +42,14 @@ export interface BuildsSeen {
 export const noBuildsSeen: BuildsSeen = { report: null, preview: null, goodHash: null };
 
 /**
+ * What the page has seen once the app it saw has gone, as after undoing the
+ * Turn that started it (ADR 0018): no successful Build, with `report` and
+ * `preview`, which are of the app that went, already seen, so only newer
+ * ones count.
+ */
+export const forgetBuilds = (report: BuildsSeen["report"], preview: BuildsSeen["preview"]): BuildsSeen => ({ report, preview, goodHash: null });
+
+/**
  * What the page has seen once it has `report` and `preview`. Whichever is new
  * moves the latest successful Build on, the read of the Preview last, as it's
  * what the platform runs now. Returns `seen` itself when neither is new.
