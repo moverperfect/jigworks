@@ -187,6 +187,79 @@ function describeTools(tools: ToolPart[]): Step[] {
   return steps;
 }
 
+/** How each tool reads under "Technical details": after "Couldn't", while it runs, and once it's done. */
+const toolVerbs: Record<string, [failed: string, running: string, done: string]> = {
+  read: ["read", "Reading", "Read"],
+  write: ["write", "Writing", "Wrote"],
+  edit: ["edit", "Editing", "Edited"],
+  list: ["list", "Listing", "Listed"],
+  find: ["find files matching", "Finding files matching", "Found files matching"],
+  grep: ["search for", "Searching for", "Searched for"],
+  delete: ["delete", "Deleting", "Deleted"],
+  bash: ["run", "Running", "Ran"],
+  check: ["check", "Checking", "Checked"],
+  build: ["build", "Building", "Built"],
+  add_package: ["add", "Adding", "Added"],
+};
+
+/** A tool call's line under "Technical details": `verb` says how it went, before what it worked on. */
+interface ToolCallLine {
+  /** `unfinished` when it has no output and can't still be running, as when the Workspace restarted during its Turn. */
+  outcome: "done" | "running" | "unfinished" | "failed";
+  verb: string;
+  subject: string;
+}
+
+/**
+ * How a tool call reads under "Technical details", for example "Couldn't
+ * build" or "Didn't finish building". `running` says whether its message's
+ * Turn is still running (see `runningMessage`).
+ */
+export function describeToolCall(part: ToolPart, running: boolean): ToolCallLine {
+  const name = getToolName(part);
+  const [failedVerb, runningVerb, doneVerb] = toolVerbs[name] ?? [`use ${name}`, `Using ${name}`, `Used ${name}`];
+  const subject = toolSubject(name, part.input);
+  if (part.state === "output-available") return { outcome: "done", verb: doneVerb, subject };
+  if (part.state === "output-error" || part.state === "output-denied") return { outcome: "failed", verb: `Couldn't ${failedVerb}`, subject };
+  if (running) return { outcome: "running", verb: runningVerb, subject };
+  return { outcome: "unfinished", verb: `Didn't finish ${runningVerb.charAt(0).toLowerCase()}${runningVerb.slice(1)}`, subject };
+}
+
+/**
+ * The id of the message whose tool calls may still be running: the last
+ * one, while a Turn runs. A call without output in any other message was cut
+ * short, even while the next Turn runs.
+ */
+export function runningMessage(messages: UIMessage[], turnRunning: boolean): string | null {
+  return turnRunning ? (messages.at(-1)?.id ?? null) : null;
+}
+
+/** What a tool worked on, from its input, which is partial while the model writes it. */
+function toolSubject(name: string, input: unknown): string {
+  const field = (key: string) => {
+    const value = input && typeof input === "object" ? (input as Record<string, unknown>)[key] : undefined;
+    return typeof value === "string" ? value : "";
+  };
+  switch (name) {
+    case "check":
+    case "build":
+      return "";
+    case "find":
+      return field("pattern");
+    case "grep":
+      return field("query");
+    case "add_package":
+      return field("name");
+    case "bash": {
+      const script = field("script").trim();
+      const firstLine = script.split("\n", 1)[0] ?? "";
+      return firstLine.length > 60 || firstLine !== script ? `${firstLine.slice(0, 60)}…` : firstLine;
+    }
+    default:
+      return field("path");
+  }
+}
+
 /** How many of the steps are done, for example "1 of 2 steps done". */
 export function stepsDone(steps: Step[]): string {
   return `${steps.filter((step) => step.done).length} of ${plural(steps.length, "step")} done`;

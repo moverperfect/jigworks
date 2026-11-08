@@ -485,8 +485,7 @@ describe("a restart during a Turn", () => {
    * ended. `turn` is the Turn as the isolate that stopped left it.
    */
   async function restart(id: string, conversation: Conversation, turn: Partial<ConversationState["turn"]> = {}): Promise<LastTurn> {
-    const metadata = (await history(id)).findLast((message) => message.metadata?.from === "developer")?.metadata;
-    const startedAt = metadata?.from === "developer" ? metadata.turnStartedAt! : "";
+    const startedAt = await lastStartedAt(id);
     const from = conversation.frames.length;
     await runInDurableObject(env.WORKSPACES.getByName(id), async (instance: Workspace) => {
       instance.setState({ ...instance.state, turn: { startedAt, stage: "working", ...turn } });
@@ -495,6 +494,25 @@ describe("a restart during a Turn", () => {
       await instance.driveTurn({ request: "Hi", startedAt });
     });
     return turnEnd(conversation, from);
+  }
+
+  /** When the Turn at the end of the Conversation so far started. */
+  async function lastStartedAt(id: string): Promise<string> {
+    const metadata = (await history(id)).findLast((message) => message.metadata?.from === "developer")?.metadata;
+    return metadata?.from === "developer" ? metadata.turnStartedAt! : "";
+  }
+
+  /** The `turn` log lines written while `act` ran. */
+  async function turnLines(act: () => Promise<unknown>): Promise<Record<string, unknown>[]> {
+    const logged = vi.spyOn(console, "log");
+    try {
+      await act();
+      return logged.mock.calls
+        .map(([line]) => (typeof line === "string" && line.startsWith("{") ? JSON.parse(line) : null))
+        .filter((line) => line?.event === "turn");
+    } finally {
+      logged.mockRestore();
+    }
   }
 
   it("checks and builds the files, and undoes the Turn when they leave the app broken", async () => {
@@ -531,6 +549,18 @@ describe("a restart during a Turn", () => {
     const ended = await restart(workspace.id, conversation);
     expect(ended).toMatchObject({ status: "aborted", error: restartedDuringTurn, checkErrors: 0, buildErrors: 0, restored: false });
     expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
+  });
+
+  it("logs the Turn it ended, with why and when it started, whether or not the Workspace restarts again while ending it", async () => {
+    const workspace = await create("Restarted, logged");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:say-hello] Hi");
+    const restartedAt = await lastStartedAt(workspace.id);
+
+    const ended = await turnLines(() => restart(workspace.id, conversation));
+    expect(ended).toEqual([expect.objectContaining({ status: "aborted", error: restartedDuringTurn, startedAt: restartedAt })]);
+    const again = await turnLines(() => restart(workspace.id, conversation, { stage: "checking", restarted: true }));
+    expect(again).toEqual([expect.objectContaining({ status: "aborted", error: restartedDuringTurn, startedAt: restartedAt })]);
   });
 
   it("ends the Turn without a Check when the Workspace restarts again while ending it", async () => {

@@ -5,7 +5,9 @@ import {
   appStartedIn,
   describeRetry,
   describeTool,
+  describeToolCall,
   openQuestion,
+  runningMessage,
   stepsDone,
   suggestionsToShow,
   turnProgress,
@@ -235,6 +237,42 @@ describe("tool calls in plain words", () => {
     expect(describeTool("preview_logs")).toBe("Seeing how your app ran");
     expect(describeTool("list_secrets")).toBe("Looking at your app's Secrets");
     expect(describeTool("something_new")).toBe("Working on your app");
+  });
+});
+
+describe("a tool call under Technical details", () => {
+  const call = (name: string, input: unknown, state: string, turnRunning = false) =>
+    describeToolCall(tool(name, input, state) as Parameters<typeof describeToolCall>[0], turnRunning);
+
+  it("says what it did, what it's doing, or that it couldn't do it", () => {
+    expect(call("read", { path: "/src/App.tsx" }, "output-available")).toEqual({ outcome: "done", verb: "Read", subject: "/src/App.tsx" });
+    expect(call("build", {}, "input-available", true)).toEqual({ outcome: "running", verb: "Building", subject: "" });
+    expect(call("build", {}, "output-error")).toEqual({ outcome: "failed", verb: "Couldn't build", subject: "" });
+    expect(call("write", { path: "/src/App.tsx" }, "output-denied")).toEqual({
+      outcome: "failed",
+      verb: "Couldn't write",
+      subject: "/src/App.tsx",
+    });
+    expect(call("something_new", {}, "output-available")).toEqual({ outcome: "done", verb: "Used something_new", subject: "" });
+  });
+
+  it("reads as unfinished, not failed, when it has no output once no Turn is running", () => {
+    expect(call("build", {}, "input-available")).toEqual({ outcome: "unfinished", verb: "Didn't finish building", subject: "" });
+    expect(call("find", { pattern: "*.ts" }, "input-streaming")).toEqual({
+      outcome: "unfinished",
+      verb: "Didn't finish finding files matching",
+      subject: "*.ts",
+    });
+    expect(call("something_new", {}, "input-available")).toEqual({ outcome: "unfinished", verb: "Didn't finish using something_new", subject: "" });
+  });
+
+  it("can still be running only in the last message, while a Turn runs, so one cut short by a restart stays unfinished in the next Turn", () => {
+    const message = (id: string, role: UIMessage["role"]): UIMessage => ({ id, role, parts: [] });
+    const messages = [message("a", "user"), message("b", "assistant"), message("c", "user"), message("d", "assistant")];
+    expect(runningMessage(messages, true)).toBe("d");
+    expect(runningMessage(messages.slice(0, 3), true)).toBe("c");
+    expect(runningMessage(messages, false)).toBeNull();
+    expect(runningMessage([], true)).toBeNull();
   });
 });
 
