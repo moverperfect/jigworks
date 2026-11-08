@@ -48,6 +48,15 @@ export function describeLastTurn(lastTurn: LastTurn): string | null {
   return null;
 }
 
+/**
+ * Whether the Developer can leave the last Turn's failed change for now: a
+ * change that was undone, so the app is as it was. A first build that was
+ * undone left no app to leave, so the only way on is to try again.
+ */
+export function canLeaveForNow(lastTurn: LastTurn | null | undefined): boolean {
+  return lastTurn?.restored === true && !lastTurn.noApp;
+}
+
 /** Why a Turn stopped before it finished, or null if it didn't. */
 function whyItStopped({ status, error }: LastTurn): string | null {
   if (status !== "error" && status !== "aborted") return null;

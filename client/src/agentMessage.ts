@@ -8,6 +8,8 @@ export type ToolPart = ToolUIPart | DynamicToolUIPart;
 export interface Step {
   label: string;
   done: boolean;
+  /** What the step decided, such as "A web page that remembers things", which the page shows on a quieter second line. Missing from steps before details. */
+  detail?: string;
 }
 
 /**
@@ -95,9 +97,9 @@ function latestSteps(tools: ToolPart[]): Step[] | null {
     if (getToolName(tool) !== "steps" || !taken.has(tool.state)) continue;
     const steps = (tool.input as { steps?: unknown } | undefined)?.steps;
     if (!Array.isArray(steps)) continue;
-    const valid = steps.filter(
-      (step): step is Step => typeof step?.label === "string" && step.label.trim() !== "" && typeof step.done === "boolean",
-    );
+    const valid = steps
+      .filter((step): step is Step => plainString(step?.label) && typeof step.done === "boolean")
+      .map(({ label, done, detail }) => (plainString(detail) ? { label, done, detail } : { label, done }));
     if (valid.length > 0) return valid;
   }
   return null;

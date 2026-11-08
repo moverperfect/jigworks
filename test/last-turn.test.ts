@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeLastTurn } from "../client/src/lastTurn";
+import { canLeaveForNow, describeLastTurn } from "../client/src/lastTurn";
 import { restartedDuringTurn, type LastTurn } from "../src/shared/conversation";
 
 // The Conversation's status line after a Turn, in plain words.
@@ -97,5 +97,20 @@ describe("the last Turn's outcome", () => {
   it("says when the change is in but the app's tests fail", () => {
     expect(describeLastTurn(turn({ testFailures: 1 }))).toBe("The change is in, but 1 of your app's tests fails.");
     expect(describeLastTurn(turn({ testFailures: 2 }))).toBe("The change is in, but 2 of your app's tests fail.");
+  });
+});
+
+describe("leaving a failed change for now", () => {
+  it("is offered after a change that was undone, so the app is as it was (#80)", () => {
+    expect(canLeaveForNow(turn({ checkErrors: 2, retries: 3, restored: true }))).toBe(true);
+  });
+
+  it("isn't offered after a first build that was undone, since there's no app to leave, as in Variant E", () => {
+    expect(canLeaveForNow(turn({ buildErrors: 1, restored: true, noApp: true }))).toBe(false);
+  });
+
+  it("isn't offered when nothing was undone", () => {
+    expect(canLeaveForNow(turn({ checkErrors: 2, retries: 3 }))).toBe(false);
+    expect(canLeaveForNow(null)).toBe(false);
   });
 });

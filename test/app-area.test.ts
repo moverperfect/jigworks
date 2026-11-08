@@ -56,6 +56,12 @@ describe("the app area's state", () => {
     expect(appAreaState(ended({ buildErrors: 2, restored: true, noApp: true }), false)).toBe("failed");
   });
 
+  it("isn't failed once the Developer leaves it for now, so it shows the app as it was (#80)", () => {
+    expect(appAreaState(ended({ checkErrors: 3, retries: 3, restored: true }), true, "not-published", true)).toBe("ready");
+    expect(appAreaState(ended({ buildErrors: 1, restored: true }), true, "live", true)).toBe("live");
+    expect(appAreaState(ended({ buildErrors: 2, restored: true, noApp: true }), false, null, true)).toBe("empty");
+  });
+
   it("isn't failed for a broken Turn that wasn't undone, since \"Your app hasn't changed\" wouldn't be true", () => {
     // Such as a Turn that was running when undoing was deployed.
     expect(appAreaState(ended({ checkErrors: 3, retries: 3 }), true)).toBe("ready");
