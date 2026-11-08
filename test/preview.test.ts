@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { browserErrorsPath, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
 import type { BuildReport } from "../src/shared/build-report";
 import { accessToken, testAccess } from "./helpers/access";
-import { call, create } from "./helpers/api";
+import { call, create, waitFor } from "./helpers/api";
 
 // The Preview, through the platform Worker as a browser sees it. Each
 // successful Build goes to the Workspace's app host, which runs it on a Dynamic Worker
@@ -69,15 +69,6 @@ const signIn = async (id: string, destination: "iframe" | "document" = "iframe")
 const visit = async (id: string, path = "/", init: RequestInit & { dest?: string } = {}) => {
   const { url } = await preview(id);
   return browse(new URL(path, url).href, { dest: "empty", ...init, cookie: await signIn(id) });
-};
-
-const waitFor = async <T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> => {
-  for (let attempt = 0; attempt < 50; attempt++) {
-    const value = await read();
-    if (done(value)) return value;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return read();
 };
 
 describe("the Preview", () => {

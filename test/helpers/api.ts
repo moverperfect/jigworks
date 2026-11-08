@@ -52,3 +52,13 @@ export async function createFromMessage(message: string): Promise<WorkspaceRecor
   expect(response.status).toBe(201);
   return (await response.json<{ workspace: WorkspaceRecord }>()).workspace;
 }
+
+/** Reads until `done` says the value is ready, for up to about five seconds, then returns the last read. */
+export async function waitFor<T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const value = await read();
+    if (done(value)) return value;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  return read();
+}

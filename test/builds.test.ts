@@ -3,7 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { BuildReport } from "../src/shared/build-report";
 import type { CheckReport } from "../src/workspace";
-import { call, create } from "./helpers/api";
+import { call, create, waitFor } from "./helpers/api";
 
 // Builds, through the platform's API. The Builder runs in the Workspace's
 // Durable Object, with the Packages the fake registry serves.
@@ -35,8 +35,16 @@ describe("Builds", () => {
     expect(second).toMatchObject({ ok: true, cached: true, hash: first.hash });
     expect(await (await call(`/api/workspaces/${workspace.id}/build`)).json()).toEqual(second);
 
+    // New inputs make a new Build. The save starts one itself, within a second
+    // (the Agents SDK rounds a schedule down to the second), so wait for it
+    // rather than race it: the next Build reuses it.
     await save(workspace.id, "src/notes.ts", "export const notes = 1;\n");
-    expect(await build(workspace.id)).toMatchObject({ ok: true, cached: false });
+    const saved = await waitFor(
+      async () => (await call(`/api/workspaces/${workspace.id}/build`)).json<BuildReport>(),
+      (latest) => latest.hash !== first.hash,
+    );
+    expect(saved).toMatchObject({ ok: true, cached: false });
+    expect(await build(workspace.id)).toMatchObject({ ok: true, cached: true, hash: saved.hash });
   });
 
   it("goes ahead when the Check has errors", async () => {
