@@ -78,7 +78,7 @@ export function StartPage() {
         />
         {error && <ErrorMessage error={error} />}
         <div className="composer-actions">
-          <p className="hint">Shift+Enter starts a new line</p>
+          <p className="hint hint-keys">Shift+Enter starts a new line</p>
           <button type="submit" className="button button-primary" disabled={sending}>
             {sending ? "Starting…" : "Make it"}
           </button>

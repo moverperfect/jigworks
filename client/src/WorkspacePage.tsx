@@ -1,5 +1,15 @@
-import { useEffect, useEffectEvent, useId, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
-import { flushSync } from "react-dom";
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+  type RefObject,
+} from "react";
+import { createPortal, flushSync } from "react-dom";
 import { ApiError, getDeployment, getWorkspace, listFiles, type Workspace } from "./api";
 import { appStartedIn, turnProgress } from "./agentMessage";
 import { appAreaState } from "./appArea";
@@ -8,6 +18,7 @@ import { ConversationPanel } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
 import { FileTree } from "./FileTree";
 import { useLoad, useMediaQuery, usePageVisible, useTitle, type Loader } from "./hooks";
+import { Menu } from "./Menu";
 import { PreviewLogs, PreviewPanel } from "./PreviewPanel";
 import { ProblemsPanel } from "./ProblemsPanel";
 import { PublishControl } from "./PublishControl";
@@ -35,13 +46,21 @@ const tabs: { tab: Tab; label: string }[] = [
   { tab: "app", label: "App" },
 ];
 
+/** What the page needs from App for the bar along the top. */
+interface BarProps {
+  /** The bar, where the page puts the Workspace's name, Publish and the menu. */
+  bar: HTMLElement | null;
+  /** Who's signed in, for the menu. */
+  account: ReactNode;
+}
+
 /**
- * The app's page, at `/workspaces/:id`: the header with the app's name,
- * Publish and the menu; the Conversation on the left; and the app on the
+ * The app's page, at `/workspaces/:id`: the app's name, Publish and the menu
+ * in the bar along the top; the Conversation on the left; and the app on the
  * right, or its code behind "See the code" (ADR 0018). The page calls a
  * Workspace an app.
  */
-export function WorkspacePage({ id }: { id: string }) {
+export function WorkspacePage({ id, bar, account }: { id: string } & BarProps) {
   const loaded = useLoad(() => getWorkspace(id).catch((error: unknown) => (isNotFound(error) ? null : Promise.reject(error))));
   const { state } = loaded;
   const workspace = state.status === "ready" ? state.data : undefined;
@@ -57,6 +76,7 @@ export function WorkspacePage({ id }: { id: string }) {
 
   return (
     <div className="workspace-page">
+      {!workspace && bar && createPortal(<Menu account={account} />, bar)}
       {state.status === "loading" && <p className="workspace-message muted">Loading your app…</p>}
       {state.status === "failed" && (
         <div className="workspace-message">
@@ -69,12 +89,26 @@ export function WorkspacePage({ id }: { id: string }) {
           <p>It may have been deleted.</p>
         </div>
       )}
-      {workspace && <WorkspaceView workspace={workspace} lookForName={lookForName} onRenamed={(renamed) => loaded.update(() => renamed)} />}
+      {workspace && (
+        <WorkspaceView
+          workspace={workspace}
+          lookForName={lookForName}
+          onRenamed={(renamed) => loaded.update(() => renamed)}
+          bar={bar}
+          account={account}
+        />
+      )}
     </div>
   );
 }
 
-function WorkspaceView({ workspace, lookForName, onRenamed }: { workspace: Workspace; lookForName(): void; onRenamed(workspace: Workspace): void }) {
+function WorkspaceView({
+  workspace,
+  lookForName,
+  onRenamed,
+  bar,
+  account,
+}: { workspace: Workspace; lookForName(): void; onRenamed(workspace: Workspace): void } & BarProps) {
   const { id } = workspace;
   const pageId = useId();
   const files = useLoad(() => listFiles(id));
@@ -201,17 +235,22 @@ function WorkspaceView({ workspace, lookForName, onRenamed }: { workspace: Works
 
   return (
     <>
-      <div className="workspace-header">
-        <AppName workspace={workspace} onRenamed={onRenamed} />
-        <PublishControl
-          id={id}
-          name={workspace.name}
-          deployment={deployment}
-          latestGoodHash={preview.goodHash}
-          locked={locked}
-        />
-        <WorkspaceMenu workspace={workspace} canStartFresh={canStartFresh} />
-      </div>
+      {/* One bar along the top, as in Variant E: Jigworks, then the Workspace's name, publishing and the menu. */}
+      {bar &&
+        createPortal(
+          <>
+            <AppName workspace={workspace} onRenamed={onRenamed} />
+            <PublishControl
+              id={id}
+              name={workspace.name}
+              deployment={deployment}
+              latestGoodHash={preview.goodHash}
+              locked={locked}
+            />
+            <WorkspaceMenu workspace={workspace} canStartFresh={canStartFresh} account={account} />
+          </>,
+          bar,
+        )}
 
       {narrow && (
         <div className="workspace-tabs" role="tablist" aria-label="Chat and app" onKeyDown={onTabKeyDown}>
@@ -256,6 +295,7 @@ function WorkspaceView({ workspace, lookForName, onRenamed }: { workspace: Works
               openToEveryone={deployed?.openToEveryone ?? false}
               onShowCode={() => swapView(true)}
               showCodeButton={showCodeButton}
+              narrow={narrow}
             />
           </section>
           {/* Kept on the page while hidden, so the editor keeps its file and any unsaved changes. */}
