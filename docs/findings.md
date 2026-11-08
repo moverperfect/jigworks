@@ -668,7 +668,54 @@ The first live check, the same day after #51's deploy, ran each Template's tests
 - **Your apps and renaming:** renaming from the header changed the name in the header, the title and Your apps, and the address stayed `sunday-runs-…`.
 - **The Preview and the Deployment:** the Preview's frame loaded from `<label>-preview.jigworks.app` after its sign-in exchange. The Deployment opened at `<label>.jigworks.app` in 661 ms, through Access. After Delete, it said "There's no app here." From outside, `anything-preview.jigworks.app` reached the platform (404), and `anything.jigworks.app` redirected to Access.
 
+### Short replies, and Secrets only for secrets (#79)
+
+**Verdict: partly.** The Agent now asks for the address to send to with a question, not as a Secret, and no reply has headings or lists. The reply at the end of the first build is still five sentences, where the bar is three; the email Turn's is three. Two wordings were tried, with one run of #67's two Turns each.
+
+- **Platform:** this branch under `wrangler dev` on 2026-11-08, with the real model (Opus 5.5) and the deployed platform's settings, driven from the T3 preview browser. The deployed platform runs `main`'s instructions until this merges, so the Turns couldn't run there first.
+- **Turns:** 8 Turns in two Workspaces made for the check, against a budget of $2. They cost $1.23 at the tail script's prices. Both Workspaces were deleted afterwards.
+- **Before** is #67's run on the deployed platform, above.
+
+**The wordings:**
+1. "two or three plain sentences at the end saying what changed and what the Developer could try in their app. No headings or lists."
+2. "at the end one paragraph of no more than three plain sentences, saying what changed and what the Developer could try in their app. No headings, lists or second paragraph, and don't say how you made sure it works: the steps show that." This is the one in the pull request.
+
+Both say "ask_for_secret is only for values that must stay secret, such as keys and passwords. Anything else the app needs, such as the address emails go to, ask for with ask, or choose something sensible", and the tool's description says the same.
+
+**The reply at the end of each Turn:**
+
+| Turn | Before (#67) | Wording 1 | Wording 2 |
+| --- | --- | --- | --- |
+| "A sign-up sheet for my running club's Sunday runs" | about 170 words, a bold heading and a six-item list | 103 words, 7 sentences in 2 paragraphs, no list | 67 words, 5 sentences in 1 paragraph, no list |
+| The emails, once the key and address were given | not recorded | 102 words, 6 sentences in 2 paragraphs, no list | 59 words, 3 sentences in 1 paragraph, no list |
+
+**How the address was asked for:**
+
+| | Before (#67) | Wording 1 | Wording 2 |
+| --- | --- | --- | --- |
+| The email service's key | a Secret | a Secret (`RESEND_API_KEY`) | a Secret (`RESEND_API_KEY`) |
+| The address to send to | a Secret (`NOTIFY_EMAIL`) | a question: "Which email address should the sign-up emails go to?", with "I'll type my address" and "Not sure which one I used" | the same question, with "I'll type my address" and "Let me check which one I used" |
+
+The typed address went into the app's `vars` in `wrangler.jsonc`.
+
+**Each Turn:**
+
+| Turn | Wording | Asked | Steps | Turn log | Cost |
+| --- | --- | --- | ---: | ---: | ---: |
+| The first build | 1 | – | 9 | 76.1 s | $0.32 |
+| "Email me when someone signs up" | 1 | a Secret | 2 | 8.9 s | $0.14 |
+| After the key was added | 1 | a question | 2 | 5.8 s | $0.02 |
+| "runs@example.com": the emails | 1 | – | 7 | 33.0 s | $0.13 |
+| The first build | 2 | – | 8 | 83.2 s | $0.33 |
+| "Email me when someone signs up" | 2 | a Secret | 2 | 9.4 s | $0.15 |
+| After the key was added | 2 | a question | 1 | 5.7 s | $0.02 |
+| "runs@example.com": the emails | 2 | – | 7 | 33.1 s | $0.13 |
+
+- **The first build's reply** describes what the app does, a sentence per feature, and wording 2 cut it from seven sentences to five but not to three. One run of each wording is too few to tell the wording from chance.
+- **Narration during a Turn** is unchanged: a sentence such as "Saving works. I'll remove that test entry so your list starts empty." still appears between the steps and the end.
+
 ### Found along the way
 
 - **The page ran a Check and a Build when it opened an app with no files,** before the Agent had started it. They failed ("Could not determine entry point", and no `tsconfig.json`) and filled the hidden problems list. The page now runs them on opening only once the app is started.
 - **The Agent's replies are longer than Variant E's,** with headings and lists, and it asked for an email address as a Secret (#79).
+- **The Agent said the test email went through,** in both of #79's runs, though the email service's key was made up. The app logs a failed send rather than failing the sign-up, and the Agent had read the Preview's logs. In #67's run on the deployed platform it noticed the refusal and asked for a new key. Not looked into.
