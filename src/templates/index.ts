@@ -1,21 +1,17 @@
 import packed from "../generated/templates.txt";
+import type { Packed, PackedAddon, PackedTemplate } from "./pack";
 
 /** A starting set of files for a new Workspace, packed from templates/ by templates/pack.mjs. */
-export interface Template {
+export interface Template extends PackedTemplate {
   id: string;
-  name: string;
-  description: string;
-  /** When the Agent should choose it, as a sentence for its instructions (ADR 0018). */
-  fits: string;
-  /** Path to text: the files copied into a new Workspace. */
-  files: Record<string, string>;
 }
 
-const { runtimeTypes, templates: packedTemplates } = JSON.parse(packed) as {
-  /** The end of every Template's `worker-configuration.d.ts`, packed once. */
-  runtimeTypes: string;
-  templates: Record<string, Omit<Template, "id">>;
-};
+/** A tested set of files and notes that gives an app one ability, packed from addons/ by templates/pack.mjs. */
+export interface Addon extends PackedAddon {
+  id: string;
+}
+
+const { runtimeTypes, templates: packedTemplates, addons: packedAddons } = JSON.parse(packed) as Packed;
 const typesFile = "worker-configuration.d.ts";
 
 const templates = new Map(
@@ -32,4 +28,11 @@ export function listTemplates(): Omit<Template, "files">[] {
 
 export function getTemplate(id: string): Template | undefined {
   return templates.get(id);
+}
+
+const addons = new Map(Object.entries(packedAddons).map(([id, addon]) => [id, { id, ...addon }]));
+
+/** Every add-on's ID, name, description and when it fits. */
+export function listAddons(): Pick<Addon, "id" | "name" | "description" | "fits">[] {
+  return [...addons.values()].map(({ id, name, description, fits }) => ({ id, name, description, fits }));
 }

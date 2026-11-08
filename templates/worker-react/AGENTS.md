@@ -48,7 +48,7 @@ The platform serves the front end and `public/` in front of the Worker, as Cloud
 
 - **Cookies:** every cookie name starts with `__Host-`; the platform drops all other cookies. With `hono/cookie`, `setCookie(c, "session", value, { prefix: "host" })` and `getCookie(c, "session", "host")` add the prefix and its required attributes for you. The platform keeps the name `__Host-jigworks-preview` for itself.
 - **Reserved paths:** the platform answers `/__jigworks/` and everything below it itself, so app code never sees those requests.
-- **Storage:** Durable Objects are the only storage. KV, D1, R2, queues and cron triggers aren't available: the Build fails if `wrangler.jsonc` asks for them. To store data:
+- **Storage:** the app already has a store for its records, `STORE`: see "Storage" below. Durable Objects are the only storage. KV, D1, R2, queues and cron triggers aren't available: the Build fails if `wrangler.jsonc` asks for them. For a Durable Object of your own:
   - declare a binding in `wrangler.jsonc`: `"durable_objects": { "bindings": [{ "name": "NOTES", "class_name": "Notes" }] }`. No `migrations` are needed;
   - export `class Notes extends DurableObject` (from `cloudflare:workers`) from `src/server/index.ts`, and keep its data in `this.ctx.storage.sql`, each instance's own SQLite database;
   - add `NOTES: DurableObjectNamespace<import("./src/server/index").Notes>;` to `__BaseEnv_Env` in `worker-configuration.d.ts`;

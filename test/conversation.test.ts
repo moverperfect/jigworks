@@ -68,7 +68,7 @@ describe("a Turn", () => {
       "  - worker (Worker): A Cloudflare Worker using Hono. Choose it only for something with no page, such as a webhook",
     );
     expect(sent.system).toContain(
-      "  - worker-react (Worker + React): A Cloudflare Worker using Hono, with a React front end styled with Tailwind. Choose it for most apps",
+      "  - worker-react (Worker + React): A Cloudflare Worker using Hono, with a React front end styled with Tailwind, and a store that remembers records. Choose it for most apps",
     );
     expect(sent.latest).toContain("the Developer changed /src/notes.md");
     expect(sent.tools).toEqual(

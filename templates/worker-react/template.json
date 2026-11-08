@@ -1,5 +1,6 @@
 {
   "name": "Worker + React",
-  "description": "A Cloudflare Worker using Hono, with a React front end styled with Tailwind.",
-  "fits": "Choose it for most apps: anything people open in a browser, such as a sign-up sheet, a booking page or a rota."
+  "description": "A Cloudflare Worker using Hono, with a React front end styled with Tailwind, and a store that remembers records.",
+  "fits": "Choose it for most apps: anything people open in a browser, such as a sign-up sheet, a booking page or a rota. It remembers things, such as the names on a sign-up sheet.",
+  "addons": ["storage"]
 }

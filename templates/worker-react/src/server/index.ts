@@ -9,3 +9,6 @@ app.get("/api/hello/:name", (c) => {
 });
 
 export default app;
+
+// The app's storage (see "Storage" in AGENTS.md).
+export { Store } from "./store";

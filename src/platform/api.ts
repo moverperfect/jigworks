@@ -2,7 +2,7 @@ import { zipSync } from "fflate";
 import { Hono, type Context } from "hono";
 import { isHidden, maxFileBytes, normalisePath } from "../files";
 import { newAppName, validateWorkspaceName } from "../shared/workspace-name";
-import { getTemplate, listTemplates } from "../templates";
+import { getTemplate, listAddons, listTemplates } from "../templates";
 
 export type Platform = { Bindings: Env; Variables: { email: string } };
 
@@ -18,6 +18,8 @@ const noSuchWorkspace = (c: Context<Platform>) => c.json({ error: "There's no su
 api.get("/me", (c) => c.json({ email: c.get("email") }));
 
 api.get("/templates", (c) => c.json({ templates: listTemplates() }));
+
+api.get("/addons", (c) => c.json({ addons: listAddons() }));
 
 api.get("/workspaces", async (c) => c.json({ workspaces: await developer(c).list() }));
 
