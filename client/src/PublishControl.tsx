@@ -81,16 +81,19 @@ export function PublishControl({
             {state === "live-with-changes" && <>Live at {address}, with changes not yet published</>}
           </span>
         )}
-        {deployment?.hash && <CopyLink url={deployment.url} />}
-        <button
-          type="button"
-          className="button button-primary button-small"
-          // Before the first successful Build, or live with nothing new, there's nothing to publish.
-          disabled={state === null || latestGoodHash === null || state === "live" || locked || busy}
-          onClick={() => void start()}
-        >
-          {busy ? "Publishing…" : state === "live-with-changes" ? "Publish changes" : "Publish"}
-        </button>
+        {/* Grouped, so on a narrow bar the buttons wrap together rather than leaving Publish on a row of its own. */}
+        <span className="publish-actions">
+          {deployment?.hash && <CopyLink url={deployment.url} />}
+          <button
+            type="button"
+            className="button button-primary button-small"
+            // Before the first successful Build, or live with nothing new, there's nothing to publish.
+            disabled={state === null || latestGoodHash === null || state === "live" || locked || busy}
+            onClick={() => void start()}
+          >
+            {busy ? "Publishing…" : state === "live-with-changes" ? "Publish changes" : "Publish"}
+          </button>
+        </span>
       </div>
       {(loaded.state.status === "failed" || error) && (
         <div className="bar-message">

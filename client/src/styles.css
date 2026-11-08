@@ -146,7 +146,7 @@ a {
   overflow-wrap: anywhere;
 }
 
-/* The one bar along the top: Jigworks, then on the app's page its name, publishing and the menu, as in Variant E. */
+/* The one bar along the top: Jigworks, then on the Workspace page the Workspace's name, publishing and the menu, as in Variant E. */
 .site-header {
   display: flex;
   flex-wrap: wrap;
@@ -381,17 +381,25 @@ main.workspace-main {
   font-stretch: 118%;
 }
 
-/* The live state follows the app's name, and the buttons keep to the right. */
+/* The live state follows the Workspace's name, and the buttons keep to the right. */
 .publish {
-  display: flex;
   flex: 1 1 auto;
+}
+
+.publish,
+.publish-actions {
+  display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.25rem 0.75rem;
 }
 
+.publish-actions {
+  justify-content: flex-end;
+  margin-left: auto;
+}
+
 .publish-status {
-  margin-right: auto;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
