@@ -146,13 +146,14 @@ a {
   overflow-wrap: anywhere;
 }
 
+/* The one bar along the top: Jigworks, then on the app's page its name, publishing and the menu, as in Variant E. */
 .site-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
   gap: 0.25rem 1rem;
-  padding: 0.75rem 1.25rem;
+  min-height: 3rem;
+  padding: 0.5rem 1.25rem;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
 }
@@ -162,9 +163,8 @@ a {
   text-decoration: none;
 }
 
-.account {
-  font-size: 0.9rem;
-  overflow-wrap: anywhere;
+.site-header > .menu-button {
+  margin-left: auto;
 }
 
 .email {
@@ -344,18 +344,8 @@ main.workspace-main {
   min-height: 0;
 }
 
-.workspace-header {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem 1rem;
-  padding: 0.5rem 1.25rem;
-  background: var(--surface);
-  border-bottom: 1px solid var(--border);
-}
-
 .workspace-title {
-  flex: 1 1 8rem;
+  flex: 0 1 auto;
   min-width: 0;
   margin: 0;
   font-size: 1.125rem;
@@ -391,14 +381,17 @@ main.workspace-main {
   font-stretch: 118%;
 }
 
+/* The live state follows the app's name, and the buttons keep to the right. */
 .publish {
   display: flex;
+  flex: 1 1 auto;
   flex-wrap: wrap;
   align-items: baseline;
   gap: 0.25rem 0.75rem;
 }
 
 .publish-status {
+  margin-right: auto;
   color: var(--muted);
   overflow-wrap: anywhere;
 }
@@ -407,15 +400,19 @@ main.workspace-main {
   display: none;
 }
 
-/* Messages take a row of their own, below the header's buttons. */
-.workspace-header-message {
+/* Messages take a row of their own, below the bar's buttons. */
+.bar-message {
   order: 2;
   flex-basis: 100%;
 }
 
-/* The header's menu, a popover under its button. Browsers without anchor positioning centre it. */
+/* The bar's menu, and the app toolbar's "More" on a phone: popovers under their buttons. Browsers without anchor positioning centre them. */
 .menu-button {
-  anchor-name: --workspace-menu;
+  anchor-name: --menu;
+}
+
+.more-button {
+  anchor-name: --more;
 }
 
 .menu {
@@ -429,12 +426,38 @@ main.workspace-main {
 
 @supports (anchor-name: --a) {
   .menu {
-    position-anchor: --workspace-menu;
+    position-anchor: --menu;
     inset: auto;
     top: anchor(bottom);
     right: anchor(right);
     margin: 0.25rem 0 0;
   }
+
+  .menu.more {
+    position-anchor: --more;
+  }
+}
+
+/* Who's signed in, above the menu's items. */
+.menu-account {
+  margin: 0;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.menu-account:has(+ .menu-list) {
+  margin-bottom: 0.25rem;
+  border-bottom: 1px solid var(--border);
+}
+
+/* Behind "More": the path with Reload, Open in a new tab and See the code. */
+.menu.more {
+  width: min(22rem, calc(100vw - 2rem));
+}
+
+.menu.more > .preview-address {
+  padding: 0.4rem 0.75rem;
 }
 
 .menu-list {
@@ -710,17 +733,17 @@ h2.code-view-heading {
 
 /* Narrow windows show the chat or the app, behind tabs. Matches the page's narrowQuery. */
 @media (width < 760px) {
-  .workspace-header {
+  .site-header {
     padding-inline: 1rem;
   }
 
-  /* The name and the menu share the top row, with publishing on its own row below. */
-  .workspace-header > .publish {
+  /* Jigworks, the name and the menu share the top row, with publishing on its own row below. */
+  .site-header > .publish {
     order: 1;
     flex-basis: 100%;
   }
 
-  /* On a phone, the app's toolbar is a Paper strip, and the jig sits closer in. */
+  /* On a phone, the app's toolbar is a Paper strip of one row, and the jig sits closer in. */
   .app-area > .app-toolbar {
     padding: 0.35rem 1rem;
     background: var(--surface);
@@ -1667,4 +1690,9 @@ h1.start-question {
   font-weight: 500;
   font-stretch: 86%;
   line-height: 1.35;
+}
+
+/* "Shift+Enter starts a new line" is only for keyboards, so it's quieter than other hints. */
+.hint-keys {
+  font-size: 0.75rem;
 }

@@ -185,7 +185,7 @@ export function ConversationPanel({
         />
         {error && <ErrorMessage error={error} />}
         <div className="composer-actions">
-          <p id={`${headingId}-hint`} className="hint">
+          <p id={`${headingId}-hint`} className={turnRunning || unsavedChanges ? "hint" : "hint hint-keys"}>
             {turnRunning
               ? "The Agent is working. You can send a message when it's done."
               : unsavedChanges

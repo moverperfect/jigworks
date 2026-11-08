@@ -27,8 +27,9 @@ const devices: { device: Device; label: string }[] = [
 
 /**
  * The app view: the Preview in a Phone or Computer view, the path it shows,
- * Open in a new tab, and "See the code". The page says "your app" for the
- * Preview (ADR 0018).
+ * Open in a new tab, and "See the code". On a phone, all but Phone and
+ * Computer are behind "More", so the toolbar is one row. The page says "your
+ * app" for the Preview (ADR 0018).
  */
 export function PreviewPanel({
   preview,
@@ -38,6 +39,7 @@ export function PreviewPanel({
   openToEveryone,
   onShowCode,
   showCodeButton,
+  narrow,
 }: {
   preview: PreviewFrame;
   state: AppAreaState;
@@ -48,9 +50,14 @@ export function PreviewPanel({
   /** Whether the Installation's Deployments are open to everyone. */
   openToEveryone: boolean;
   onShowCode(): void;
+  /** The button that shows the code, or on a phone the "More" that holds it, which gets focus back from the code. */
   showCodeButton: Ref<HTMLButtonElement>;
+  /** Whether the page is narrow, as on a phone. */
+  narrow: boolean;
 }) {
   const pathId = useId();
+  const moreId = useId();
+  const more = useRef<HTMLDivElement>(null);
   const [typed, setTyped] = useState("/");
   const [device, setDevice] = useState<Device>("computer");
   const info = preview.info.status === "ready" ? preview.info.data : null;
@@ -65,10 +72,65 @@ export function PreviewPanel({
     preview.load(path);
   }
 
+  // Choosing anything behind "More" closes it. Only its own controls call this, while it's open.
+  const closeMore = () => more.current?.hidePopover();
+
   function openInTab() {
     // Opened within the click, so popup blockers allow it. The platform makes the tab's own sign-in link.
     if (host) window.open(previewTabUrl(host, toPath(typed)), "_blank", "noopener");
   }
+
+  const tools = (
+    <>
+      <form
+        className="preview-address"
+        onSubmit={(event) => {
+          closeMore();
+          reload(event);
+        }}
+      >
+        <label htmlFor={pathId} className="preview-field">
+          <span className="visually-hidden">Path to open on </span>
+          {host && <span className="preview-host">{host}</span>}
+          <input
+            id={pathId}
+            type="text"
+            className="preview-path"
+            value={typed}
+            onChange={(event) => setTyped(event.target.value)}
+            spellCheck={false}
+            autoComplete="off"
+          />
+        </label>
+        <button type="submit" className="button button-small" disabled={!ready}>
+          Reload
+        </button>
+      </form>
+      <button
+        type="button"
+        className={narrow ? "menu-item" : "button button-small"}
+        onClick={() => {
+          closeMore();
+          openInTab();
+        }}
+        disabled={!ready}
+      >
+        Open in a new tab
+      </button>
+      <button
+        // On a phone this button is behind "More" while the code shows, so More takes the ref instead.
+        ref={narrow ? undefined : showCodeButton}
+        type="button"
+        className={narrow ? "menu-item" : "button button-small app-toolbar-end"}
+        onClick={() => {
+          closeMore();
+          onShowCode();
+        }}
+      >
+        See the code
+      </button>
+    </>
+  );
 
   return (
     <>
@@ -86,30 +148,18 @@ export function PreviewPanel({
             </button>
           ))}
         </div>
-        <form className="preview-address" onSubmit={reload}>
-          <label htmlFor={pathId} className="preview-field">
-            <span className="visually-hidden">Path to open on </span>
-            {host && <span className="preview-host">{host}</span>}
-            <input
-              id={pathId}
-              type="text"
-              className="preview-path"
-              value={typed}
-              onChange={(event) => setTyped(event.target.value)}
-              spellCheck={false}
-              autoComplete="off"
-            />
-          </label>
-          <button type="submit" className="button button-small" disabled={!ready}>
-            Reload
-          </button>
-        </form>
-        <button type="button" className="button button-small" onClick={openInTab} disabled={!ready}>
-          Open in a new tab
-        </button>
-        <button ref={showCodeButton} type="button" className="button button-small app-toolbar-end" onClick={onShowCode}>
-          See the code
-        </button>
+        {narrow ? (
+          <>
+            <button ref={showCodeButton} type="button" className="button button-small app-toolbar-end more-button" popoverTarget={moreId}>
+              More
+            </button>
+            <div ref={more} id={moreId} popover="auto" className="menu more">
+              {tools}
+            </div>
+          </>
+        ) : (
+          tools
+        )}
       </div>
 
       {/* The app on a Paper sheet, held in the jig: its brackets and their label say what's happening to it. */}

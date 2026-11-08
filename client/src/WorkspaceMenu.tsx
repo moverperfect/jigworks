@@ -1,20 +1,20 @@
-import { useId, useRef, useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { exportUrl, startFresh, toApiError, type ApiError, type Workspace } from "./api";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DeleteDialog } from "./DeleteDialog";
 import { ErrorMessage } from "./ErrorMessage";
+import { Menu } from "./Menu";
 import { navigate } from "./router";
 import { SecretsDialog } from "./SecretsDialog";
 
 type Dialog = "secrets" | "start-fresh" | "delete";
 
 /**
- * The header's menu: Secrets, Export zip, Start fresh and Delete. It's a
- * popover, so the browser closes it on Escape or a click elsewhere, and a
- * dialog opened from it returns focus to the Menu button.
+ * The bar's menu on the Workspace page: who's signed in, then Secrets,
+ * Export zip, Start fresh and Delete. A dialog opened from it returns focus to the
+ * Menu button.
  */
-export function WorkspaceMenu({ workspace, canStartFresh }: { workspace: Workspace; canStartFresh: boolean }) {
-  const menuId = useId();
+export function WorkspaceMenu({ workspace, canStartFresh, account }: { workspace: Workspace; canStartFresh: boolean; account: ReactNode }) {
   const menu = useRef<HTMLDivElement>(null);
   const [dialog, setDialog] = useState<Dialog | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
@@ -36,35 +36,30 @@ export function WorkspaceMenu({ workspace, canStartFresh }: { workspace: Workspa
 
   return (
     <>
-      <button type="button" className="button button-small menu-button" popoverTarget={menuId}>
-        Menu
-      </button>
-      <div ref={menu} id={menuId} popover="auto" className="menu">
-        <ul className="menu-list">
-          <li>
-            <button type="button" className="menu-item" onClick={() => choose("secrets")}>
-              Secrets
-            </button>
-          </li>
-          <li>
-            <a href={exportUrl(workspace.id)} download className="menu-item" onClick={() => menu.current?.hidePopover()}>
-              Export zip
-            </a>
-          </li>
-          <li>
-            <button type="button" className="menu-item" onClick={() => choose("start-fresh")} disabled={!canStartFresh}>
-              Start fresh
-            </button>
-          </li>
-          <li>
-            <button type="button" className="menu-item" onClick={() => choose("delete")}>
-              Delete
-            </button>
-          </li>
-        </ul>
-      </div>
+      <Menu ref={menu} account={account}>
+        <li>
+          <button type="button" className="menu-item" onClick={() => choose("secrets")}>
+            Secrets
+          </button>
+        </li>
+        <li>
+          <a href={exportUrl(workspace.id)} download className="menu-item" onClick={() => menu.current?.hidePopover()}>
+            Export zip
+          </a>
+        </li>
+        <li>
+          <button type="button" className="menu-item" onClick={() => choose("start-fresh")} disabled={!canStartFresh}>
+            Start fresh
+          </button>
+        </li>
+        <li>
+          <button type="button" className="menu-item" onClick={() => choose("delete")}>
+            Delete
+          </button>
+        </li>
+      </Menu>
       {error && (
-        <div className="workspace-header-message">
+        <div className="bar-message">
           <ErrorMessage error={error} />
         </div>
       )}

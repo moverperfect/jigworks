@@ -93,7 +93,7 @@ export function PublishControl({
         </button>
       </div>
       {(loaded.state.status === "failed" || error) && (
-        <div className="workspace-header-message">
+        <div className="bar-message">
           {loaded.state.status === "failed" && <ErrorMessage error={loaded.state.error} retry={loaded.retry} />}
           {error && <ErrorMessage error={error} />}
         </div>
