@@ -270,7 +270,10 @@ describe("the Agent's own tools", () => {
     expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
 
     const [, reply] = await history(workspace.id);
-    const calls = reply!.parts.filter((part) => part.type === "tool-steps") as { state: string; input: { steps: { done: boolean }[] } }[];
+    const calls = reply!.parts.filter((part) => part.type === "tool-steps") as {
+      state: string;
+      input: { steps: { done: boolean; detail?: string }[] };
+    }[];
     expect(calls.map(({ state }) => state)).toEqual(["output-available", "output-available", "output-available"]);
     const lists = calls.map(({ input }) => input.steps.map(({ done }) => done));
     expect(lists).toEqual([
@@ -278,6 +281,7 @@ describe("the Agent's own tools", () => {
       [true, false],
       [true, true],
     ]);
+    expect(calls.map(({ input }) => input.steps[0]!.detail)).toEqual([undefined, "Counting from one", "Counting from one"]);
     expect(textOf(reply!)).toBe("Your count is ready.");
   });
 

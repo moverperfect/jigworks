@@ -16,7 +16,8 @@ export type AppAreaState = "empty" | "first-build" | "updating" | "ready" | "fai
 /**
  * The app area's state, from the Conversation's state (null until the socket
  * sends it), whether a Build has succeeded, so the Preview has one to run,
- * and the publish state (null until the page knows it).
+ * the publish state (null until the page knows it), and whether the
+ * Developer left a failed change for now, which takes the failure away.
  * A Turn leaves the app broken when its last Check had errors or its last
  * Build failed, and is then undone (ADR 0018). One that wasn't undone, such
  * as one that was running when undoing was deployed, isn't shown as failed,
@@ -26,9 +27,10 @@ export function appAreaState(
   conversation: Pick<ConversationState, "turn" | "lastTurn"> | null,
   built: boolean,
   publish: PublishState | null = null,
+  failureLeft = false,
 ): AppAreaState {
   if (conversation?.turn) return built ? "updating" : "first-build";
-  if (conversation?.lastTurn?.restored) return "failed";
+  if (conversation?.lastTurn?.restored && !failureLeft) return "failed";
   if (!built) return "empty";
   return publish === "live" ? "live" : "ready";
 }

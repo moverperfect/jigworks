@@ -1238,6 +1238,12 @@ button.problem:hover {
   width: 1ch;
 }
 
+/* What a step decided, on a quieter second line. */
+.step-detail {
+  display: block;
+  color: var(--muted);
+}
+
 .technical-details {
   margin-top: 0.3rem;
   color: var(--muted);

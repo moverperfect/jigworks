@@ -26,7 +26,7 @@ import {
 import { setSecret, startTurn, toApiError, type ApiError } from "./api";
 import { sendsMessage } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
-import { describeLastTurn } from "./lastTurn";
+import { canLeaveForNow, describeLastTurn } from "./lastTurn";
 import { renderMarkdown, type MarkdownNode } from "./markdown";
 import type { Conversation, ConversationMessage } from "./useConversation";
 
@@ -36,6 +36,8 @@ export function ConversationPanel({
   conversation,
   unsavedChanges,
   visible,
+  failureLeft,
+  leaveFailure,
 }: {
   id: string;
   conversation: Conversation;
@@ -43,6 +45,10 @@ export function ConversationPanel({
   unsavedChanges: boolean;
   /** Whether the pane is on screen. A hidden one can't scroll, so it catches up when it's shown again. */
   visible: boolean;
+  /** Whether the Developer left the last Turn's failed change for now, which takes its note and suggestion away. */
+  failureLeft: boolean;
+  /** Leaves the last Turn's failed change for now, without starting a Turn. */
+  leaveFailure: () => void;
 }) {
   const headingId = useId();
   const [text, setText] = useState("");
@@ -58,7 +64,9 @@ export function ConversationPanel({
   const turnRunning = state?.turn != null;
   const running = runningMessage(messages, turnRunning);
   const question = openQuestion(messages, conversation.idle);
-  const suggestions = suggestionsToShow(messages, conversation.idle, conversation.state?.lastTurn?.restored === true);
+  const undone = state?.lastTurn?.restored === true;
+  // Once the Developer leaves an undone Turn, no suggestions show: not trying again, nor the Agent's, which build on changes that are gone.
+  const suggestions = failureLeft ? [] : suggestionsToShow(messages, conversation.idle, undone);
 
   // After every render, not only new messages: a question's answers, a Secret's field and the suggestions come when the Turn ends.
   useLayoutEffect(() => {
@@ -145,10 +153,10 @@ export function ConversationPanel({
         ))}
       </ol>
 
-      <ConversationStatus conversation={conversation} />
+      <ConversationStatus conversation={conversation} failureLeft={failureLeft} />
 
       {suggestions.length > 0 && (
-        <ul className="suggestions" aria-label="Ideas for what to change next">
+        <ul className="suggestions" aria-label={undone ? "What to do now" : "Ideas for what to change next"}>
           {suggestions.map((suggestion) => (
             <li key={suggestion}>
               <button type="button" className="link-button suggestion" disabled={!canSend} onClick={() => void pick(suggestion)}>
@@ -156,6 +164,21 @@ export function ConversationPanel({
               </button>
             </li>
           ))}
+          {/* Not a suggestion: it starts no Turn. Focus goes to the message box as the buttons go. */}
+          {canLeaveForNow(state?.lastTurn) && (
+            <li>
+              <button
+                type="button"
+                className="link-button suggestion"
+                onClick={() => {
+                  input.current?.focus();
+                  leaveFailure();
+                }}
+              >
+                Leave it for now
+              </button>
+            </li>
+          )}
         </ul>
       )}
 
@@ -373,7 +396,15 @@ export function StepList({ steps }: { steps: Step[] }) {
             {step.done ? "✓" : "○"}
           </span>
           <span className="visually-hidden">{step.done ? "Done: " : "To do: "}</span>
-          {step.label}
+          <span>
+            {step.label}
+            {step.detail && (
+              <>
+                <span className="visually-hidden">, </span>
+                <span className="step-detail">{step.detail}</span>
+              </>
+            )}
+          </span>
         </li>
       ))}
     </ul>
@@ -425,7 +456,7 @@ function describeOutput(output: unknown): string {
 }
 
 /** Whether the socket is connected, and what the Agent is doing or last did. */
-function ConversationStatus({ conversation }: { conversation: Conversation }) {
+function ConversationStatus({ conversation, failureLeft }: { conversation: Conversation; failureLeft: boolean }) {
   const { state, connected, failed } = conversation;
   const startedAt = connected ? state?.turn?.startedAt : undefined;
   const now = useNow(startedAt !== undefined);
@@ -437,7 +468,7 @@ function ConversationStatus({ conversation }: { conversation: Conversation }) {
   else if (state?.startingFresh) status = "Starting fresh…";
   // The page calls the end-of-Turn Check, Build and tests "making sure it works" (ADR 0018).
   else if (startedAt !== undefined) status = state?.turn?.stage === "checking" ? "Making sure it works…" : "The Agent is working…";
-  else if (state?.lastTurn) {
+  else if (state?.lastTurn && !failureLeft) {
     status = describeLastTurn(state.lastTurn);
     warning = status !== null;
   }

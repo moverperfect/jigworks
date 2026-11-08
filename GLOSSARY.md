@@ -91,5 +91,8 @@ Said of a Workspace with a Deployment. It's "live, with changes not yet publishe
 **ready-made part**:
 A Package, where the page needs to name one, as in the Agent's step "Adding a ready-made part".
 
+**starting point**:
+A Template, as in the Agent's step "Choosing a starting point", whose detail says which, such as "A web page that remembers things".
+
 **this Jigworks's list**:
 The people who can use a Deployment when the Installation's Deployments aren't open to everyone: those the apps' Access application lets in, which is the Developer list unless the Operator chose otherwise. When they are open to everyone, the page says "anyone with the link" instead.

@@ -714,6 +714,27 @@ The typed address went into the app's `vars` in `wrangler.jsonc`.
 - **The first build's reply** describes what the app does, a sentence per feature, and wording 2 cut it from seven sentences to five but not to three. One run of each wording is too few to tell the wording from chance.
 - **Narration during a Turn** is unchanged: a sentence such as "Saving works. I'll remove that test entry so your list starts empty." still appears between the steps and the end.
 
+### What each step decided, and leaving a failed change (#80)
+
+**Verdict: yes.** In its first call to `steps`, the Agent gave "Choosing a starting point" and "Naming your app" their details, as Variant E's Working moment shows them. A change that was undone offers "Leave it for now" beside "Try a different way", and leaving it starts no Turn.
+
+- **Platform:** this branch under `wrangler dev` on 2026-11-08, with the real model (Opus 5.5) and the deployed platform's settings, driven from the T3 preview browser. The deployed platform runs `main`'s instructions until this merges.
+- **Turns:** one first build, "A sign-up sheet for my running club's Sunday runs", in a Workspace made for the check and deleted afterwards. 9 steps, 88.4 s, no retries, $0.38 of a $1 budget.
+
+**The Agent's steps:**
+
+| Step | Detail | In the first call |
+| --- | --- | --- |
+| ✓ Choosing a starting point | A web page that remembers things | yes, alongside `start_app` |
+| ✓ Naming your app | Sunday Runs | yes |
+| ✓ Building the sign-up sheet | Next four Sundays, name and optional pace | added once done |
+| ✓ Making sure it works | – | – |
+
+- **The reply before the work** still names the starting point: "I'll start your sign-up sheet from a web page that remembers things, since runners need to put their names down and see who else is coming."
+- **The reply at the end** was one paragraph of four sentences (#79's bar is three).
+- **"Making sure it works"** is the Agent's own step, ticked off before the platform's Check, Build and tests. Variant E's "All good" under it would need the platform to add the result; that's outside #80's decision.
+- **Leaving a failed change,** checked with the scripted model: "Leave it for now" posted no Turn, the note and the suggestion went, and the app area's label went back to "Only you can see this until you publish." It isn't offered after a first build that was undone, as in Variant E.
+
 ### Found along the way
 
 - **The page ran a Check and a Build when it opened an app with no files,** before the Agent had started it. They failed ("Could not determine entry point", and no `tsconfig.json`) and filled the hidden problems list. The page now runs them on opening only once the app is started.

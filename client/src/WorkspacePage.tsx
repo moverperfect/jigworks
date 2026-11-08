@@ -134,7 +134,10 @@ function WorkspaceView({
   const deployment = useLoad(() => getDeployment(id));
   const deployed = deployment.state.status === "ready" ? deployment.state.data : null;
   const publishing = deployed && publishState(deployed.hash, preview.goodHash);
-  const areaState = appAreaState(state, preview.built, publishing);
+  // The last failed Turn's end, once the Developer left it for now: until the next Turn ends, the page shows the app as it was.
+  const [leftTurnEndedAt, setLeftTurnEndedAt] = useState<string | null>(null);
+  const failureLeft = leftTurnEndedAt !== null && leftTurnEndedAt === state?.lastTurn?.endedAt;
+  const areaState = appAreaState(state, preview.built, publishing, failureLeft);
   const progress = state?.turn ? turnProgress(conversation.messages, state.turn) : null;
 
   // Another tab may have built or published meanwhile, so look again when the page comes back into view.
@@ -279,6 +282,8 @@ function WorkspaceView({
             conversation={conversation}
             unsavedChanges={isOpen && file.dirty}
             visible={!narrow || tab === "conversation"}
+            failureLeft={failureLeft}
+            leaveFailure={() => setLeftTurnEndedAt(state?.lastTurn?.endedAt ?? null)}
           />
         </div>
 

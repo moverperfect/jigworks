@@ -56,6 +56,28 @@ describe("an Agent message", () => {
     expect(block).toEqual({ kind: "steps", steps: [{ label: "Adding a list", done: false }], tools: [], fromAgent: true });
   });
 
+  it("shows what a step decided as its detail, and only a detail with something in it (#80)", () => {
+    const list = tool("steps", {
+      steps: [
+        { label: "Choosing a starting point", done: true, detail: "A web page that remembers things" },
+        { label: "Naming your app", done: true, detail: " " },
+        { label: "Designing the page", done: false, detail: 3 },
+      ],
+    });
+    expect(agentMessageBlocks([list])).toEqual([
+      {
+        kind: "steps",
+        steps: [
+          { label: "Choosing a starting point", done: true, detail: "A web page that remembers things" },
+          { label: "Naming your app", done: true },
+          { label: "Designing the page", done: false },
+        ],
+        tools: [],
+        fromAgent: true,
+      },
+    ]);
+  });
+
   it("passes over a list the platform refused, or an empty one", () => {
     const blocks = agentMessageBlocks([
       steps([["Adding a list", false]]),

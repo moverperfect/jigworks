@@ -160,7 +160,13 @@ export const agentScripts: Record<string, Script> = {
   steps: (request) => {
     const plan = (first: boolean, second: boolean) => ({
       name: "steps",
-      input: { steps: [{ label: "Adding a count", done: first }, { label: "Showing it on the page", done: second }] },
+      input: {
+        steps: [
+          // What the step decided, once it's done (#80).
+          { label: "Adding a count", done: first, ...(first && { detail: "Counting from one" }) },
+          { label: "Showing it on the page", done: second },
+        ],
+      },
     });
     switch (toolStepsTaken(request)) {
       case 0:
