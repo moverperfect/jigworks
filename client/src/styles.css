@@ -1291,6 +1291,11 @@ button.problem:hover {
   color: var(--danger);
 }
 
+.tool-unfinished,
+.tool-unfinished code {
+  color: var(--warning);
+}
+
 .conversation-notice summary,
 .tool-line summary {
   cursor: pointer;

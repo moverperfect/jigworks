@@ -184,6 +184,7 @@ export class Workspace extends Think<Env, ConversationState> {
     const copy = this.ctx.storage.kv.get<TurnCopy>(copyKey);
     const restored = Boolean(turn && copy?.startedAt === turn.startedAt && copy.undone);
     const stopped: LastTurn = { ...stoppedByRestart(), endedAt: new Date().toISOString(), startedApp: false, noApp: !this.appStarted(), restored };
+    if (turn) this.logTurn(turn.startedAt, stopped);
     this.setState({ turn: null, startingFresh: false, lastTurn: turn ? stopped : this.state.lastTurn });
     // The Agent may have changed files before the restart.
     if (turn) await this.updateList();
@@ -902,10 +903,15 @@ export class Workspace extends Think<Env, ConversationState> {
       lastTurn.startedApp = !hadStarted && startedNow;
       lastTurn.noApp = !startedNow;
       lastTurn.asked = askedIn(this.messages.at(-1));
-      console.log(JSON.stringify({ event: "turn", workspace: this.name, ...lastTurn, ...log }));
+      this.logTurn(startedAt, lastTurn, log);
       this.setState({ ...this.state, turn: null, lastTurn });
       await this.updateList();
     }
+  }
+
+  /** Logs a Turn's `turn` line as it ends, for Workers Logs and for `scripts/tail-events.py` to read from `wrangler tail`. */
+  private logTurn(startedAt: string, lastTurn: LastTurn, log?: TurnLog): void {
+    console.log(JSON.stringify({ event: "turn", workspace: this.name, startedAt, ...lastTurn, ...log }));
   }
 
   /**

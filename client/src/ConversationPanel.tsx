@@ -1,4 +1,4 @@
-import { getToolName, isTextUIPart } from "ai";
+import { isTextUIPart } from "ai";
 import {
   createElement,
   memo,
@@ -15,7 +15,9 @@ import { isSummary } from "../../src/shared/conversation.ts";
 import {
   agentMessageBlocks,
   describeRetry,
+  describeToolCall,
   openQuestion,
+  runningMessage,
   suggestionsToShow,
   type Question,
   type Step,
@@ -27,21 +29,6 @@ import { ErrorMessage } from "./ErrorMessage";
 import { describeLastTurn } from "./lastTurn";
 import { renderMarkdown, type MarkdownNode } from "./markdown";
 import type { Conversation, ConversationMessage } from "./useConversation";
-
-/** How each tool reads: after "Couldn't", while it runs, and once it's done. */
-const toolVerbs: Record<string, [failed: string, running: string, done: string]> = {
-  read: ["read", "Reading", "Read"],
-  write: ["write", "Writing", "Wrote"],
-  edit: ["edit", "Editing", "Edited"],
-  list: ["list", "Listing", "Listed"],
-  find: ["find files matching", "Finding files matching", "Found files matching"],
-  grep: ["search for", "Searching for", "Searched for"],
-  delete: ["delete", "Deleting", "Deleted"],
-  bash: ["run", "Running", "Ran"],
-  check: ["check", "Checking", "Checked"],
-  build: ["build", "Building", "Built"],
-  add_package: ["add", "Adding", "Added"],
-};
 
 /** The Conversation: its messages, what the Agent is doing, and the composer. Turns start over HTTP. */
 export function ConversationPanel({
@@ -69,6 +56,7 @@ export function ConversationPanel({
 
   const canSend = conversation.idle && !posting && !unsavedChanges;
   const turnRunning = state?.turn != null;
+  const running = runningMessage(messages, turnRunning);
   const question = openQuestion(messages, conversation.idle);
   const suggestions = suggestionsToShow(messages, conversation.idle, conversation.state?.lastTurn?.restored === true);
 
@@ -147,7 +135,7 @@ export function ConversationPanel({
           <MessageItem
             key={message.id}
             message={message}
-            turnRunning={turnRunning}
+            running={message.id === running}
             answers={
               question && index === messages.length - 1
                 ? { question: question.id, disabled: !canSend, pick: (choice) => void pick(choice), addSecret }
@@ -222,7 +210,8 @@ interface Answers {
   addSecret: (name: string, value: string) => Promise<void>;
 }
 
-function MessageItem({ message, turnRunning, answers }: { message: ConversationMessage; turnRunning: boolean; answers: Answers | null }) {
+/** A message in the Conversation. `running` says whether its Turn is still running (see `runningMessage`). */
+function MessageItem({ message, running, answers }: { message: ConversationMessage; running: boolean; answers: Answers | null }) {
   const texts = message.parts.filter(isTextUIPart);
   const { metadata } = message;
 
@@ -269,7 +258,7 @@ function MessageItem({ message, turnRunning, answers }: { message: ConversationM
       <span className="speaker">Agent</span>
       {blocks.map((block, index) => {
         if (block.kind === "text") return <Markdown key={index} text={block.text} streaming={block.streaming} />;
-        if (block.kind === "steps") return <Steps key={index} steps={block.steps} tools={block.tools} turnRunning={turnRunning} />;
+        if (block.kind === "steps") return <Steps key={index} steps={block.steps} tools={block.tools} running={running} />;
         if (block.kind === "question") {
           const { question } = block;
           return question.asked === "secret" ? (
@@ -289,7 +278,7 @@ function MessageItem({ message, turnRunning, answers }: { message: ConversationM
 }
 
 /** The Agent's steps in plain words, ticked off as it goes, with the tool calls behind them folded away. */
-function Steps({ steps, tools, turnRunning }: { steps: Step[]; tools: ToolPart[]; turnRunning: boolean }) {
+function Steps({ steps, tools, running }: { steps: Step[]; tools: ToolPart[]; running: boolean }) {
   return (
     <div className="agent-steps">
       {steps.length > 0 && <StepList steps={steps} />}
@@ -297,7 +286,7 @@ function Steps({ steps, tools, turnRunning }: { steps: Step[]; tools: ToolPart[]
         <details className="technical-details">
           <summary>Technical details</summary>
           {tools.map((part) => (
-            <ToolLine key={part.toolCallId} part={part} turnRunning={turnRunning} />
+            <ToolLine key={part.toolCallId} part={part} running={running} />
           ))}
         </details>
       )}
@@ -402,16 +391,8 @@ function toReact(node: MarkdownNode): ReactNode {
 }
 
 /** One line for a tool the Agent used, with its output behind a disclosure. */
-function ToolLine({ part, turnRunning }: { part: ToolPart; turnRunning: boolean }) {
-  const name = getToolName(part);
-  const [failedVerb, runningVerb, doneVerb] = toolVerbs[name] ?? [`use ${name}`, `Using ${name}`, `Used ${name}`];
-  const subject = toolSubject(name, part.input);
-  const done = part.state === "output-available";
-  // A tool still waiting when no Turn is running was cut short.
-  const failed = part.state === "output-error" || part.state === "output-denied" || (!done && !turnRunning);
-  const running = !done && !failed;
-
-  const verb = failed ? `Couldn't ${failedVerb}` : running ? runningVerb : doneVerb;
+function ToolLine({ part, running }: { part: ToolPart; running: boolean }) {
+  const { outcome, verb, subject } = describeToolCall(part, running);
   const label = (
     <>
       {verb}
@@ -421,10 +402,10 @@ function ToolLine({ part, turnRunning }: { part: ToolPart; turnRunning: boolean 
           <code>{subject}</code>
         </>
       )}
-      {running && "…"}
+      {outcome === "running" && "…"}
     </>
   );
-  const className = `tool-line tool-${failed ? "failed" : running ? "running" : "done"}`;
+  const className = `tool-line tool-${outcome}`;
 
   let output: string | null = null;
   if (part.state === "output-error") output = part.errorText;
@@ -436,32 +417,6 @@ function ToolLine({ part, turnRunning }: { part: ToolPart; turnRunning: boolean 
       <pre className="conversation-pre">{output}</pre>
     </details>
   );
-}
-
-/** What a tool worked on, from its input, which is partial while the model writes it. */
-function toolSubject(name: string, input: unknown): string {
-  const field = (key: string) => {
-    const value = input && typeof input === "object" ? (input as Record<string, unknown>)[key] : undefined;
-    return typeof value === "string" ? value : "";
-  };
-  switch (name) {
-    case "check":
-    case "build":
-      return "";
-    case "find":
-      return field("pattern");
-    case "grep":
-      return field("query");
-    case "add_package":
-      return field("name");
-    case "bash": {
-      const script = field("script").trim();
-      const firstLine = script.split("\n", 1)[0] ?? "";
-      return firstLine.length > 60 || firstLine !== script ? `${firstLine.slice(0, 60)}…` : firstLine;
-    }
-    default:
-      return field("path");
-  }
 }
 
 function describeOutput(output: unknown): string {
