@@ -1,0 +1,13 @@
+{
+  "name": "Storage",
+  "description": "A Durable Object with a small typed store of records, in named collections.",
+  "fits": "Add it when an app started from the Worker Template has to remember things, such as the messages a webhook receives.",
+  "needs": [],
+  "packages": {},
+  "secrets": [],
+  "edits": [
+    "In wrangler.jsonc, add the binding: \"durable_objects\": { \"bindings\": [{ \"name\": \"STORE\", \"class_name\": \"Store\" }] }.",
+    "Export the class from the Worker's main module (main in wrangler.jsonc), such as `export { Store } from \"./server/store\";` in src/index.ts.",
+    "In worker-configuration.d.ts, add `STORE: DurableObjectNamespace<import(\"./src/server/store\").Store>;` to the __BaseEnv_Env interface."
+  ]
+}

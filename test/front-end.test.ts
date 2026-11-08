@@ -186,8 +186,34 @@ describe("a Build with a front end", () => {
   });
 });
 
+/** The Template's Worker, with a route that tries each of the store's methods, then lists the signups. */
+const signupsApp = `import { Hono } from "hono";
+import { collection } from "./store";
+
+interface Signup {
+  name: string;
+  coming: boolean;
+}
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/signups", async (c) => {
+  const signups = collection<Signup>(c.env.STORE, "signups");
+  const added = await signups.add({ name: "Ada", coming: true });
+  const updated = await signups.update(added.id, { coming: false });
+  const gone = await signups.add({ name: "Grace", coming: true });
+  const removed = await signups.remove(gone.id);
+  const missing = await signups.get(gone.id);
+  return c.json({ added, updated, removed, missing, list: await signups.list() });
+});
+
+export default app;
+
+export { Store } from "./store";
+`;
+
 describe("the Worker + React Template", () => {
-  it("makes a Workspace with a clean Check that builds and shows a styled page in the Preview", async () => {
+  it("makes a Workspace with a clean Check that builds and shows a styled page in the Preview, with storage", async () => {
     const workspace = await create("React Notes", undefined, "worker-react");
     // Packed once for both Templates, and joined back on.
     const types = await (await call(`/api/workspaces/${workspace.id}/files/worker-configuration.d.ts`)).text();
@@ -213,12 +239,32 @@ describe("the Worker + React Template", () => {
     expect(JSON.parse(api.body)).toEqual({ message: "Hello, React" });
     expect((await preview.requestPreview({ method: "GET", path: "/favicon.svg" })).body).toContain("<svg");
 
-    // Its tests: App rendered to HTML, and the Worker's routes.
+    // Its tests: App rendered to HTML, the Worker's routes, and the store's own, run over its stand-in.
     const tests = await (await call(`/api/workspaces/${workspace.id}/tests`, { method: "POST" })).json<TestReport>();
     expect(tests.bundleErrors).toEqual([]);
-    expect(tests.files.map(({ file, tests, errors }) => [file, tests.map(({ state }) => state), errors])).toEqual([
+    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toEqual([
       ["src/client/App.test.tsx", ["passed"], []],
       ["src/server/index.test.ts", ["passed"], []],
+      ["src/server/store.test.ts", ["passed"], []],
     ]);
+
+    // Its storage, notes and all, in the Preview's own Durable Object.
+    const agentsMd = await (await call(`/api/workspaces/${workspace.id}/files/AGENTS.md`)).text();
+    expect(agentsMd).toContain("\n## Storage (add-on `storage`)\n\nThe app keeps its records in `STORE`");
+    const saved = await call(`/api/workspaces/${workspace.id}/files/src/server/index.ts`, { method: "PUT", text: signupsApp });
+    expect(saved.status).toBe(204);
+    expect((await (await call(`/api/workspaces/${workspace.id}/check`, { method: "POST" })).json<CheckReport>()).problems).toEqual([]);
+    expect(await (await call(`/api/workspaces/${workspace.id}/build`, { method: "POST" })).json<BuildReport>()).toMatchObject({ ok: true });
+    const signups = async () => JSON.parse((await preview.requestPreview({ method: "GET", path: "/api/signups" })).body);
+    const first = await signups();
+    expect(first).toEqual({
+      added: { id: expect.any(String), name: "Ada", coming: true },
+      updated: { id: first.added.id, name: "Ada", coming: false },
+      removed: true,
+      missing: null,
+      list: [{ id: first.added.id, name: "Ada", coming: false }],
+    });
+    // Kept between requests, and listed in the order added.
+    expect((await signups()).list.map(({ id }: { id: string }) => id)).toEqual([first.added.id, expect.any(String)]);
   });
 });

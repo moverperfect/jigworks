@@ -72,6 +72,10 @@ _Avoid_: Environment variable, var, credential
 A starting set of files for a new Workspace, which the Agent chooses to suit what the Developer asked for (ADR 0018).
 _Avoid_: Starter, scaffold, boilerplate
 
+**Add-on**:
+A tested set of files and notes that gives an app one ability, such as storage, which the Agent adds to a Workspace when the Developer's request needs it (ADR 0019). The page never names one: a step says what it adds, such as "Adding an organiser's area".
+_Avoid_: Plugin, module, recipe, kit, extension
+
 ## Words on the page
 
 The page shows these words in place of the glossary's own, for Developers who don't write code (ADR 0018).

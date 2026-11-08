@@ -1,54 +1,58 @@
-// Packs each Template under templates/ into src/generated/templates.txt:
-// JSON of { runtimeTypes, templates: { [id]: { name, description, fits, files } } },
-// where the id is the Template's folder name and files maps each path to its
-// text. Its template.json gives the name, the description and when the Agent
-// should choose it, and isn't copied into Workspaces, so it isn't among the
-// files. The runtime types that end every worker-configuration.d.ts are the
-// same in each Template, and 600 KB, so they're packed once and joined back on
+// Packs each Template under templates/, and each add-on under addons/, into
+// src/generated/templates.txt: JSON of { runtimeTypes, templates, addons },
+// keyed by folder name (see src/templates/pack.ts, which does the packing).
+// A Template's template.json, and an add-on's addon.json and notes.md, aren't
+// files copied into Workspaces, so they aren't among the files. The runtime
+// types that end every worker-configuration.d.ts are the same in each
+// Template, and 600 KB, so they're packed once and joined back on
 // (src/templates/index.ts).
 // usage: node templates/pack.mjs
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { pack } from "../src/templates/pack.ts";
 
 const templatesDir = fileURLToPath(new URL(".", import.meta.url));
 const root = join(templatesDir, "..");
+const addonsDir = join(root, "addons");
 const outFile = join(root, "src", "generated", "templates.txt");
 
 const posix = (path) => path.split(sep).join("/");
+const read = (path) => readFileSync(path, "utf8");
 
-const runtimeTypesStart = "// Begin runtime types";
-const typesFile = "worker-configuration.d.ts";
-let runtimeTypes = "";
-
-const templates = {};
-for (const entry of readdirSync(templatesDir, { withFileTypes: true })) {
-  if (!entry.isDirectory()) continue;
-  const id = entry.name;
-  const templateDir = join(templatesDir, id);
-  const { name, description, fits } = JSON.parse(readFileSync(join(templateDir, "template.json"), "utf8"));
-  const files = {};
-  for (const entry of readdirSync(templateDir, { recursive: true, withFileTypes: true })) {
-    if (!entry.isFile()) continue;
-    const path = join(entry.parentPath, entry.name);
-    const file = posix(relative(templateDir, path));
-    if (file !== "template.json") files[file] = readFileSync(path, "utf8");
-  }
-  const start = files[typesFile]?.indexOf(runtimeTypesStart) ?? -1;
-  if (start >= 0) {
-    const types = files[typesFile].slice(start);
-    if (runtimeTypes && types !== runtimeTypes) {
-      throw new Error(`${id}'s runtime types differ from another Template's. Generate them with the same wrangler and compatibility date.`);
+/** Each folder in `dir`, by name, with its files other than `own`, which it reads with `readOwn`. */
+const folders = (dir, own, readOwn) => {
+  const found = {};
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    if (!entry.isDirectory()) continue;
+    const folder = join(dir, entry.name);
+    const files = {};
+    for (const file of readdirSync(folder, { recursive: true, withFileTypes: true })) {
+      if (!file.isFile()) continue;
+      const path = posix(relative(folder, join(file.parentPath, file.name)));
+      if (!own.includes(path)) files[path] = read(join(folder, path));
     }
-    runtimeTypes = types;
-    files[typesFile] = files[typesFile].slice(0, start);
+    found[entry.name] = { ...readOwn(folder), files };
   }
-  templates[id] = { name, description, fits, files };
-  const bytes = Object.values(files).reduce((sum, text) => sum + Buffer.byteLength(text), 0);
-  console.log(`${id}: "${name}", ${Object.keys(files).length} files, ${(bytes / 1e3).toFixed(1)} kB`);
-}
+  return found;
+};
 
+const packed = pack(
+  folders(templatesDir, ["template.json"], (folder) => ({ manifest: JSON.parse(read(join(folder, "template.json"))) })),
+  folders(addonsDir, ["addon.json", "notes.md"], (folder) => ({
+    manifest: JSON.parse(read(join(folder, "addon.json"))),
+    notes: read(join(folder, "notes.md")),
+  })),
+);
+
+const kB = (files) => (Object.values(files).reduce((sum, text) => sum + Buffer.byteLength(text), 0) / 1e3).toFixed(1);
+for (const [id, { name, files }] of Object.entries(packed.templates)) {
+  console.log(`${id}: "${name}", ${Object.keys(files).length} files, ${kB(files)} kB`);
+}
+for (const [id, { name, files }] of Object.entries(packed.addons)) {
+  console.log(`add-on ${id}: "${name}", ${Object.keys(files).length} files, ${kB(files)} kB`);
+}
+console.log(`runtime types: ${(Buffer.byteLength(packed.runtimeTypes) / 1e3).toFixed(1)} kB, packed once`);
 mkdirSync(dirname(outFile), { recursive: true });
-console.log(`runtime types: ${(Buffer.byteLength(runtimeTypes) / 1e3).toFixed(1)} kB, packed once`);
-writeFileSync(outFile, JSON.stringify({ runtimeTypes, templates }));
+writeFileSync(outFile, JSON.stringify(packed));
 console.log(`wrote ${posix(relative(root, outFile))}`);
