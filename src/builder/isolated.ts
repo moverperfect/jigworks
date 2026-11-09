@@ -47,6 +47,15 @@ export function isolatedBuilder(loader: WorkerLoader, timeoutMs = buildTimeoutMs
 const cachedBuilds = 4;
 
 /**
+ * The Build's error when the Builder's isolate goes over its memory limit,
+ * which only a smaller app avoids (#99, docs/findings.md). The page shows it
+ * as it is, so it's in the page's words (ADR 0018).
+ */
+export const tooBigToBuild = "Your app has grown too big to build here. Try removing a ready-made part.";
+// Cloudflare's words for it, as the Builder's call fails.
+const overMemory = /exceeded (its )?memory limit/i;
+
+/**
  * A Builder that keeps its last few Builds by their inputs' hash, and has
  * `make` make the rest. A `make` that throws, as one whose isolate went over
  * its memory limit does, gives a failed Build that isn't kept, so the next
@@ -68,7 +77,8 @@ export function cachingBuilder(make: (files: FileSource, hash: string) => Promis
         made = await make(files, hash);
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
-        const result: BuildFailure = { ok: false, hash, errors: [unplaced(`The Build couldn't run: ${reason}`)], warnings: [], missingPackages: [] };
+        const message = overMemory.test(reason) ? tooBigToBuild : `The Build couldn't run: ${reason}`;
+        const result: BuildFailure = { ok: false, hash, errors: [unplaced(message)], warnings: [], missingPackages: [] };
         return { result, wasmMemoryBytes: {}, receivingMs: null, cached: false };
       }
       recent.set(hash, made.result);

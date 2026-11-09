@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { build, type Snapshot } from "../src/builder";
 import { bundledStream, bundlingVersion, filesOf, snapshotFrom } from "../src/builder/bundling";
 import { hashOf, tailwindVersion } from "../src/builder/hash";
-import { cachingBuilder, isolatedBuilder } from "../src/builder/isolated";
+import { cachingBuilder, isolatedBuilder, tooBigToBuild } from "../src/builder/isolated";
 
 const project = (source: string) =>
   new Map([
@@ -243,7 +243,7 @@ describe("Builds in a Dynamic Worker (#87)", () => {
     const builder = isolatedBuilder(broken);
     expect(await builder.build(files)).toMatchObject({
       cached: false,
-      result: { ok: false, errors: [{ message: "The Build couldn't run: Worker exceeded memory limit.", file: null, line: null, column: null }] },
+      result: { ok: false, errors: [{ message: tooBigToBuild, file: null, line: null, column: null }] },
     });
     expect((await builder.build(files)).cached).toBe(false);
 
