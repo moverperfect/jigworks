@@ -5,6 +5,7 @@ import type { TestReport } from "../src/shared/test-report";
 import type { Addon } from "../src/templates";
 import { describeAddons } from "../src/agent";
 import type { Workspace } from "../src/workspace";
+import { summaryReply } from "./fixtures/fake-anthropic";
 import { resendAccountAddress, resendKey } from "./fixtures/fake-resend";
 import { call, create } from "./helpers/api";
 import { connect, history, runTurn, toolResults, turnLines } from "./helpers/conversation";
@@ -206,6 +207,39 @@ describe("sending email", () => {
       ok: false,
       error: expect.stringMatching(/^Resend refused the email: You can only send testing emails to your own email address/),
     });
+  });
+});
+
+describe("calling an AI model", () => {
+  it("joined to the default Template's app with its edits, passes its tests, asks for Anthropic's key, and asks Claude from the Preview", async () => {
+    const workspace = await create("Feedback", undefined, "worker-react");
+    const conversation = await connect(workspace.id);
+    const [line] = await turnLines(() => runTurn(workspace.id, conversation, "[script:add-ai-and-join] Sort the messages people send"));
+    expect(line).toMatchObject({ addons: ["ai"], status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+
+    const [added] = await toolResults(workspace.id);
+    const result = added!.result as string;
+    expect(result.split("\n", 1)[0]).toBe("Added the ai add-on. Wrote /src/server/ai.test.ts and /src/server/ai.ts.");
+    expect(result).toContain("<notes>\n## Calling an AI model (add-on `ai`)\n\nThe app asks Claude");
+    expect(result).toContain("- ANTHROPIC_API_KEY: Your app asks Claude, an AI model from Anthropic, with a key from your own Anthropic account, so what it uses is charged to you");
+    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toContainEqual([
+      "src/server/ai.test.ts",
+      ["passed"],
+      [],
+    ]);
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const sort = async () => JSON.parse((await preview.requestPreview({ method: "POST", path: "/api/messages/The%20coffee%20was%20cold" })).body);
+    // Before the Developer gives the key, Claude isn't asked, and the app says why.
+    expect(await sort()).toEqual({ ok: false, error: "Claude wasn't asked: the Secret ANTHROPIC_API_KEY hasn't been set yet." });
+
+    const giveKey = (value: string) => call(`/api/workspaces/${workspace.id}/secrets/ANTHROPIC_API_KEY`, { method: "PUT", body: { value } });
+    expect((await giveKey("a key Anthropic doesn't know")).status).toBe(204);
+    expect(await sort()).toEqual({ ok: false, error: "Claude wasn't asked: Anthropic answered 401 (authentication_error): invalid x-api-key" });
+    // The fake Anthropic knows the platform's own key, and answers a request without tools with its summary.
+    expect((await giveKey(env.ANTHROPIC_API_KEY)).status).toBe(204);
+    expect(await sort()).toEqual({ ok: true, text: summaryReply });
   });
 });
 
