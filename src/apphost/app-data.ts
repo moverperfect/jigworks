@@ -79,6 +79,18 @@ const { withBindings, classes } = ((bindings, appData) => {
     };
   }
 
+  // PROBE (#107): the instance's alarm, kept by the app host, which knows the instance from ctx.props.
+  function withAlarms(ctx, data) {
+    const storage = ctx.storage;
+    const alarms = {
+      setAlarm: (at) => data.facetAlarm(ctx.props, "set", typeof at === "number" ? at : at.getTime()),
+      getAlarm: () => data.facetAlarm(ctx.props, "get", null),
+      deleteAlarm: () => data.facetAlarm(ctx.props, "delete", null),
+    };
+    for (const [key, value] of Object.entries(alarms)) Object.defineProperty(storage, key, { value, configurable: true });
+    return ctx;
+  }
+
   function withBindings(env) {
     const { [appData]: data, ...rest } = env;
     for (const binding of bindings) rest[binding] = namespace(data, binding);
@@ -89,7 +101,11 @@ const { withBindings, classes } = ((bindings, appData) => {
   for (const name of ${JSON.stringify(classes)}) {
     classes[name] = class extends app[name] {
       constructor(ctx, env) {
-        super(ctx, withBindings(env));
+        super(withAlarms(ctx, env[appData]), withBindings(env));
+      }
+      // PROBE (#107): alarm() can't be called over RPC.
+      __jigworks_alarm(info) {
+        return this.alarm(info);
       }
     };
   }

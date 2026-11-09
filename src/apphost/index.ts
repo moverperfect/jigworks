@@ -559,7 +559,7 @@ export class AppHost extends DurableObject<Env> {
     this.running.add(facetName);
     const worker = this.workerOf(slot, build);
     return this.ctx.facets.get(facetName, () => ({
-      class: worker.getDurableObjectClass(bindings[binding]!),
+      class: worker.getDurableObjectClass(bindings[binding]!, { props: { binding, id, name } }),
       // An ID of the instance's own, with its name if the app reached it by
       // name, as ctx.id.name gives. A namespace's ID carries the name.
       id: name === null ? id : this.env.APP_HOSTS.idFromName(name),
@@ -593,7 +593,32 @@ export class AppHost extends DurableObject<Env> {
   }
 
   /** Forgets the retired values past their hour, and wakes again for the rest. */
+  // PROBE (#107): one instance alarm at a time, kept by the app host.
+  async facetAlarm(slot: Slot, instance: { binding: string; id: string; name: string | null }, op: string, at: number | null): Promise<number | null> {
+    const kv = this.ctx.storage.kv;
+    const key = `probe:alarm:${slot}:${instance.binding}:${instance.id}`;
+    if (op === "get") return kv.get<{ at: number }>(key)?.at ?? null;
+    if (op === "delete") {
+      kv.delete(key);
+      return null;
+    }
+    kv.put(key, { slot, ...instance, at });
+    await this.ctx.storage.setAlarm(at!);
+    return null;
+  }
+
   override async alarm(): Promise<void> {
+    // PROBE (#107): instance alarms that are due.
+    for (const [key, due] of this.ctx.storage.kv.list<{ slot: Slot; binding: string; id: string; name: string | null; at: number }>({ prefix: "probe:alarm:" })) {
+      if (due.at > Date.now()) continue;
+      this.ctx.storage.kv.delete(key);
+      try {
+        await this.callFacet(due.slot, due.binding, due.id, due.name, "__jigworks_alarm", [{ retryCount: 0, isRetry: false }]);
+        this.ctx.storage.kv.put(`probe:rang:${key}`, { at: Date.now() });
+      } catch (error) {
+        this.ctx.storage.kv.put(`probe:rang:${key}`, { at: Date.now(), error: String(error) });
+      }
+    }
     // PROBE (#107): run a schedule the test set, for one slot.
     const probe = this.ctx.storage.kv.get<{ slot: Slot; cron: string }>("probe:schedule");
     if (probe) {
@@ -711,6 +736,11 @@ export class AppHost extends DurableObject<Env> {
  * runs as a facet in the app's app host, in the slot the call came from (ADR 0015).
  */
 export class AppData extends WorkerEntrypoint<Env, { label: string; slot: Slot }> {
+  // PROBE (#107)
+  facetAlarm(instance: { binding: string; id: string; name: string | null }, op: string, at: number | null): Promise<unknown> {
+    const { label, slot } = this.ctx.props;
+    return this.env.APP_HOSTS.getByName(label).facetAlarm(slot, instance, op, at);
+  }
   callFacet(binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {
     const { label, slot } = this.ctx.props;
     return this.env.APP_HOSTS.getByName(label).callFacet(slot, binding, id, name, method, args);

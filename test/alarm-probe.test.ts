@@ -155,4 +155,25 @@ describe("probe: alarms in an app's Durable Object", () => {
     console.log("SCHEDULE preview rings", JSON.stringify(await inPreview(workspace.id, "/rings")));
     console.log("SCHEDULE deployment rings", JSON.stringify(await inDeployment(url, "/rings")));
   });
+
+  it("forwarded: an instance's setAlarm kept by the app host", async () => {
+    const workspace = await create("Probe Forwarded");
+    await save(workspace.id, "wrangler.jsonc", wrangler);
+    await save(workspace.id, "src/index.ts", app("v1"));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    const { url } = await (await call(`/api/workspaces/${workspace.id}/deployment`, { method: "POST", body: { replaces: null } })).json<Deployment>();
+    console.log("FWD preview armed", JSON.stringify(await inPreview(workspace.id, "/arm?ms=300")));
+    console.log("FWD deployment armed", JSON.stringify(await inDeployment(url, "/arm?ms=600")));
+    await pause(2000);
+    console.log("FWD preview after 2s", JSON.stringify(await inPreview(workspace.id, "/rings")));
+    console.log("FWD deployment after 2s", JSON.stringify(await inDeployment(url, "/rings")));
+    // Across a new Build that aborts the instance.
+    console.log("FWD preview armed again", JSON.stringify(await inPreview(workspace.id, "/arm?ms=1500")));
+    await save(workspace.id, "src/index.ts", app("v2"));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await pause(3000);
+    console.log("FWD preview after new Build", JSON.stringify(await inPreview(workspace.id, "/rings")));
+    const label = await env.WORKSPACES.getByName(workspace.id).appLabel();
+    console.log("FWD host kv", JSON.stringify(await runInDurableObject(env.APP_HOSTS.getByName(label), (_i, state) => [...state.storage.kv.list({ prefix: "probe:" })])));
+  });
 });
