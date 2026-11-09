@@ -22,6 +22,8 @@ interface InstallRecord {
 // Kept in the Durable Object's own key-value storage, which is part of its
 // SQLite database (not Workers KV, which ADR 0004 rules out).
 const recordKey = "packages:install";
+// The Package files a Check reads, and the Agent can: type declarations and package.json files.
+const declarationFilter = "path LIKE '%.d.ts' OR path LIKE '%.d.mts' OR path LIKE '%.d.cts' OR path = 'package.json' OR path LIKE '%/package.json'";
 const packageName = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 
 /**
@@ -74,9 +76,23 @@ export class Packages {
 
   /** Only the files a Check reads: type declarations and each Package's package.json. */
   declarations(): Map<string, string> {
-    return this.select(
-      "WHERE path LIKE '%.d.ts' OR path LIKE '%.d.mts' OR path LIKE '%.d.cts' OR path = 'package.json' OR path LIKE '%/package.json'",
-    );
+    return this.select(`WHERE ${declarationFilter}`);
+  }
+
+  /** The paths, from its own folder, of `name`'s type declarations and package.json files, sorted. */
+  declarationPaths(name: string): string[] {
+    return this.storage.sql
+      .exec<{ path: string }>(`SELECT path FROM workspace_package_files WHERE name = ? AND (${declarationFilter}) ORDER BY path`, name)
+      .toArray()
+      .map(({ path }) => path);
+  }
+
+  /** One of `name`'s type declarations or package.json files, by its path from the Package's folder. */
+  declaration(name: string, path: string): string | null {
+    const [row] = this.storage.sql
+      .exec<{ content: string }>(`SELECT content FROM workspace_package_files WHERE name = ? AND path = ? AND (${declarationFilter})`, name, path)
+      .toArray();
+    return row?.content ?? null;
   }
 
   private select(where: string): Map<string, string> {

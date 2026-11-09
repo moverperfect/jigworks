@@ -1,6 +1,6 @@
 import { zipSync } from "fflate";
 import { Hono, type Context } from "hono";
-import { isHidden, maxFileBytes, normalisePath } from "../files";
+import { isHidden, isPackagePath, maxFileBytes, normalisePath } from "../files";
 import { newAppName, validateWorkspaceName } from "../shared/workspace-name";
 import { getTemplate, listAddons, listTemplates } from "../templates";
 
@@ -284,6 +284,7 @@ api.put("/workspaces/:id/files/:path{.+}", async (c) => {
     return c.json({ error: "That isn't a path inside the Workspace." }, 400);
   }
   if (isHidden(path)) return c.json({ error: "That path is kept for the Conversation." }, 400);
+  if (isPackagePath(path)) return c.json({ error: "Packages aren't Workspace files, so nothing can be written under /node_modules." }, 400);
   const text = await c.req.text();
   if (new TextEncoder().encode(text).byteLength > maxFileBytes) {
     return c.json({ error: `A Workspace file can't be larger than ${maxFileBytes / 1_000_000} MB.` }, 413);
