@@ -124,7 +124,7 @@ describe("Checks", () => {
         document: () => Promise.reject(new Error("npm is down")),
         publishTimes: () => Promise.reject(new Error("npm is down")),
       };
-      expect(await new Packages(state.storage).install(manifest, { registry: down })).toMatchObject({ state: "failed" });
+      expect(await new Packages(state.storage, env.PACKAGE_CACHE).install(manifest, { registry: down })).toMatchObject({ state: "failed" });
     });
     // The fake registry is up, so a retry would install @fake/a.
     const report = await check(workspace.id);

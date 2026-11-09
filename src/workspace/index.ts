@@ -152,7 +152,7 @@ export class Workspace extends Think<Env, ConversationState> {
   override truncationStep = Infinity;
 
   private readonly files: Files = storeFiles(this.workspace, this.ctx.storage);
-  private readonly packages = new Packages(this.ctx.storage);
+  private readonly packages = new Packages(this.ctx.storage, this.env.PACKAGE_CACHE);
   // Installs and Package changes run one at a time, in the order they arrive.
   // (Think already has a `queue`.)
   private packageWork: Promise<unknown> = Promise.resolve();
@@ -1060,7 +1060,7 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** Only from inside `exclusive`. */
   private install(options: { registry?: Registry; retryFailed?: boolean } = {}): Promise<PackageStatus> {
-    return this.packages.install(this.files.read("package.json") ?? "{}", options);
+    return this.packages.install(this.files.read("package.json") ?? "{}", { ...options, workspace: this.name });
   }
 
   private exclusive<T>(work: () => Promise<T>): Promise<T> {

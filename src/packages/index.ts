@@ -27,11 +27,15 @@ const packageName = /^(@[a-z0-9-~][a-z0-9-._~]*\/)?[a-z0-9-~][a-z0-9-._~]*$/;
 /**
  * A Workspace's Packages, kept in its Durable Object's own SQLite, one row per
  * file (ADR 0004). An install resolves `package.json` once per change to its
- * dependency fields, and downloads only the Packages whose version changed.
- * Packages are never Workspace files.
+ * dependency fields, and fetches only the Packages whose version changed, from
+ * the Package cache that every Workspace shares or else from npm. Packages are
+ * never Workspace files.
  */
 export class Packages {
-  constructor(private readonly storage: DurableObjectStorage) {
+  constructor(
+    private readonly storage: DurableObjectStorage,
+    private readonly cache: R2Bucket,
+  ) {
     storage.sql.exec(`CREATE TABLE IF NOT EXISTS workspace_packages (name TEXT PRIMARY KEY, version TEXT NOT NULL)`);
     storage.sql.exec(
       `CREATE TABLE IF NOT EXISTS workspace_package_files (name TEXT NOT NULL, path TEXT NOT NULL, content TEXT NOT NULL, PRIMARY KEY (name, path))`,
@@ -92,7 +96,11 @@ export class Packages {
    */
   async install(
     packageJson: string,
-    { registry = registryClient(), retryFailed = true }: { registry?: Registry; retryFailed?: boolean } = {},
+    {
+      registry = registryClient(),
+      retryFailed = true,
+      workspace,
+    }: { registry?: Registry; retryFailed?: boolean; workspace?: string } = {},
   ): Promise<PackageStatus> {
     const manifest = parseManifest(packageJson);
     if (typeof manifest === "string") {
@@ -103,14 +111,22 @@ export class Packages {
     const previous = this.storage.kv.get<InstallRecord>(recordKey);
     if (previous?.fingerprint === fingerprint && (previous.outcome === "installed" || !retryFailed)) return this.status();
 
+    // How long resolving and fetching took, for the install's log line. The
+    // clock moves only during I/O, which is most of both.
+    const started = Date.now();
     try {
       const { versions, warnings } = await resolve(manifest, registry);
+      const resolved = Date.now();
       const installed = new Map(this.status().packages.map((p) => [p.name, p.version]));
       const wanted = [...versions.values()].filter((v) => installed.get(v.name) !== v.version);
       // Workers queue connections beyond six, so every download can start at once.
       const downloads = await Promise.all(
-        wanted.map(async (version) => ({ version, download: await downloadPackage(version.dist.tarball, version.dist) })),
+        wanted.map(async (version) => ({
+          version,
+          download: await downloadPackage(version.dist.tarball, version.dist, { cache: this.cache }),
+        })),
       );
+      const fetched = Date.now();
       for (const { version, download } of downloads) {
         for (const { path, reason } of download.skipped) {
           if (reason === "too-large") warnings.push(`${version.name}@${version.version}: ${path} is too large to keep.`);
@@ -136,6 +152,19 @@ export class Packages {
         }
         this.storage.kv.put<InstallRecord>(recordKey, { fingerprint, outcome: "installed", warnings, error: null });
       });
+      console.log(
+        JSON.stringify({
+          event: "install",
+          workspace,
+          packages: versions.size,
+          fetched: downloads.length,
+          fromCache: downloads.filter(({ download }) => download.source === "cache").length,
+          tarballBytes: downloads.reduce((sum, { download }) => sum + download.tarballBytes, 0),
+          resolveMs: resolved - started,
+          fetchMs: fetched - resolved,
+          databaseBytes: this.storage.sql.databaseSize,
+        }),
+      );
     } catch (error) {
       this.storage.kv.put<InstallRecord>(recordKey, {
         fingerprint,

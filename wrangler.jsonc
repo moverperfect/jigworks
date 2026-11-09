@@ -38,6 +38,10 @@
     { "tag": "v1", "new_sqlite_classes": ["Developer", "Workspace"] },
     { "tag": "v2", "new_sqlite_classes": ["AppHost"] }
   ],
+  // The Package cache: npm's tarballs, shared by every Workspace, behind each
+  // one's own copy of its Packages (ADR 0020). A deploy creates the bucket if
+  // it's missing, and so does scripts/set-up-installation.sh.
+  "r2_buckets": [{ "binding": "PACKAGE_CACHE", "bucket_name": "jigworks-package-cache" }],
   // Checks run in Dynamic Workers (ADR 0010).
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {

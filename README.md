@@ -36,7 +36,7 @@ flowchart LR
 - **Checks** run [ts-rust](https://github.com/pingdotgg/ts-rust), a TypeScript checker written in Rust, compiled to WebAssembly and run in a Dynamic Worker of its own ([ADR 0002](docs/adr/0002-ts-rust-is-the-checker.md), [ADR 0010](docs/adr/0010-checks-run-in-a-dynamic-worker.md)).
 - **Builds** run esbuild inside the Workspace, through `@cloudflare/worker-bundler`.
 - **Each Turn** ends with a Check and a Build. While either has errors, the Agent gets up to three more tries ([ADR 0011](docs/adr/0011-the-platform-runs-each-turn.md)).
-- **Durable Objects are the only storage** ([ADR 0004](docs/adr/0004-durable-objects-are-the-only-storage.md)). Apps will run on Dynamic Workers inside the platform, on a domain of their own ([ADR 0006](docs/adr/0006-deployments-run-on-dynamic-workers.md), [ADR 0012](docs/adr/0012-apps-live-on-a-domain-of-their-own.md)).
+- **Durable Objects hold the data** ([ADR 0004](docs/adr/0004-durable-objects-are-the-only-storage.md)), with one R2 bucket caching Packages ([ADR 0020](docs/adr/0020-packages-are-cached-in-one-r2-bucket.md)). Apps will run on Dynamic Workers inside the platform, on a domain of their own ([ADR 0006](docs/adr/0006-deployments-run-on-dynamic-workers.md), [ADR 0012](docs/adr/0012-apps-live-on-a-domain-of-their-own.md)).
 
 The words used throughout, such as Workspace, Turn, Check and Installation, are defined in [`GLOSSARY.md`](GLOSSARY.md). The decisions that are hard to reverse are in [`docs/adr/`](docs/adr/), and the research behind them is in [`docs/research/`](docs/research/).
 

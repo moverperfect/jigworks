@@ -6,6 +6,10 @@ export interface DownloadedPackage {
   files: Map<string, string>;
   /** Files of a kept type that were left out anyway, and why. Dropped file types aren't listed. */
   skipped: { path: string; reason: "too-large" | "not-text" }[];
+  /** Where the tarball came from: the shared Package cache, or npm. */
+  source: "cache" | "npm";
+  /** The tarball's size, compressed. */
+  tarballBytes: number;
 }
 
 // The file types the Checker and the Builder read. Everything else in a
@@ -19,25 +23,72 @@ const maxUnpackedBytes = 64 * 1024 * 1024;
 const downloadTimeoutMs = 60_000;
 
 /**
- * Downloads a Package's tarball, checks it against the registry's integrity
- * value, and returns the files of the kept types.
+ * Gets a Package's tarball, from the shared Package cache when it holds a
+ * copy and from npm otherwise, checks it against the registry's integrity
+ * value either way, and returns the files of the kept types. A tarball from
+ * npm is copied into the cache. The cache only saves a download: the version
+ * was already chosen, by `resolve`, so the minimum age is never its to decide.
  */
 export async function downloadPackage(
   tarballUrl: string,
   integrity: { integrity?: string; shasum?: string },
-  options: { fetch?: typeof fetch; maxFileBytes?: number } = {},
+  options: { fetch?: typeof fetch; maxFileBytes?: number; cache?: R2Bucket } = {},
 ): Promise<DownloadedPackage> {
-  const fetcher = options.fetch ?? fetch;
+  const { cache } = options;
+  const key = cacheKey(tarballUrl);
+  let tarball = cache && (await fromCache(cache, key, tarballUrl, integrity));
+  const source = tarball ? "cache" : "npm";
+  if (!tarball) {
+    tarball = await fromNpm(tarballUrl, options.fetch ?? fetch);
+    await checkIntegrity(tarballUrl, tarball, integrity);
+    // A copy that can't be kept costs the next install a download, nothing more.
+    await cache?.put(key, tarball).catch((error) => logCacheError("put", key, error));
+  }
+  const tar = await readAll(new Blob([tarball]).stream().pipeThrough(new DecompressionStream("gzip")), maxUnpackedBytes, tarballUrl);
+  return { ...keptFiles(tar, options.maxFileBytes ?? defaultMaxFileBytes), source, tarballBytes: tarball.length };
+}
+
+/** The cache's key for a tarball: its URL's host and path, as `registry.npmjs.org/hono/-/hono-4.13.13.tgz`. */
+export function cacheKey(tarballUrl: string): string {
+  const url = new URL(tarballUrl);
+  return `${url.host}${url.pathname}`;
+}
+
+/**
+ * The cached tarball, once it matches the registry's integrity value. Null
+ * when there's none, it doesn't match, or the cache can't be read, so the
+ * caller downloads it from npm and replaces the copy.
+ */
+async function fromCache(
+  cache: R2Bucket,
+  key: string,
+  tarballUrl: string,
+  integrity: { integrity?: string; shasum?: string },
+): Promise<Uint8Array<ArrayBuffer> | null> {
+  try {
+    const object = await cache.get(key);
+    if (!object) return null;
+    const tarball = await readAll(object.body, maxTarballBytes, tarballUrl);
+    await checkIntegrity(tarballUrl, tarball, integrity);
+    return tarball;
+  } catch (error) {
+    logCacheError("get", key, error);
+    return null;
+  }
+}
+
+async function fromNpm(tarballUrl: string, fetcher: typeof fetch): Promise<Uint8Array<ArrayBuffer>> {
   const response = await fetcher(tarballUrl, { signal: AbortSignal.timeout(downloadTimeoutMs) });
   if (!response.ok || !response.body) {
     // An unread body holds its connection open.
     await response.body?.cancel();
     throw new Error(`Couldn't download ${tarballUrl}: HTTP ${response.status}`);
   }
-  const tarball = await readAll(response.body, maxTarballBytes, tarballUrl);
-  await checkIntegrity(tarballUrl, tarball, integrity);
-  const tar = await readAll(new Blob([tarball]).stream().pipeThrough(new DecompressionStream("gzip")), maxUnpackedBytes, tarballUrl);
-  return keptFiles(tar, options.maxFileBytes ?? defaultMaxFileBytes);
+  return readAll(response.body, maxTarballBytes, tarballUrl);
+}
+
+function logCacheError(action: "get" | "put", key: string, error: unknown): void {
+  console.log(JSON.stringify({ event: "package-cache-failed", action, key, error: String(error) }));
 }
 
 /** Reads a stream into memory, giving up once it passes `limit` bytes. */
@@ -107,7 +158,7 @@ const hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).pa
 const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
 
 /** The kept-type files in a tar archive, below the package root. */
-function keptFiles(tar: Uint8Array, maxFileBytes: number): DownloadedPackage {
+function keptFiles(tar: Uint8Array, maxFileBytes: number): Pick<DownloadedPackage, "files" | "skipped"> {
   const files = new Map<string, string>();
   const skipped: DownloadedPackage["skipped"] = [];
   for (const entry of tarFiles(tar)) {
