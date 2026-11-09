@@ -94,13 +94,13 @@ export class Room extends DurableObject {
     } else {
       this.ctx.acceptWebSocket(server, ["t"]);
     }
-    server.send("${version} hello " + this.ctx.storage.kv.get("starts"));
+    server.send("${version} hello " + this.ctx.storage.kv.get("starts") + " " + this.ctx.id.name + " " + this.ctx.id.toString().slice(0, 8));
     return new Response(null, { status: 101, webSocket: client });
   }
 
   override async webSocketMessage(_ws: WebSocket, message: string | ArrayBuffer) {
     if (typeof message !== "string" || message.length > 1000) return this.send("${version} heard " + (typeof message === "string" ? message.length : message.byteLength) + " bytes");
-    this.send("${version} heard " + String(message));
+    this.send("${version} heard " + String(message) + (message === "id" ? " " + this.ctx.id.name + " " + this.ctx.id.toString().slice(0, 8) : ""));
   }
 
   override async webSocketClose(ws: WebSocket, code: number) {
@@ -302,7 +302,7 @@ describe("probe: ping", () => {
     await until(() => h!.messages.length >= 2);
     await until(() => false, 3_000);
     const messaged = Date.now();
-    h!.socket.send("q");
+    h!.socket.send("id");
     await until(() => h!.messages.length >= 3);
     const starts = (await (await open(base, "/startedAt?room=h", { cookie })).json<number[]>()).map((t) => t - opened);
     expect({ pinged: pinged - opened, messaged: messaged - opened, starts, messages: h!.messages }).toEqual({});
