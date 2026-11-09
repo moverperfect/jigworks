@@ -1,0 +1,17 @@
+{
+  "name": "Sending email",
+  "description": "Sends emails from the app through Resend, an email service, and says plainly when one isn't sent.",
+  "fits": "Add it when the app has to send emails, such as telling its owner when someone signs up, or sending someone a confirmation.",
+  "needs": [],
+  "packages": {},
+  "secrets": [
+    {
+      "name": "RESEND_API_KEY",
+      "reason": "To send emails, your app uses Resend, an email service, and needs a key from it. Sign up for free at resend.com, then create a key on its API Keys page, resend.com/api-keys. Until you set up your own domain there, your app can only send emails to the address you signed up with."
+    }
+  ],
+  "edits": [
+    "In worker-configuration.d.ts, add `RESEND_API_KEY?: string;` to the __BaseEnv_Env interface: it's a Secret, which isn't set until the Developer gives it.",
+    "Where the app sends an email, import `sendEmail` from `./email` (`./server/email` from src/index.ts) and call it as its notes say."
+  ]
+}

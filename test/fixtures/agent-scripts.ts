@@ -73,22 +73,47 @@ export default app;
 
 export { Store } from "./server/store";
 `;
+/** The Worker + React Template's Worker with the email add-on joined to it, emailing the owner, or `?to=`, about each sign-up. */
+export const emailIndex = `import { Hono } from "hono";
+import type { Hello } from "../shared/api";
+import { sendEmail } from "./email";
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/hello/:name", (c) => {
+  const hello: Hello = { message: \`\${c.env.GREETING}, \${c.req.param("name")}\` };
+  return c.json(hello);
+});
+
+app.post("/api/signups/:name", async (c) => {
+  const name = c.req.param("name");
+  const to = c.req.query("to") ?? c.env.OWNER_EMAIL;
+  return c.json(await sendEmail(c.env, { to, subject: \`\${name} signed up\`, text: \`\${name} has signed up.\` }));
+});
+
+export default app;
+
+// The app's storage (see "Storage" in AGENTS.md).
+export { Store } from "./store";
+`;
 /** The value the Developer gives for the Secret that `ask-for-secret` asks for, which must never reach the model. */
 export const askedSecretValue = "key-from-the-email-service";
 
-/** Adds the organiser's area, then makes the joining `edits`. */
-function addOrganiserAndJoin(edits: { name: string; input: Record<string, string> }[]): Script {
+/** Adds the add-on `addon`, then makes the joining `edits`, then gives `reply`. */
+function addAndJoin(addon: string, edits: { name: string; input: Record<string, string> }[], reply: string): Script {
   return (request) => {
     switch (toolStepsTaken(request)) {
       case 0:
-        return { toolCalls: [{ name: "add_addon", input: { addon: "organiser" } }] };
+        return { toolCalls: [{ name: "add_addon", input: { addon } }] };
       case 1:
         return { toolCalls: edits };
       default:
-        return { text: "Your app has an organiser's area now." };
+        return { text: reply };
     }
   };
 }
+
+const organiserReply = "Your app has an organiser's area now.";
 
 export const agentScripts: Record<string, Script> = {
   // Answers once, with no tools.
@@ -158,39 +183,32 @@ export const agentScripts: Record<string, Script> = {
   "add-storage-later": (request) => (laterMessage(request) ? echoTool("add_addon", { addon: "storage" })(request) : { text: "Hello." }),
 
   // Adds the storage add-on, then makes its joining edits, with routes that keep and list messages.
-  "add-storage-and-join": (request) => {
-    switch (toolStepsTaken(request)) {
-      case 0:
-        return { toolCalls: [{ name: "add_addon", input: { addon: "storage" } }] };
-      case 1:
-        return {
-          toolCalls: [
-            {
-              name: "edit",
-              input: {
-                path: "/wrangler.jsonc",
-                old_string: '"vars": {',
-                new_string: '"durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },\n  "vars": {',
-              },
-            },
-            {
-              name: "edit",
-              input: {
-                path: "/worker-configuration.d.ts",
-                old_string: '\tGREETING: "Hello";\n',
-                new_string: '\tGREETING: "Hello";\n\tSTORE: DurableObjectNamespace<import("./src/server/store").Store>;\n',
-              },
-            },
-            { name: "write", input: { path: "/src/index.ts", content: messagesIndex } },
-          ],
-        };
-      default:
-        return { text: "Your app remembers messages now." };
-    }
-  },
+  "add-storage-and-join": addAndJoin(
+    "storage",
+    [
+      {
+        name: "edit",
+        input: {
+          path: "/wrangler.jsonc",
+          old_string: '"vars": {',
+          new_string: '"durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },\n  "vars": {',
+        },
+      },
+      {
+        name: "edit",
+        input: {
+          path: "/worker-configuration.d.ts",
+          old_string: '\tGREETING: "Hello";\n',
+          new_string: '\tGREETING: "Hello";\n\tSTORE: DurableObjectNamespace<import("./src/server/store").Store>;\n',
+        },
+      },
+      { name: "write", input: { path: "/src/index.ts", content: messagesIndex } },
+    ],
+    "Your app remembers messages now.",
+  ),
 
   // Adds the organiser's area to a Worker + React Template app, then makes its joining edits.
-  "add-organiser-and-join": addOrganiserAndJoin([
+  "add-organiser-and-join": addAndJoin("organiser", [
     {
       name: "edit",
       input: {
@@ -200,10 +218,10 @@ export const agentScripts: Record<string, Script> = {
       },
     },
     { name: "write", input: { path: "/src/server/index.ts", content: organiserIndex } },
-  ]),
+  ], organiserReply),
 
   // Adds the organiser's area to a Worker Template app, which brings storage, then makes both's joining edits.
-  "add-organiser-to-worker-and-join": addOrganiserAndJoin([
+  "add-organiser-to-worker-and-join": addAndJoin("organiser", [
     {
       name: "edit",
       input: {
@@ -221,7 +239,25 @@ export const agentScripts: Record<string, Script> = {
       },
     },
     { name: "write", input: { path: "/src/index.ts", content: organiserWorkerIndex } },
-  ]),
+  ], organiserReply),
+
+  // Adds the email add-on to a Worker + React Template app, then makes its joining edits, with the owner's address as a var.
+  "add-email-and-join": addAndJoin(
+    "email",
+    [
+      { name: "edit", input: { path: "/wrangler.jsonc", old_string: '"GREETING": "Hello"', new_string: '"GREETING": "Hello",\n    "OWNER_EMAIL": "owner@example.com"' } },
+      {
+        name: "edit",
+        input: {
+          path: "/worker-configuration.d.ts",
+          old_string: '\tGREETING: "Hello";\n',
+          new_string: '\tGREETING: "Hello";\n\tOWNER_EMAIL: string;\n\tRESEND_API_KEY?: string;\n',
+        },
+      },
+      { name: "write", input: { path: "/src/server/index.ts", content: emailIndex } },
+    ],
+    "Your app emails you when someone signs up.",
+  ),
 
   // Writes a failing test, and does nothing more when the tests fail.
   "write-failing-test": (request) =>

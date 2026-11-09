@@ -5,6 +5,7 @@ import { testAccess } from "./test/fixtures/access-settings.ts";
 import { agentScripts } from "./test/fixtures/agent-scripts.ts";
 import { fakeAnthropic } from "./test/fixtures/fake-anthropic.ts";
 import { fakeRegistry } from "./test/fixtures/fake-registry.ts";
+import { fakeResend } from "./test/fixtures/fake-resend.ts";
 import { realPackage } from "./test/fixtures/real-package.mjs";
 import { registryPackages } from "./test/fixtures/registry-data.ts";
 
@@ -44,7 +45,7 @@ export default defineConfig({
                 TEST_ACCESS_SIGNING_KEY: privateJwk,
               },
               // Outbound requests reach only the fake Access keys, the fake npm
-              // registry and the scripted model.
+              // registry, the scripted model and, for apps, the fake Resend.
               outboundService: async (request: Request) => {
                 if (new URL(request.url).href === `https://${testAccess.teamDomain}/cdn-cgi/access/certs`) {
                   return Response.json({ keys: [publicJwk] });
@@ -52,6 +53,7 @@ export default defineConfig({
                 return (
                   (await registry(request)) ??
                   (await anthropic(request)) ??
+                  (await fakeResend(request)) ??
                   new Response("No outbound requests in tests", { status: 502 })
                 );
               },
