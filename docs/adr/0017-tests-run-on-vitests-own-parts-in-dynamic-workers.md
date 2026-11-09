@@ -17,7 +17,7 @@ The Agent writes tests as it would for vitest. Real vitest needs Node, and so do
 - **No module mocks, snapshots, coverage or durations.** Time stands still during CPU work, so a test's duration would read 0.
 - **Every test file starts a Dynamic Worker,** which parses the Tester and the tests' bundle again.
 - **esbuild's memory now grows in the Test bundler's isolate.** If it goes over the limit, that run fails as unable to bundle, and the next starts a new isolate.
-- **The Test bundler is sent the Workspace's files and Packages in one call,** which can carry at most 32 MiB. The Packages' type declarations, source maps and Markdown stay behind. Workspaces whose Packages are larger than that can't run their tests.
+- **The Test bundler is sent the Workspace's files and Packages as a stream,** as a Build's Builder is (ADR 0010), since #87: a call's arguments can carry at most 32 MiB, and a large app's came to 36.6 MB. The Packages' type declarations, source maps and Markdown stay behind.
 - **One test file that won't bundle stops them all,** since the files share a bundle. The error names the file and line, a missing import's included.
 - **A test that loops without yielding runs until the CPU limit stops its Dynamic Worker.** Its file is reported as not finishing, and the files after it still run.
 - **The tests' app code isn't the Build's.** It's bundled without a front end, with React's automatic JSX runtime for any `.tsx` file, and gets no `vars`, secrets or Durable Object bindings unless a test passes them in.

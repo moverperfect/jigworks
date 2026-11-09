@@ -36,8 +36,8 @@ import {
   type PreviewRequest,
   type SignInDestination,
 } from "../apphost";
-import type { Build, Builder } from "../builder";
-import { takeWasmMemory, trackWasm } from "../builder/wasm-memory";
+import type { Build, Builder, FileSource } from "../builder";
+import { isolatedBuilder } from "../builder/isolated";
 import { checkInDynamicWorker } from "../checker/isolated";
 import { isHidden, normalisePath, storeFiles, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
@@ -119,10 +119,6 @@ const needAppTools = new Set(["write", "edit", "delete", "bash", "add_package", 
 const startAppFirst = "The app hasn't started yet, so this tool can't run. Start it first with start_app.";
 // For the Developer, in the page's words.
 const notStartedYet = { ok: false, error: "Your app hasn't started yet. Wait for the Agent to start it." } as const;
-
-// Records how far esbuild's memory grows during each Build, for the findings.
-// ts-rust runs in its own Dynamic Worker, so only esbuild shows here.
-trackWasm(() => "esbuild");
 
 /** Who a Check or a Build is for. */
 type RequestedBy = "developer" | "save" | "preview" | "turn" | "agent";
@@ -465,28 +461,28 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /**
-   * Builds the Workspace's code with its Packages, after installing them if
-   * `package.json` changed since the last install. A recent Build of the same
-   * inputs is reused. A Check's errors don't stop a Build, and a successful
-   * Build goes to the app host as the Preview. Every Build goes
-   * to Workers Logs with esbuild's memory, the isolate it ran in, and the
-   * Packages its output still imports; its CPU and wall time are in its
-   * call's trace. The Workspace's own Builds call it through its stub (see
+   * Builds the Workspace's code with its Packages, in a Dynamic Worker
+   * (ADR 0010), after installing them if `package.json` changed since the
+   * last install. A recent Build of the same inputs is reused. A Check's
+   * errors don't stop a Build, and a successful Build goes to the app host as
+   * the Preview. Every Build goes to Workers Logs with esbuild's memory in the
+   * Builder, the isolate it was asked for from, and the Packages its output
+   * still imports; its CPU and wall time here are in its call's trace. The
+   * Workspace's own Builds call it through its stub (see
    * `buildInItsOwnCall`), so each has a trace of its own.
    */
   async build(by: RequestedBy = "developer"): Promise<BuildReport> {
     return this.exclusive(async () => {
       const ranAt = new Date().toISOString();
       await this.install({ retryFailed: false });
-      const snapshot = new Map([...this.files.snapshot(), ...this.packages.snapshot()]);
-      // Loaded on the first Build, so esbuild starts only in Workspaces that build.
-      this.builder ??= (await import("../builder")).inProcessBuilder();
-      const result = await this.builder.build(snapshot);
+      const files = this.withPackages();
+      this.builder ??= isolatedBuilder(this.env.LOADER);
+      const { result, wasmMemoryBytes, receivingMs, cached } = await this.builder.build(files);
       const report: BuildReport = {
         ranAt,
         ok: result.ok,
         hash: result.hash,
-        cached: result.cached,
+        cached,
         errors: result.ok ? [] : result.errors,
         warnings: result.warnings,
       };
@@ -505,8 +501,9 @@ export class Workspace extends Think<Env, ConversationState> {
           missingPackages: result.ok ? [] : result.missingPackages,
           tailwindFailure: result.ok ? null : (result.tailwindFailure ?? null),
           tailwindCandidates: result.ok ? (result.tailwindCandidates ?? null) : null,
-          files: snapshot.size,
-          wasmMemoryBytes: takeWasmMemory(),
+          files: files.paths().length,
+          wasmMemoryBytes,
+          receivingMs,
         }),
       );
       return report;
@@ -536,8 +533,7 @@ export class Workspace extends Think<Env, ConversationState> {
         .filter((path) => isTestFile(path) && (!only || only.includes(path)))
         .sort();
       if (testFiles.length === 0) return { run, testFiles, bundle: null };
-      const snapshot = new Map([...this.files.snapshot(), ...this.packages.snapshot()]);
-      return { run, testFiles, bundle: await bundleTestsInDynamicWorker(this.env.LOADER, snapshot, testFiles) };
+      return { run, testFiles, bundle: await bundleTestsInDynamicWorker(this.env.LOADER, this.withPackages(), testFiles) };
     });
     const files = bundle?.ok ? await testInDynamicWorkers(this.env.LOADER, bundle, testFiles) : [];
     const report: TestReport = { ranAt, files, bundleErrors: bundle && !bundle.ok ? bundle.errors : [], counts: countTests(files) };
@@ -847,7 +843,23 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** Every Package file, at `node_modules/<name>/<path>`. */
   async packageFiles(): Promise<Record<string, string>> {
-    return Object.fromEntries(this.packages.snapshot());
+    const files = this.packages.files();
+    return Object.fromEntries(files.paths().map((path) => [path, files.read(path)!]));
+  }
+
+  /**
+   * The Workspace's files and its Packages, for a Build or the tests, each
+   * Package file read only when it's sent (#87). A Package's file stands in
+   * for a Workspace file at the same path.
+   */
+  private withPackages(): FileSource {
+    const own = this.files.snapshot();
+    const packages = this.packages.files();
+    const packagePaths = new Set(packages.paths());
+    return {
+      paths: () => [...[...own.keys()].filter((path) => !packagePaths.has(path)), ...packagePaths],
+      read: (path) => (packagePaths.has(path) ? packages.read(path) : own.get(path)),
+    };
   }
 
   /**

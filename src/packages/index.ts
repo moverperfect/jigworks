@@ -1,3 +1,4 @@
+import type { FileSource } from "../builder/bundling";
 import type { PackageStatus } from "../shared/check-report";
 import { registryClient, type Registry } from "./registry";
 import { manifestFields, newestVersion, noVersionMessage, resolve, type Manifest } from "./resolve";
@@ -50,9 +51,21 @@ export class Packages {
     };
   }
 
-  /** Every Package file, at `node_modules/<name>/<path>`, for the Builder. */
-  snapshot(): Map<string, string> {
-    return this.select("");
+  /** Every Package file, at `node_modules/<name>/<path>`, each read only when asked for (see `FileSource`). */
+  files(): FileSource {
+    const rows = new Map<string, readonly [string, string]>(
+      this.storage.sql
+        .exec<{ name: string; path: string }>("SELECT name, path FROM workspace_package_files")
+        .toArray()
+        .map(({ name, path }) => [`node_modules/${name}/${path}`, [name, path]] as const),
+    );
+    return {
+      paths: () => [...rows.keys()],
+      read: (path) => {
+        const row = rows.get(path);
+        return row && this.storage.sql.exec<{ content: string }>("SELECT content FROM workspace_package_files WHERE name = ? AND path = ?", ...row).toArray()[0]?.content;
+      },
+    };
   }
 
   /** Only the files a Check reads: type declarations and each Package's package.json. */

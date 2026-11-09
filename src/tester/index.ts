@@ -2,7 +2,8 @@ import testBundlerWorker from "../generated/test-bundler.txt";
 import testerWorker from "../generated/tester-worker.txt";
 import packedTypes from "../generated/vitest-types.txt";
 import { appLimits, beforeDeadline, fallbackCompatibilityDate } from "../apphost";
-import type { Snapshot } from "../builder";
+import type { FileSource } from "../builder";
+import { bundledStream } from "../builder/bundling";
 import { fnv1a } from "../checker/isolated";
 import type { TestBundle, TestBundleResult } from "../builder/tests";
 import type { TestFileReport } from "../shared/test-report";
@@ -34,27 +35,23 @@ const bundlerCompatibilityDate = "2026-10-01";
 // hash (see scripts/pack-tester.mjs), so a deploy that changes either gets a
 // new isolate.
 const bundlerId = `test-bundler-${fnv1a(testBundlerWorker + bundlerCompatibilityDate)}`;
-// Package files a bundle never takes in. Leaving them out keeps the call to
-// the Test bundler, which carries at most 32 MiB, smaller.
-const notBundled = /^node_modules\/.*(\.d\.[cm]?ts|\.map|\.md)$/;
 // The caller holds the Workspace's lock while the tests bundle, so a bundler
 // that never answers mustn't hold it for good.
 const bundleTimeoutMs = 60_000;
 
 /**
- * Bundles a snapshot's test files in a Dynamic Worker (ADR 0017), so
- * esbuild's memory never reaches the caller's isolate. A bundler that fails,
+ * Bundles the test files in a Dynamic Worker (ADR 0017), so esbuild's
+ * memory never reaches the caller's isolate. The files go as a Build's do, as
+ * a stream, read as it goes (see `bundledStream`). A bundler that fails,
  * as one that goes over its memory limit does, comes back as an error, and
  * Cloudflare starts a new isolate for the next call.
  */
 export async function bundleTestsInDynamicWorker(
   loader: WorkerLoader,
-  snapshot: Snapshot,
+  files: FileSource,
   testFiles: string[],
   timeoutMs = bundleTimeoutMs,
 ): Promise<TestBundleResult> {
-  const files: Record<string, string> = {};
-  for (const [path, text] of snapshot) if (!notBundled.test(path)) files[path] = text;
   try {
     const worker = loader.get(bundlerId, async () => ({
       compatibilityDate: bundlerCompatibilityDate,
@@ -68,7 +65,7 @@ export async function bundleTestsInDynamicWorker(
       },
       globalOutbound: null,
     }));
-    const bundled: Promise<TestBundleResult> = worker.getEntrypoint<TestBundler>("TestBundler").bundle(files, testFiles, { vitest: vitestModule });
+    const bundled: Promise<TestBundleResult> = worker.getEntrypoint<TestBundler>("TestBundler").bundle(bundledStream(files), testFiles, { vitest: vitestModule });
     const result = await beforeDeadline(bundled, Date.now() + timeoutMs);
     if (!result) throw new Error(`it took more than ${timeoutMs / 1000} seconds.`);
     return result;

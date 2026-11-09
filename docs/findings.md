@@ -12,7 +12,7 @@ The experiment asks whether Workers isolates alone can be where an application i
 - **Tests (stage 6):** vitest-style tests run in Dynamic Workers, for the Developer, the Agent and at the end of each Turn: 0.6–1.6 s from the browser once warm, and 2.6–3.6 s for the first run after a deploy.
 
 **The caveats:**
-- **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks and the tests' bundling run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), and so did the React Template's third test run (stage 6). Builds still run there, and fit.
+- **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks, the tests' bundling and Builds run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), the React Template's third test run did (stage 6), and so did every Build of a large app (#87).
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
 - **Apps get Durable Objects and nothing else** for storage (ADR 0006), and binary assets are served damaged (ADR 0014, #31).
 - **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
@@ -740,3 +740,68 @@ The typed address went into the app's `vars` in `wrangler.jsonc`.
 - **The page ran a Check and a Build when it opened an app with no files,** before the Agent had started it. They failed ("Could not determine entry point", and no `tsconfig.json`) and filled the hidden problems list. The page now runs them on opening only once the app is started.
 - **The Agent's replies are longer than Variant E's,** with headings and lists, and it asked for an email address as a Secret (#79).
 - **The Agent said the test email went through,** in both of #79's runs, though the email service's key was made up. The app logs a failed send rather than failing the sign-up, and the Agent had read the Preview's logs. In #67's run on the deployed platform it noticed the refusal and asked for a new key. Not looked into.
+
+## Builds of a large app (#87)
+
+**Verdict: over, so Builds moved to a Dynamic Worker.** On the deployed platform, every Build of a large app reset the Workspace's Durable Object: 37 in a row, and more until the Workspace was deleted. The reset came before esbuild had done much, from holding every Package file at once. Builds now run in the Builder, a Dynamic Worker reused by ID (ADR 0010), which is sent the files as a stream. Locally, the Durable Object then kept one isolate through ten rounds of saves, Checks and Builds, and a Turn. The deployed rerun waits for the deploy.
+
+**But an app this size probably can't be built deployed at all.** Locally, the Builder's esbuild reached 210–295 MB of linear memory, against an isolate's 128 MB. Deployed, such a Build would fail as unable to run, with the Durable Object unharmed. The move protects the Workspace, its Conversation and Turns; it doesn't make large apps buildable.
+
+### How it was measured
+
+- **The app:** made by `scripts/large-workspace.mjs` through the API, with no Turns. It's the Worker + React Template with 120 components, 30 pages and 10 server routes, using recharts 3.10.1, date-fns 4.4.0, and @mui/material 9.5.0 with @emotion/react 11.14.0 and @emotion/styled 11.14.1. Every page and component imports from them, so the Build bundles them.
+  - **Workspace files:** 180, 918 KB.
+  - **Packages:** 122 after resolution, in 16,812 files of 46.6 MB. A bundle takes in 9,513 of those files, 36.6 MB; a Check reads 10.6 MB of type declarations and `package.json` files.
+  - **Each round** is what a Developer's edit causes on the page: a save of one component, then a Check and a Build (`client/src/useChecks.ts`). The Workspace also builds a second after a save, so one of the two Builds is new and the other reused.
+- **Deployed,** on 2026-11-09 with `main` at `909361f`, before the move: the script ran in the Developer's signed-in browser (Chrome), imported from this branch at a commit, with `wrangler tail` capturing. A reset shows as the outcome `exceededMemory` in the tail.
+- **Locally,** under `wrangler dev` on a shared development machine, before and after the move. Local workerd enforces no memory limit, so it shows esbuild's memory but never a reset. The Durable Object's isolate is the name its log lines give (stage 4).
+
+### Before: Builds in the Durable Object
+
+| Deployed | Outcome | CPU ms | Wall ms |
+| --- | --- | ---: | ---: |
+| Installing the 122 Packages | ok | 2,117 | 4,687 |
+| The Build after the first save | `exceededMemory` | 488 | 503 |
+| The 36 tries that followed, every 30 s | `exceededMemory` | 412–745 | 439–765 |
+
+- **The app was never finished:** after the reset, saves failed with 500 ("Durable Object's isolate exceeded its memory limit and was reset"), and each try at the Build reset the object again. 6 of the app's 163 files were written, so the client bundle was still the Template's. The ten rounds couldn't run; every Build there was is in the table.
+- **Why:** a Build held all 46.6 MB of Package text, and its hash joined it all into one more string and then encoded that: about 140 MB before esbuild started.
+- **Locally,** on the same code: esbuild's memory was 29 MB for the unfinished app and 231 MB once every page was in.
+
+### After: Builds in the Builder
+
+Locally, ten rounds in the finished app, with a fresh Builder. Each round's new Build was the one after the save; the page's own Build, after the Check, then found it and reused it, so the page waited for both.
+
+| Round | Save | Check | Build, as the page waits | esbuild in the Builder | Receiving the files | Durable Object's isolate |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 78 ms | 2,543 ms | 23.8 s | 210 MB | 694 ms | `17bd0d67` |
+| 2 | 35 ms | 2,492 ms | 20.4 s | 234 MB | 992 ms | `17bd0d67` |
+| 3 | 34 ms | 2,153 ms | 22.7 s | 236 MB | 808 ms | `17bd0d67` |
+| 4 | 30 ms | 2,137 ms | 22.5 s | 239 MB | 736 ms | `17bd0d67` |
+| 5 | 32 ms | 2,163 ms | 22.6 s | 239 MB | 845 ms | `17bd0d67` |
+| 6 | 28 ms | 2,214 ms | 22.7 s | 239 MB | 777 ms | `17bd0d67` |
+| 7 | 30 ms | 2,166 ms | 22.5 s | 295 MB | 816 ms | `17bd0d67` |
+| 8 | 29 ms | 2,141 ms | 22.4 s | 295 MB | 789 ms | `17bd0d67` |
+| 9 | 32 ms | 2,158 ms | 22.7 s | 295 MB | 816 ms | `17bd0d67` |
+| 10 | 32 ms | 2,181 ms | 22.8 s | 295 MB | 815 ms | `17bd0d67` |
+
+- **Every Build passed,** each with a new hash, and every Check found no errors.
+- **esbuild's memory** stays at its peak, since linear memory never shrinks. An earlier run in a fresh Builder went the same way, from 211 MB to 301 MB.
+- **The cost of sending the files:** a stream of 9,513 files and 36.6 MB for each new Build, which one call couldn't carry (32 MiB). The Builder took 0.7–1.0 s to receive it, about 4% of the Build, on a machine with a load average over 30 from other work. A reused Build sends nothing. The Builder logs it as `receivingMs`, which is I/O, so the deployed rerun can read it too.
+- **Hash and output unchanged:** the hash is computed as before from every file, type declarations included. The Build tests check it against the old one, and check a Builder's Build equals one made in this isolate (`test/builder.test.ts`).
+
+**A Turn,** with the scripted model, locally, in a second copy of the app whose first message picked the `break-then-fix` script (`scripts/large-workspace.mjs`'s `turn`):
+
+| Turn | Steps | End-of-Turn Check | End-of-Turn Build | esbuild in the Builder | Receiving the files | Durable Object's isolate |
+| --- | ---: | --- | --- | ---: | ---: | --- |
+| 24.4 s (Turn log) | 2 | no errors | new, ok | 295 MB | 776 ms | `17bd0d67`, as before it |
+
+- **The tests that end the Turn** bundled through the same stream: 7 passed and 1 failed, the Template's own `App.test.tsx`, which looks for the heading the large app replaced.
+- **The deployed rerun** of the ten rounds needs this change deployed, which a merge to `main` does. It's the live check after the deploy.
+
+### Found along the way
+
+- **A Build that resets the Durable Object in an alarm runs again every 30 s, without end.** The Build after a save is an Agents SDK schedule; after the first reset, it was tried again every 30 s from 07:32 until the Workspace was deleted at 09:35. With Builds in the Builder, a Build no longer resets the object, but anything else that does in an alarm would loop the same way. Not looked into.
+- **esbuild's Go heap can't be capped from outside.** esbuild's browser build makes its Go runtime with an empty environment, so `GOGC` can't be set without patching esbuild at pack time.
+- **The test bundle had the same limits:** `runTests` also held every Package file, and its call to the Test bundler couldn't carry more than 32 MiB. It now gets the same stream.
+- **Local workerd does enforce the RPC limit:** one call with 40 MB of arguments failed with "Serialized RPC arguments or return values are limited to 32MiB". A stream of more went through.

@@ -3,10 +3,11 @@ import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
 import { platformEnvPrefix } from "../apphost/app-data";
-import { bundlerFiles, bundlingVersion, esbuildProblems, missingImports, unplaced, type Snapshot } from "./bundling";
-import { frontEnd, tailwindVersion, type TailwindFailure } from "./front-end";
+import { bundlerFiles, esbuildProblems, filesOf, missingImports, unplaced, type FileSource, type Snapshot } from "./bundling";
+import { hashOf } from "./hash";
+import { frontEnd, type TailwindFailure } from "./front-end";
 
-export type { BuildProblem, Snapshot };
+export type { BuildProblem, FileSource, Snapshot };
 
 /** The `assets` settings in `wrangler.jsonc` the app host follows (ADR 0014). */
 export interface AssetSettings {
@@ -50,38 +51,23 @@ export interface BuildFailure {
 
 export type BuildResult = Build | BuildFailure;
 
-/**
- * What the Workspace builds with. It runs in the Workspace's own isolate for
- * now; a Dynamic Worker could provide it instead if memory runs short
- * (ADR 0010).
- */
-export interface Builder {
-  /** Builds, or reuses a recent Build of the same inputs. */
-  build(snapshot: Snapshot): Promise<BuildResult & { cached: boolean }>;
+/** A Build as it was made, with what it cost, for the findings. */
+export interface MadeBuild {
+  result: BuildResult;
+  /** How far esbuild's linear memory grew in the Builder. */
+  wasmMemoryBytes: Record<string, number>;
+  /**
+   * How long the Builder took to receive the files. Receiving is I/O, so the
+   * clock moves even deployed (docs/development.md, "The deployed clock").
+   * Null when no files were sent.
+   */
+  receivingMs: number | null;
 }
 
-// Enough to go back and forth between two versions without rebuilding. The
-// app host keeps Builds for good (ADR 0009).
-const cachedBuilds = 4;
-
-/** A Builder in this isolate, which keeps its last few Builds by their inputs' hash. */
-export function inProcessBuilder(): Builder {
-  const recent = new Map<string, BuildResult>();
-  return {
-    async build(snapshot) {
-      const hash = await hashOf(snapshot);
-      const cached = recent.get(hash);
-      if (cached) {
-        recent.delete(hash);
-        recent.set(hash, cached);
-        return { ...cached, cached: true };
-      }
-      const result = await build(snapshot);
-      recent.set(hash, result);
-      if (recent.size > cachedBuilds) recent.delete(recent.keys().next().value!);
-      return { ...result, cached: false };
-    },
-  };
+/** What the Workspace builds with. */
+export interface Builder {
+  /** Builds, or reuses a recent Build of the same inputs. */
+  build(files: FileSource): Promise<MadeBuild & { cached: boolean }>;
 }
 
 /**
@@ -91,8 +77,8 @@ export function inProcessBuilder(): Builder {
  * because the bundler otherwise leaves those imports in place without a word.
  * With an `index.html`, the Build has a front end too (see `front-end.ts`).
  */
-export async function build(snapshot: Snapshot): Promise<BuildResult> {
-  const hash = await hashOf(snapshot);
+export async function build(snapshot: Snapshot, hash?: string): Promise<BuildResult> {
+  hash ??= await hashOf(filesOf(snapshot));
   const files = bundlerFiles(snapshot);
   const config = (parseJsonc(snapshot.get("wrangler.jsonc") ?? "{}") ?? {}) as {
     compatibility_date?: string;
@@ -279,13 +265,4 @@ function assetSettings(assets: WranglerAssets = {}): AssetSettings {
     runWorkerFirst:
       typeof first === "boolean" ? first : Array.isArray(first) ? first.filter((pattern) => typeof pattern === "string") : false,
   };
-}
-
-async function hashOf(snapshot: Snapshot): Promise<string> {
-  const encoder = new TextEncoder();
-  // The same files make a different Build after a Tailwind upgrade, or a change to how they're bundled.
-  const parts = [`tailwindcss ${tailwindVersion}`, `bundling ${bundlingVersion}`];
-  for (const path of [...snapshot.keys()].sort()) parts.push(path, snapshot.get(path)!);
-  const digest = await crypto.subtle.digest("SHA-256", encoder.encode(parts.join("\0")));
-  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 }

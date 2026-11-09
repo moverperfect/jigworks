@@ -5,8 +5,8 @@ import type { BuildReport } from "../src/shared/build-report";
 import type { CheckReport } from "../src/workspace";
 import { call, create, waitFor } from "./helpers/api";
 
-// Builds, through the platform's API. The Builder runs in the Workspace's
-// Durable Object, with the Packages the fake registry serves.
+// Builds, through the platform's API. The Builder runs in a Dynamic Worker
+// (ADR 0010), with the Packages the fake registry serves.
 
 const build = async (id: string) => {
   const response = await call(`/api/workspaces/${id}/build`, { method: "POST" });

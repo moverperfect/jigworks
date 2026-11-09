@@ -8,5 +8,10 @@ So the Workspace's Durable Object runs each Check in a Dynamic Worker. It loads 
 
 - Every Check copies its files into another isolate: 197 files for the Worker Template and 237 for the React Template.
 - If the Dynamic Worker's isolate is replaced after a heavy Check, only that Check's next call pays the cost of starting a new one. The Workspace's object is unaffected.
-- Builds stay in the Workspace's Durable Object for now (Q46). esbuild alone fits, but its memory grows with each Build. If memory runs short once the Agent shares the isolate, the Build moves to a Dynamic Worker the same way.
 - The Checker exists twice in the platform's code: as a module the Durable Object can call, and as a bundled Dynamic Worker built from the same source.
+- **Builds run in a Dynamic Worker too, since #87.** They first stayed in the Durable Object (Q46), where they fitted the Templates. A large app's Build, 122 Packages and 46.6 MB of Package text, reset the Durable Object every time, before esbuild had done much (`docs/findings.md`, "Builds of a large app"). The Builder is a Dynamic Worker reused by ID, as the Test bundler is (ADR 0017):
+  - **Nothing is held whole.** The Durable Object reads each file only as it's needed: to hash it, then to send it. The hash is the same as before, made a megabyte at a time, so a Build's hash and output don't change for the same files.
+  - **The files go as a stream,** one JSON line per file, because a call's arguments can carry at most 32 MiB and that app's files came to 36.6 MB. Type declarations, source maps and Markdown in the Packages stay behind. The tests' bundling sends its files the same way.
+  - **A Build of the same files is reused** from the Durable Object's last four, without sending anything.
+  - **A Builder that fails,** going over its memory limit or taking more than 60 seconds, gives a failed Build that says it couldn't run, and isn't kept, so the next Build tries again in a new isolate.
+  - **esbuild's memory now grows in the Builder's isolate,** shared by every Workspace's Builds there. A Build that goes over the limit also fails any other Workspace's Build running in that isolate at the time. An app whose Build needs more than an isolate's 128 MB can't be built at all.

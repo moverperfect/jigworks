@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { countProblems, summariseTests, testProblems } from "../client/src/problems";
 import { describeTests } from "../src/agent";
+import { filesOf } from "../src/builder/bundling";
 import { bundleTests, type TestBundle } from "../src/builder/tests";
 import { testReportWithin, type TestFileReport, type TestReport } from "../src/shared/test-report";
 import { bundleTestsInDynamicWorker, isTestFile, testInDynamicWorkers, vitestModule } from "../src/tester";
@@ -341,14 +342,14 @@ describe("bundling the tests", () => {
         throw new Error("Worker exceeded memory limit.");
       },
     } as unknown as WorkerLoader;
-    expect(await bundleTestsInDynamicWorker(broken, workspace({}), ["src/index.test.ts"])).toEqual({
+    expect(await bundleTestsInDynamicWorker(broken, filesOf(workspace({})), ["src/index.test.ts"])).toEqual({
       ok: false,
       errors: [{ message: "The tests couldn't be bundled: Worker exceeded memory limit.", file: null, line: null, column: null }],
     });
 
     const silent = { get: () => ({ getEntrypoint: () => ({ bundle: () => new Promise(() => {}) }) }) } as unknown as WorkerLoader;
     // Real timers: this isolate runs the platform's Durable Objects too.
-    expect(await bundleTestsInDynamicWorker(silent, workspace({}), ["src/index.test.ts"], 100)).toEqual({
+    expect(await bundleTestsInDynamicWorker(silent, filesOf(workspace({})), ["src/index.test.ts"], 100)).toEqual({
       ok: false,
       errors: [{ message: "The tests couldn't be bundled: it took more than 0.1 seconds.", file: null, line: null, column: null }],
     });
