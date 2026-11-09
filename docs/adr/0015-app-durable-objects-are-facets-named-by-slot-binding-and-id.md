@@ -19,4 +19,4 @@ ADR 0006 gives apps Durable Objects and nothing else, run as facets inside the W
 - **Not supported:**
   - jurisdictions and location hints;
   - WebSockets into an instance;
-  - alarms in an instance, which Cloudflare doesn't document for facets.
+  - alarms in an instance: workerd refuses `setAlarm` in a facet, failing the call, and `alarm()` never runs (#107, `docs/findings.md`).

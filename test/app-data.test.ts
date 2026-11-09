@@ -198,6 +198,55 @@ export default {
     expect(await inDeployment(first.url, "/increment")).toBe("v2:3");
   });
 
+  // workerd's facets have no alarm scheduler (#107, docs/findings.md). If this
+  // starts failing, facets may have alarms: recheck them in the Preview, the
+  // Deployment and after a new Build, and revisit ADR 0015. Deployed, the
+  // first call fails the same way but keeps its writes and the time.
+  it("can't set an alarm in an instance: the call fails, and takes its writes with it", async () => {
+    const workspace = await create("Data Alarms");
+    await save(workspace.id, "wrangler.jsonc", wrangler({ durable_objects: { bindings: [{ name: "NOTES", class_name: "Notes" }] } }));
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { DurableObject } from "cloudflare:workers";
+export class Notes extends DurableObject {
+  table() {
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS notes (text TEXT)");
+  }
+  async remindLater() {
+    this.table();
+    this.ctx.storage.sql.exec("INSERT INTO notes VALUES ('written before setAlarm')");
+    try {
+      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      return "set";
+    } catch (error) {
+      return "caught: " + String(error);
+    }
+  }
+  async state() {
+    this.table();
+    const rows = this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM notes").one().n;
+    return { rows, alarm: await this.ctx.storage.getAlarm() };
+  }
+  override async alarm() {}
+}
+export default {
+  async fetch(request: Request, env: { NOTES: DurableObjectNamespace<Notes> }) {
+    const notes = env.NOTES.getByName("a");
+    if (new URL(request.url).pathname === "/remind") return new Response(await notes.remindLater());
+    return Response.json(await notes.state());
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    // The refusal comes as the write commits, so the app's own catch never sees it.
+    // requestPreview rather than inPreview, for the status.
+    const reminded = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/remind" });
+    expect(reminded).toMatchObject({ status: 500, body: expect.stringContaining("Facets currently cannot set alarms.") });
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rows: 0, alarm: null });
+  });
+
   it("goes with its Workspace", async () => {
     const workspace = await counterWorkspace("Data Deleted");
     expect(await inPreview(workspace.id, "/increment")).toBe("1");

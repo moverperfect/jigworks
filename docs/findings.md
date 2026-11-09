@@ -15,6 +15,7 @@ The experiment asks whether Workers isolates alone can be where an application i
 - **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks, the tests' bundling and Builds run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), the React Template's third test run did (stage 6), and so did every Build of a large app (#87). What an app can build is limited by the Packages it bundles: a small app with a UI kit's Packages took esbuild near the limit by itself (#99).
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
 - **Apps get Durable Objects and nothing else** for storage (ADR 0006).
+- **Apps can't run on a schedule yet.** Their Durable Objects are facets, whose alarms never ring, deployed or locally. Locally, the app host could keep their alarms for them (#107).
 - **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
 
 ## Stage 0: ts-rust's WebAssembly module
@@ -989,3 +990,115 @@ To measure after the deploy, from the API with the tail running, while the bucke
 ### Found along the way
 
 - **Resolving one Package at a time** is most of an install, cache or not. Fetching the documents a round needs at the same time would likely save more than the cache does. Not looked into.
+
+## Schedules (#107)
+
+**Verdict: an app's Durable Objects can't have alarms of their own, but the app host can keep their alarms for them.** workerd refuses `setAlarm` in a facet, and `alarm()` never runs, in the Preview or the Deployment, locally and deployed. Deployed, the refusal is quieter than it is locally: the first `setAlarm` fails the call, but its writes and the time are kept, and later ones succeed without ringing ("Deployed", below). The rest was measured locally. In a probe, the module the platform wraps the app in put its own `setAlarm` on each instance's `ctx.storage`. That `setAlarm` handed the time to the app host, whose one alarm then called the instance's `alarm()`. Each slot rang with its own code and data, and the alarm survived a new Build. The app host can also call an app's `scheduled` handler in the same way.
+
+### How it was measured
+
+- **Locally:** the platform's vitest pool, workerd 1.20261006.1 (wrangler 4.149.0), on 2026-11-09, on a shared development machine.
+- **The app:** one binding, `PINGER`, to a `Pinger` class. Its `alarm()` handler writes a row to the instance's own SQLite table. Routes set an alarm, read the rows and the pending alarm, and write a row and then set an alarm in the same call. It's `test/alarm-probe.test.ts` on the branch `107-schedules-probe` (`133345d`), which isn't for `main`.
+- **The app host keeping alarms:** on the same branch, the wrapper module (`src/apphost/app-data.ts`) replaces `setAlarm`, `getAlarm` and `deleteAlarm` on the instance's own `ctx.storage` object with calls through `AppData`. The app host learns which instance is calling from `ctx.props`, which it passes to `getDurableObjectClass`. It keeps each instance's time and sets its own alarm. When that alarm rings, it calls the instance's `alarm()` by RPC under a platform name, since `alarm` itself "is a reserved method and cannot be called over RPC".
+- **The app host running a schedule:** the wrapper exports a named entrypoint, `JigworksScheduled`, whose `run(cron, scheduledTime)` calls the app's `scheduled(controller, env, ctx)`, with the bindings' stand-ins in `env`. The app host's `alarm()` calls it.
+- **Source and docs,** read on 2026-11-09: workerd at `v1.20261006.1` and at `main` (`95fcc06`), and Cloudflare's docs at `606d41ed` of `cloudflare/cloudflare-docs`.
+
+### An instance's own alarms
+
+| Case | What the app got | Rows written by `alarm()` | `getAlarm()` after |
+| --- | --- | ---: | --- |
+| `setAlarm` in the Preview, 300 ms ahead, then 2 s | `500 The app threw an error: Error: Facets currently cannot set alarms.` | 0 | `null` |
+| `setAlarm` 1.5 s ahead, then a new Build aborting the instance, then 3 s | the same `500` (no alarm for the abort to cancel) | 0 | `null` |
+| `setAlarm` in the Deployment, 300 ms ahead, then 2 s | the same `500` | 0 | `null` |
+| A row written, then `setAlarm`, in one call | the same `500` | – | `null`, and the row is gone |
+
+- **The refusal comes at commit,** not from `setAlarm` itself. `setAlarm` stores the time; when the call's writes commit, workerd tries to schedule the alarm and fails. That breaks the instance's output gate, so the error replaces the call's answer. The app's own `try`/`catch` never sees it, and locally every write in the call is lost with it. The next call starts the instance afresh. Deployed differs (below).
+- **Why:** workerd gives a facet's storage `FacetAlarmHooks`, whose `scheduleRun` fails with that message. Its comment says the alarm scheduler "only knows how to deliver alarms to the root actor of a namespace. TODO(someday): Support alarms in facets, somehow." (`src/workerd/server/server.c++` at the tag; `src/workerd/server/factory/worker-factory-actor.c++` on `main`). workerd's own test, "Durable Object facets cannot set alarms", expects the error. The comment says the message matches the one from Cloudflare's own storage factory, and the deployed platform gives it.
+- **Cloudflare's docs** say nothing about alarms on the facets page. The Agents SDK's sub-agents page says "facets do not have independent alarm slots". There, the parent owns the alarm, records which child each callback belongs to, and routes the work back. That's what the app host does in the probes below.
+- **`test/app-data.test.ts` pins the local behaviour:** if a workerd upgrade gives facets alarms, it fails.
+
+### The app host keeping an instance's alarms
+
+| Case | Rang | Code that ran `alarm()` | Rows afterwards |
+| --- | --- | --- | --- |
+| `this.ctx.storage.setAlarm` in the Preview, 300 ms ahead | yes, `{ retryCount: 0, isRetry: false }` | version 1 | 1 in the Preview's instance |
+| The same in the Deployment, 600 ms ahead | yes | version 1 | 1 in the Deployment's instance, none from the Preview |
+| Set 1.5 s ahead by version 1, then a new Build | yes | version 2 | 2 in the Preview's instance, the first kept |
+
+- **The app's code is Cloudflare's own:** `this.ctx.storage.setAlarm(...)` and an `alarm()` handler. `getAlarm()` read the time back, and read `null` once the alarm had rung.
+- **The wrapper can't swap `ctx` for a stand-in.** The `DurableObject` base class refuses one ("constructor parameter 1 is not of type 'DurableObjectState'"). Defining the three methods on the instance's real `ctx.storage` object worked. The platform would rely on that, as it relies on other facet behaviour, so a test should pin it.
+- **The Preview's alarm rang late,** with the Deployment's: the probe set the app host's one alarm for whichever time came last. A real version sets it for the earliest due time.
+- **Unlike Cloudflare,** the probe's alarm isn't written with the instance's other writes in one commit. It's a call to the app host, and is kept even if the instance's call later fails, or `deleteAll()` clears the instance. The recommendation's first two steps close that gap.
+
+### The app host running an app's schedule
+
+| Slot | Code it ran | What `scheduled` did | Rows afterwards |
+| --- | --- | --- | --- |
+| Preview, after a second Build | version 2 | wrote the cron string to instance "a" through `env.PINGER` | 1 in the Preview's "a", as version 2 |
+| Deployment, published from the first Build | version 1 | the same | 1 in the Deployment's "a", as version 1 |
+
+- **Both ran within a second** of the app host's alarm, each in its own slot's Dynamic Worker and reaching its own slot's instances.
+- **`scheduled` can't be called the usual way.** A Fetcher's `scheduled()` method exists only under the experimental flag `service_binding_extra_handlers` (`src/workerd/api/http.h`), which Cloudflare refuses. Calling a named entrypoint over RPC already works deployed: the Tester is called that way (`src/tester/index.ts`).
+- **The app host has one alarm,** which retired Secrets already use (`retireSecret` and `alarm()` in `src/apphost/index.ts`).
+
+### Deployed
+
+On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser (Chrome) with the tail running. A Workspace made for the check through the API got the app from `test/app-data.test.ts`, with an `alarm()` handler that writes a row. `/remind` writes a row, then sets an alarm, catching any error; `/state` reads the rows and `getAlarm()`. The Preview was reached through sign-in links in a frame and read through its logs. The Deployment was reached at its URL. The Workspace was deleted afterwards.
+
+| Slot | Step | What the app got | Rows | `getAlarm()` |
+| --- | --- | --- | ---: | --- |
+| Preview | `/state` | – | 0 | `null` |
+| Preview | `/remind`, 300 ms ahead | `Error: Facets currently cannot set alarms.`, in the logs as an exception | – | – |
+| Preview | `/state`, 4 s later | – | 1 | the time, 3.9 s overdue |
+| Preview | `/remind` again, 1.5 s ahead | `set`, no error | – | – |
+| Preview | a new Build, then `/state` 3 s later | – | 2 | the second time, as version 2 |
+| Preview | `/state`, 65 s later | – | 2 | the same time, 68 s overdue |
+| Deployment | `/remind`, 300 ms ahead | `500 The app threw an error: Error: Facets currently cannot set alarms.` | – | – |
+| Deployment | `/state` straight after | – | 1 | the time |
+| Deployment | `/remind` again, 300 ms ahead, 3 s later | `200 set` | – | – |
+| Deployment | `/state`, 72 s after the alarm's time | – | 2 | the time, still pending |
+
+- **The refusal is the same:** workerd's message, failing the first call. That's the call that adds an alarm to an instance with none.
+- **Unlike locally, nothing is lost.** The failing call's write is kept, and so is the time, which `getAlarm()` then reads back. A later `setAlarm` on the same instance succeeds without an error. So an app sees an alarm that seems set, and never rings.
+- **`alarm()` never ran,** in either slot, though Cloudflare says an alarm can be up to a minute late: no "rang" row, and no alarm event in the tail at the Preview's two alarm times. The tail stopped capturing at 18:14:32, before the Deployment's alarms were due.
+- **After a new Build,** the pending time stayed with the instance, and version 2 read it. It never rang either.
+- **Not checked deployed:** the app host keeping alarms, and running a schedule. Both need the probe branch's platform code, so they get checked in the spec's first slice.
+
+### Recommendation
+
+**Give an app's Durable Objects alarms, through the app host, with Cloudflare's own API.** The Agent writes `this.ctx.storage.setAlarm(...)` and `alarm()` as Cloudflare's docs show them. A reminder "the day before the run" is an alarm on the run's instance. A weekly rota is an `alarm()` that sets the next week's alarm. The Agents SDK's `this.schedule()` is built on alarms too. Cron triggers can come later on the same table, if an app needs them; the probe shows they work.
+
+1. **The instance's own storage holds its alarm.** The wrapper (`src/apphost/app-data.ts`) defines `setAlarm`, `getAlarm` and `deleteAlarm` on each instance's `ctx.storage`. They write and read the time under a platform-named key in the instance's own storage. That key commits with the call's other writes, or is lost with them, and `deleteAll()` clears it, as on Cloudflare. `setAlarm` also tells the app host the time, through `AppData`, with the instance's binding and ID from `ctx.props`. The probe sent the time to the app host alone, so a call that failed after `setAlarm` would still have rung.
+2. **The app host's row only wakes the instance.** It keeps one row per instance with a time: slot, binding, ID, name and when. Its own alarm is set for the earliest of those and of the retired Secrets'. `retireSecret` sets the alarm only when none is pending, so it changes to setting it for the earliest due time. When the alarm rings, the app host calls each due instance's platform-named method. That method rings `alarm()` only if the instance's own stored time is due, so a wake for a failed call, a deleted alarm or `deleteAll()` does nothing. The app host deletes its row only after the call returns, and only if the time hasn't changed meanwhile. So an alarm isn't lost if the app host stops mid-ring, and an `alarm()` that sets the next one keeps it.
+   - **Open for the spec: the commit protocol between the two objects.** Cloudflare's guarantee is at least once, and this design doesn't yet give it. Codex's third review found two gaps.
+     - **Retries:** a ring that fails, or that an abort cuts off, needs an in-flight state the retry recognises, while `getAlarm()` reads `null` during `alarm()`, as on Cloudflare.
+     - **Two commits:** the instance's key and the app host's row commit separately. A failed call to `AppData` that the app catches leaves a time with no wake. A wake can come while the call that set it is still running, before its writes commit. A reconciliation rule could cover both, such as the instance reporting its committed time back on each wake, and the app host re-reading it.
+
+3. **Data and code** follow ADR 0015: rows are per slot, an alarm rings with the slot's current code, and deleting the Workspace deletes the rows. `deleteAll()` has deleted the alarm itself since compatibility date 2026-02-24, and the platform's is 2026-10-01.
+4. **The Preview and the Deployment:** each slot's alarms ring by themselves, as each slot's data is its own. That's how the Developer sees a reminder work. But Secrets are shared (ADR 0016), so the Preview's alarms send real email from its test data. The alternative is that the Preview's alarms ring only when the Developer or the Agent asks, through a tool beside `request_preview`. That choice is Jack's (below).
+5. **Limits,** so an app can't run constantly:
+   - An alarm sooner than a minimum interval from now, such as one minute, rings at that interval instead. A loop of alarms then can't ring more often than that.
+   - Each slot has a cap on pending alarms, such as 1,000, and `setAlarm` past it throws, with a message saying why.
+   - Each ring has the app's existing limits (`appLimits`: 10 s of CPU, 50 subrequests) and a wall-time deadline. Rings run one at a time, or a few at once, so one app's backlog can't hold the app host's alarm for long.
+   - Retries: Cloudflare retries a failed `alarm()` up to 6 times, with backoff. The app host catches each ring's error, logs it in the slot's logs, and retries it a few times with backoff, as a row of its own. A failing app then can't delay the retired Secrets' clean-up or other instances' alarms.
+   - A ring that a new Build, a publish or new Secrets cut off (the app host aborts the slot's instances) counts as failed, and is retried.
+6. **Reminders** then come as an add-on: storing what to remind whom of and when, setting the alarm, and sending with the email add-on.
+7. **ADR 0015** needs a new decision, since it lists alarms as not supported. The Templates' notes should say alarms work. A test pins each facet behaviour the design relies on: defining methods on `ctx.storage`, `ctx.props` reaching the instance, and calling `alarm()` under another name. Tests cover a call that fails after `setAlarm`, `deleteAll()`, and an app host that stops mid-ring.
+8. **Words:** "alarm" is Cloudflare's word and the code's. If the page needs to speak of one, "reminder" or "a time the app wakes up" goes in the glossary's "Words on the page" first.
+
+**Not recommended:**
+- **Cron triggers first.** They work through the app host too (above). But "the day before each run" would mean polling every few minutes, and they need a cron parser, time zones (cron is in UTC, so "9am every Monday" moves by an hour in summer time), and their own limits. Add them if an app needs a fixed timetable that an alarm handler can't keep.
+- **The app host calling a route,** such as `POST /__scheduled`. Anyone with the app's URL could call it unless the wrapper blocks it, and it isn't how a Worker is written.
+
+**For Jack, in the spec:**
+
+| Decision | Recommendation | Why |
+| --- | --- | --- |
+| Alarms or cron triggers first | Alarms through the app host | Cloudflare's API, per instance, fits reminders; cron can follow |
+| The Preview's alarms | Ring by themselves | The Developer sees a reminder work, as they will in the Deployment; the cost is real email from test data |
+| Minimum interval | 1 minute | Fine for reminders; caps a loop at 1,440 rings a day per instance |
+| Pending alarms per slot | 1,000 | Room for one per event or person in a small app |
+
+### Found along the way
+
+- **Nothing tells the Agent that `setAlarm` fails.** The Templates' notes list KV, D1, R2, queues and cron triggers as unavailable, but not alarms. An Agent that sets one writes an app whose first call fails with workerd's message. Deployed, later calls then seem to set it, and it never rings. Left for the spec, which changes those notes anyway.
