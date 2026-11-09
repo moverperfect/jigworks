@@ -5,6 +5,7 @@ import { textOf, type MessagesRequest, type Script } from "./fake-anthropic.ts";
 
 export const brokenCount = 'export const count: number = "many";\n';
 export const fixedCount = "export const count: number = 3;\n";
+export const twoLines = "export const first = 1;\nexport const second = 2;\n";
 const checkFound = "After your Turn, the Check found";
 const buildFailed = "the Build failed";
 // Type-checks, but the Build fails: the bundle still requires a package that isn't installed.
@@ -450,6 +451,29 @@ export const agentScripts: Record<string, Script> = {
           toolCalls: [
             { name: "bash", input: { script: "sleep 0.2; echo 'export default { fetch: ( };' > /src/index.ts" } },
             { name: "build", input: {} },
+          ],
+        },
+
+  // Changes two lines of src/pair.ts with two edits in the same step, as the model does.
+  "two-edits": (request) =>
+    afterToolResult(request)
+      ? { text: "Changed both." }
+      : {
+          toolCalls: [
+            { name: "edit", input: { path: "/src/pair.ts", old_string: "first = 1", new_string: "first = 10" } },
+            { name: "edit", input: { path: "/src/pair.ts", old_string: "second = 2", new_string: "second = 20" } },
+          ],
+        },
+
+  // Writes src/pair.ts with bash and changes it with edit, in the same step.
+  // Bash writes its changes back only when its script ends.
+  "bash-and-edit": (request) =>
+    afterToolResult(request)
+      ? { text: "Wrote it." }
+      : {
+          toolCalls: [
+            { name: "bash", input: { script: "sleep 0.2; echo 'export const first = 1;' > /src/pair.ts" } },
+            { name: "edit", input: { path: "/src/pair.ts", old_string: "first = 1", new_string: "first = 10" } },
           ],
         },
 
