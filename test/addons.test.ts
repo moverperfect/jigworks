@@ -108,6 +108,72 @@ describe("add_addon", () => {
   });
 });
 
+describe("the organiser's area", () => {
+  it("joined to the default Template's app with its edits, passes its tests, asks for its passcode, and lets only the organiser in", async () => {
+    const workspace = await create("Rota", undefined, "worker-react");
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:add-organiser-and-join] Only I should change the rota");
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+
+    const [added] = await toolResults(workspace.id);
+    const result = added!.result as string;
+    // Storage came with the Template.
+    expect(result).toMatch(/^Added the organiser add-on\. Wrote \/src\/server\/organiser\.test\.ts and \/src\/server\/organiser\.ts\.\nIt needs storage too, which the app already had\./);
+    expect(result).toContain("- ORGANISER_PASSCODE: The passcode that opens your app's organiser's area.");
+    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toContainEqual([
+      "src/server/organiser.test.ts",
+      ["passed"],
+      [],
+    ]);
+
+    // The Developer gives the passcode when the Agent asks.
+    const passcode = "a rota passcode";
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/ORGANISER_PASSCODE`, { method: "PUT", body: { value: passcode } })).status).toBe(204);
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    // The Worker answers the sign-in page, not the front end.
+    const page = await preview.requestPreview({ method: "GET", path: "/organiser/sign-in", headers: { Accept: "text/html", "Sec-Fetch-Mode": "navigate" } });
+    expect(page.body).toContain('<form method="post" action="/organiser/sign-in">');
+    const signIn = (entered: string) =>
+      preview.requestPreview({
+        method: "POST",
+        path: "/organiser/sign-in",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ passcode: entered }).toString(),
+      });
+    expect((await signIn("a wrong passcode")).status).toBe(401);
+    const signedIn = await signIn(passcode);
+    // Not followed, so the Agent sees the cookie too.
+    expect(signedIn).toMatchObject({ status: 303, headers: { location: "/organiser" } });
+    const cookie = signedIn.headers["set-cookie"]!.split(";", 1)[0]!;
+    expect(cookie).toMatch(/^__Host-organiser=/);
+
+    const signups = (headers: Record<string, string> = {}) => preview.requestPreview({ method: "GET", path: "/organiser/api/signups", headers });
+    expect((await signups()).status).toBe(401);
+    const allowed = await signups({ Cookie: cookie });
+    expect(allowed.status).toBe(200);
+    expect(JSON.parse(allowed.body)).toEqual(["Ada", "Grace"]);
+  });
+
+  it("joined to a Worker Template app with storage's edits and its own, passes every test, and sends a stranger to sign in", async () => {
+    const workspace = await create("Rota webhook");
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:add-organiser-to-worker-and-join] Only I should see this");
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0 });
+    const [added] = await toolResults(workspace.id);
+    expect((added!.result as string).split("\n", 1)[0]).toBe(
+      "Added the organiser add-on, after storage, which it needs. Wrote /src/server/fake-store.ts, /src/server/store.test.ts, /src/server/store.ts, /src/server/organiser.test.ts and /src/server/organiser.ts.",
+    );
+    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(tests.files.map(({ file, tests }) => [file, [...new Set(tests.map(({ state }) => state))]])).toEqual([
+      ["src/index.test.ts", ["passed"]],
+      ["src/server/organiser.test.ts", ["passed"]],
+      ["src/server/store.test.ts", ["passed"]],
+    ]);
+
+    const opened = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/organiser", headers: { Accept: "text/html" } });
+    expect(opened).toMatchObject({ status: 303, headers: { location: "/organiser/sign-in?next=%2Forganiser" } });
+  });
+});
+
 /** An add-on for the tests below, which no real add-on yet is: with needs, Packages and Secrets. */
 function addon(id: string, fields: Partial<Addon> = {}): Addon {
   const name = id.charAt(0).toUpperCase() + id.slice(1);

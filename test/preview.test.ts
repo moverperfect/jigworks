@@ -465,7 +465,7 @@ describe("signing in to the Preview", () => {
     const host = new URL((await preview(workspace.id)).url).hostname;
     expect((await tabSignIn(host, "/", testAccess.secondDeveloper)).status).toBe(404);
 
-    for (const elsewhere of ["//elsewhere.example/steal", "/\\elsewhere.example/steal", "/\t/elsewhere.example/steal", "https://elsewhere.example/", "//[oops"]) {
+    for (const elsewhere of ["//elsewhere.example/steal", "/\\elsewhere.example/steal", "/\t/elsewhere.example/steal", "/a/..//elsewhere.example/steal", "https://elsewhere.example/", "//[oops"]) {
       const link = (await tabSignIn(host, elsewhere)).headers.get("Location")!;
       const exchanged = await browse(link, { dest: "document" });
       expect(exchanged.headers.get("Location")).toBe("/");

@@ -379,7 +379,7 @@ export function agentTools(workspace: {
     }),
     request_preview: tool({
       description:
-        "Sends the Preview, which runs the latest successful Build, an HTTP request and returns the response's status, headers and body. Build first to try new changes.",
+        "Sends the Preview, which runs the latest successful Build, an HTTP request and returns the response's status, headers and body. It doesn't follow redirects: a redirect comes back with its Location and any Set-Cookie headers. Build first to try new changes.",
       inputSchema: z.object({
         method: z.string().default("GET").describe("The HTTP method, such as GET or POST."),
         path: z.string().describe("The path and query, such as /api/items?page=2."),
