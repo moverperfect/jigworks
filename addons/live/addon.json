@@ -1,0 +1,12 @@
+{
+  "name": "Showing changes as they happen",
+  "description": "Keeps a page up to date with what other people change, by asking one of the app's routes every few seconds while the page is open, without reloading it.",
+  "fits": "Add it when a page should show other people's changes without being reloaded, such as names added to a sign-up list or votes as they come in. Only for an app with a front end.",
+  "needs": ["storage"],
+  "packages": {},
+  "secrets": [],
+  "edits": [
+    "On each GET route a page keeps up to date, add Hono's ETag middleware, `import { etag } from \"hono/etag\";`, as `app.get(\"/api/signups\", etag(), ...)`, so an answer that hasn't changed goes back as a 304 without its body.",
+    "In the page, import `poll` from `./live` (from src/client/App.tsx; `../live` from a folder under src/client) and start it in a `useEffect`, as its notes say."
+  ]
+}

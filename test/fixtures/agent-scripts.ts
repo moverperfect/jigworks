@@ -172,6 +172,69 @@ export default app;
 // The app's storage (see "Storage" in AGENTS.md).
 export { Store } from "./store";
 `;
+/** The Worker + React Template's Worker with routes that keep sign-ups and list them, the list with an ETag for the live add-on. */
+export const liveIndex = `import { Hono } from "hono";
+import { etag } from "hono/etag";
+import type { Hello, Signup } from "../shared/api";
+import { collection } from "./store";
+
+const signups = (env: Env) => collection<Signup>(env.STORE, "signups");
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/hello/:name", (c) => {
+  const hello: Hello = { message: \`\${c.env.GREETING}, \${c.req.param("name")}\` };
+  return c.json(hello);
+});
+
+app.get("/api/signups", etag(), async (c) => c.json(await signups(c.env).list()));
+
+app.post("/api/signups/:name", async (c) => c.json(await signups(c.env).add({ name: c.req.param("name") })));
+
+export default app;
+
+// The app's storage (see "Storage" in AGENTS.md).
+export { Store } from "./store";
+`;
+/** The Worker + React Template's types, with a sign-up as the list's routes answer it. */
+export const liveApi = `/** What \`GET /api/hello/:name\` returns. */
+export interface Hello {
+  message: string;
+}
+
+/** A sign-up, as \`GET /api/signups\` lists them. */
+export interface Signup {
+  name: string;
+}
+`;
+/** The Worker + React Template's page, keeping a list of sign-ups up to date with the live add-on's poll. */
+export const liveApp = `import { useEffect, useState } from "react";
+import type { Hello, Signup } from "../shared/api";
+import { poll } from "./live";
+
+/** A sign-up as the list gives it, with the ID the store gave it. */
+type Listed = Signup & { id: string };
+
+export function App() {
+  const [hello, setHello] = useState<Hello | null>(null);
+  const [signups, setSignups] = useState<Listed[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/hello/React")
+      .then((response) => response.json() as Promise<Hello>)
+      .then(setHello);
+  }, []);
+  useEffect(() => poll<Listed[]>("/api/signups", setSignups), []);
+
+  return (
+    <main className="mx-auto flex min-h-screen max-w-xl flex-col justify-center gap-6 p-8">
+      <h1 className="text-4xl font-bold tracking-tight text-slate-900">Your app</h1>
+      <p className="text-lg text-slate-600">{hello ? hello.message : "Asking the Worker…"}</p>
+      <ul>{signups ? signups.map((signup) => <li key={signup.id}>{signup.name}</li>) : <li>Loading…</li>}</ul>
+    </main>
+  );
+}
+`;
 /** The value the Developer gives for the Secret that `ask-for-secret` asks for, which must never reach the model. */
 export const askedSecretValue = "key-from-the-email-service";
 
@@ -418,6 +481,17 @@ export const agentScripts: Record<string, Script> = {
       { name: "write", input: { path: "/src/server/index.ts", content: aiIndex } },
     ],
     "Your app sorts the messages people send.",
+  ),
+
+  // Adds the live add-on to a Worker + React Template app, then makes its joining edits: a list of sign-ups the page keeps up to date.
+  "add-live-and-join": addAndJoin(
+    "live",
+    [
+      { name: "write", input: { path: "/src/shared/api.ts", content: liveApi } },
+      { name: "write", input: { path: "/src/server/index.ts", content: liveIndex } },
+      { name: "write", input: { path: "/src/client/App.tsx", content: liveApp } },
+    ],
+    "Your app's list of sign-ups shows new names as they come in.",
   ),
 
   // Adds the organiser's area, email and AI to a Worker + React Template app in one step, as Opus calls tools, then makes all their joining edits.
