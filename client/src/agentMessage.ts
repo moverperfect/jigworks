@@ -50,6 +50,7 @@ const plainTools: Record<string, string> = {
   delete: "Changing your app",
   bash: "Changing your app",
   add_package: "Adding a ready-made part",
+  add_addon: "Adding to your app",
   check: "Checking for mistakes",
   build: "Building your app",
   test: "Testing your app",
@@ -202,6 +203,7 @@ const toolVerbs: Record<string, [failed: string, running: string, done: string]>
   check: ["check", "Checking", "Checked"],
   build: ["build", "Building", "Built"],
   add_package: ["add", "Adding", "Added"],
+  add_addon: ["add", "Adding", "Added"],
 };
 
 /** A tool call's line under "Technical details": `verb` says how it went, before what it worked on. */
@@ -252,6 +254,8 @@ function toolSubject(name: string, input: unknown): string {
       return field("query");
     case "add_package":
       return field("name");
+    case "add_addon":
+      return field("addon");
     case "bash": {
       const script = field("script").trim();
       const firstLine = script.split("\n", 1)[0] ?? "";

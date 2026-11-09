@@ -60,8 +60,37 @@ const runtimeTypesStart = "// Begin runtime types";
 const typesFile = "worker-configuration.d.ts";
 const agentsFile = "AGENTS.md";
 
-/** The heading an add-on's notes go under in AGENTS.md. */
-const addonHeading = (id: string, name: string) => `## ${name} (add-on \`${id}\`)`;
+/** What ends the heading an add-on's notes go under in AGENTS.md, whatever the add-on was called then. */
+const addonMark = (id: string) => `(add-on \`${id}\`)`;
+
+/** The heading an add-on's notes go under in AGENTS.md, which records that the app has it. */
+export const addonHeading = (id: string, name: string) => `## ${name} ${addonMark(id)}`;
+
+/** Whether an app has the add-on `id`, going by the headings in its `agentsMd`. */
+export function hasAddon(agentsMd: string, id: string): boolean {
+  return agentsMd.split("\n").some((line) => line.startsWith("## ") && line.trimEnd().endsWith(addonMark(id)));
+}
+
+/**
+ * The add-ons `ids` and those they need, each once, with an add-on's needs
+ * before it, appended to `into`. Throws, naming `namedBy`, on one that isn't
+ * in `addons` or that needs itself.
+ */
+export function withNeeds(
+  addons: Record<string, Pick<AddonManifest, "needs">>,
+  ids: string[],
+  namedBy: string,
+  into: string[] = [],
+  path: string[] = [],
+): string[] {
+  for (const id of ids) {
+    if (!addons[id]) throw new Error(`${namedBy} names the add-on ${id}, but there's no addons/${id}.`);
+    if (path.includes(id)) throw new Error(`The ${id} add-on needs itself, through ${[...path, id].join(", ")}.`);
+    withNeeds(addons, addons[id].needs, `The ${id} add-on`, into, [...path, id]);
+    if (!into.includes(id)) into.push(id);
+  }
+  return into;
+}
 
 /**
  * Packs the Templates and add-ons. A Template that names add-ons gets their
@@ -94,18 +123,29 @@ export function pack(templateSources: Record<string, TemplateSource>, addonSourc
     for (const need of needs) if (!addons[need]) throw new Error(`The ${id} add-on needs the add-on ${need}, but there's no addons/${need}.`);
   }
 
-  // An add-on's needs come before it.
-  const withNeeds = (ids: string[], path: string[], into: string[], namedBy: string) => {
-    for (const id of ids) {
-      if (!addons[id]) throw new Error(`${namedBy} names the add-on ${id}, but there's no addons/${id}.`);
-      if (path.includes(id)) throw new Error(`The ${id} add-on needs itself, through ${[...path, id].join(", ")}.`);
-      withNeeds(addons[id].needs, [...path, id], into, `The ${id} add-on`);
-      if (!into.includes(id)) into.push(id);
-    }
-    return into;
-  };
   // Every add-on's, so one no Template names can't need itself either.
-  withNeeds(Object.keys(addons), [], [], "addons/");
+  withNeeds(addons, Object.keys(addons), "addons/");
+  // add_addon adds an add-on with those it needs, so together they may write
+  // each file only once and ask for only one version of each Package.
+  for (const id of Object.keys(addons)) {
+    const writtenBy = new Map<string, string>();
+    const versions = new Map<string, { version: string; by: string }>();
+    for (const one of withNeeds(addons, [id], "addons/")) {
+      const { files, packages } = addons[one]!;
+      for (const file of Object.keys(files)) {
+        const other = writtenBy.get(file);
+        if (other) throw new Error(`The ${one} add-on and the ${other} add-on both write ${file}. Only one of them may.`);
+        writtenBy.set(file, one);
+      }
+      for (const [pkg, version] of Object.entries(packages)) {
+        const other = versions.get(pkg);
+        if (other && other.version !== version) {
+          throw new Error(`The ${one} add-on and the ${other.by} add-on ask for different versions of the Package ${pkg}, ${version} and ${other.version}. Give them one.`);
+        }
+        versions.set(pkg, { version, by: one });
+      }
+    }
+  }
 
   let runtimeTypes = "";
   const templates: Record<string, PackedTemplate> = {};
@@ -113,7 +153,7 @@ export function pack(templateSources: Record<string, TemplateSource>, addonSourc
     const { name, description, fits, addons: applied = [] } = manifest;
     const files = { ...own };
     const writtenBy = new Map(Object.keys(own).map((file) => [file, `the ${templateId} Template`]));
-    for (const id of withNeeds(applied, [], [], `The ${templateId} Template`)) {
+    for (const id of withNeeds(addons, applied, `The ${templateId} Template`)) {
       const addon = addons[id]!;
       if (Object.keys(addon.packages).length) {
         throw new Error(`The ${templateId} Template is built from the ${id} add-on, whose Packages packing can't add yet.`);

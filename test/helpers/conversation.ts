@@ -1,6 +1,6 @@
 import { exports } from "cloudflare:workers";
 import type { UIMessage } from "ai";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import type { ConversationState, LastTurn, MessageMetadata } from "../../src/shared/conversation";
 import { accessToken, testAccess } from "./access";
 import { call } from "./api";
@@ -122,6 +122,30 @@ export async function history(id: string): Promise<UIMessage<MessageMetadata>[]>
   const frame = await conversation.next((frame) => frame.type === "cf_agent_chat_messages");
   conversation.close();
   return frame.messages!;
+}
+
+/** The `turn` log lines written while `act` ran. */
+export async function turnLines(act: () => Promise<unknown>): Promise<Record<string, unknown>[]> {
+  const logged = vi.spyOn(console, "log");
+  try {
+    await act();
+    return logged.mock.calls
+      .map(([line]) => (typeof line === "string" && line.startsWith("{") ? JSON.parse(line) : null))
+      .filter((line) => line?.event === "turn");
+  } finally {
+    logged.mockRestore();
+  }
+}
+
+/** What each tool call in the Agent's messages returned, or the error it failed with, in order. */
+export async function toolResults(id: string): Promise<{ tool: string; result: unknown }[]> {
+  return (await history(id))
+    .flatMap((message: UIMessage) => message.parts)
+    .filter((part) => part.type.startsWith("tool-"))
+    .map((part) => {
+      const tool = part as { type: string; output?: unknown; errorText?: string };
+      return { tool: tool.type.slice("tool-".length), result: tool.errorText ?? tool.output };
+    });
 }
 
 /** All the text an assistant message streamed. */

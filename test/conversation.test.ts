@@ -9,7 +9,7 @@ import { askedSecretValue, brokenCount, buildableIndex, failingTest, fixedCount 
 import { summaryReply } from "./fixtures/fake-anthropic";
 import { call, create } from "./helpers/api";
 import { testAccess } from "./helpers/access";
-import { connect, history, runTurn, startTurn, textOf, turnEnd, turnStart, upgrade, type Conversation } from "./helpers/conversation";
+import { connect, history, runTurn, startTurn, textOf, turnEnd, turnLines, turnStart, upgrade, type Conversation } from "./helpers/conversation";
 
 // Turns, through the platform's WebSocket and HTTP interface. The model is the
 // scripted one in test/fixtures/agent-scripts.ts, behind a fake Anthropic API.
@@ -70,9 +70,16 @@ describe("a Turn", () => {
     expect(sent.system).toContain(
       "  - worker-react (Worker + React): A Cloudflare Worker using Hono, with a React front end styled with Tailwind, and a store that remembers records. Choose it for most apps",
     );
+    // Each add-on, with when it fits, and that the Agent should prefer one to writing its ability itself.
+    expect(sent.system).toContain("  - storage (Storage): A Durable Object with a small typed store of records, in named collections. Add it when");
+    expect(sent.system).toContain("prefer it to writing the same ability yourself");
+    expect(sent.system).toContain("Give each add-on its own step");
+    // Its files are written before the Agent could ask, so its Secrets come once the app works.
+    expect(sent.system).toContain("An add-on's secrets are the one exception to asking before you change files");
     expect(sent.latest).toContain("the Developer changed /src/notes.md");
     expect(sent.tools).toEqual(
       expect.arrayContaining([
+        "add_addon",
         "add_package",
         "ask",
         "ask_for_secret",
@@ -506,19 +513,6 @@ describe("a restart during a Turn", () => {
     return metadata?.from === "developer" ? metadata.turnStartedAt! : "";
   }
 
-  /** The `turn` log lines written while `act` ran. */
-  async function turnLines(act: () => Promise<unknown>): Promise<Record<string, unknown>[]> {
-    const logged = vi.spyOn(console, "log");
-    try {
-      await act();
-      return logged.mock.calls
-        .map(([line]) => (typeof line === "string" && line.startsWith("{") ? JSON.parse(line) : null))
-        .filter((line) => line?.event === "turn");
-    } finally {
-      logged.mockRestore();
-    }
-  }
-
   it("checks and builds the files, and undoes the Turn when they leave the app broken", async () => {
     const workspace = await create("Restarted, broken");
     const conversation = await connect(workspace.id);
@@ -565,6 +559,16 @@ describe("a restart during a Turn", () => {
     expect(ended).toEqual([expect.objectContaining({ status: "aborted", error: restartedDuringTurn, startedAt: restartedAt })]);
     const again = await turnLines(() => restart(workspace.id, conversation, { stage: "checking", restarted: true }));
     expect(again).toEqual([expect.objectContaining({ status: "aborted", error: restartedDuringTurn, startedAt: restartedAt })]);
+  });
+
+  it("logs the add-ons the Turn added before the restart, kept in storage rather than lost with the isolate", async () => {
+    const workspace = await create("Restarted, with storage");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:add-storage] Remember the messages");
+    const ended = await turnLines(() => restart(workspace.id, conversation));
+    expect(ended).toEqual([expect.objectContaining({ status: "aborted", addons: ["storage"] })]);
+    const again = await turnLines(() => restart(workspace.id, conversation, { stage: "checking", restarted: true }));
+    expect(again).toEqual([expect.objectContaining({ status: "aborted", addons: ["storage"] })]);
   });
 
   it("ends the Turn without a Check when the Workspace restarts again while ending it", async () => {

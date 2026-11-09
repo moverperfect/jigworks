@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pack, type AddonManifest, type AddonSource, type TemplateSource } from "../src/templates/pack";
+import { hasAddon, pack, type AddonManifest, type AddonSource, type TemplateSource } from "../src/templates/pack";
 
 // Packing the Templates and add-ons, as `pnpm generate` does (templates/pack.mjs).
 
@@ -68,6 +68,21 @@ describe("packing", () => {
     );
   });
 
+  it("fails when an add-on and one it needs write the same file, as add_addon would add them together", () => {
+    expect(() => pack({}, { one: addon(), two: addon({ needs: ["one"] }) })).toThrow(
+      "The two add-on and the one add-on both write src/server/thing.ts. Only one of them may.",
+    );
+  });
+
+  it("fails when an add-on and one it needs ask for different versions of a Package, but not the same one", () => {
+    const one = (version: string) => addon({ packages: { resend: version } }, { "src/server/one.ts": "1" });
+    const two = (version: string) => addon({ needs: ["one"], packages: { resend: version } }, { "src/server/two.ts": "2" });
+    expect(() => pack({}, { one: one("1.0.0"), two: two("1.1.0") })).toThrow(
+      "The two add-on and the one add-on ask for different versions of the Package resend, 1.1.0 and 1.0.0. Give them one.",
+    );
+    expect(() => pack({}, { one: one("1.0.0"), two: two("1.0.0") })).not.toThrow();
+  });
+
   it("fails when an add-on needs itself, even one no Template names", () => {
     expect(() => pack({}, { one: addon({ needs: ["one"] }) })).toThrow("The one add-on needs itself, through one, one.");
   });
@@ -76,5 +91,15 @@ describe("packing", () => {
     expect(() => pack({ plain: template({}, ["one"]) }, { one: addon({ needs: ["two"] }), two: addon({ needs: ["one"] }) })).toThrow(
       "The one add-on needs itself, through one, two, one.",
     );
+  });
+});
+
+describe("whether an app has an add-on", () => {
+  it("goes by a heading that ends with its ID, whatever the add-on was called then", () => {
+    expect(hasAddon("# This Workspace\n\n## Storage (add-on `storage`)\n\nNotes.\n", "storage")).toBe(true);
+    expect(hasAddon("## Somewhere to keep things (add-on `storage`)  \n", "storage")).toBe(true);
+    expect(hasAddon("## Storage (add-on `storage`)\n", "email")).toBe(false);
+    // Only a heading counts, not a mention.
+    expect(hasAddon("Like the one called Storage (add-on `storage`)\n", "storage")).toBe(false);
   });
 });

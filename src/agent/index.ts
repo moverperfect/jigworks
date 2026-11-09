@@ -5,11 +5,11 @@ import { z } from "zod";
 import { isSecretName, secretNameRule } from "../apphost/secrets";
 import { normalisePath } from "../files";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
-import type { CheckReport, Problem } from "../shared/check-report";
+import type { CheckReport, PackageStatus, Problem } from "../shared/check-report";
 import { askingTools, maxRetries, type LastTurn, type MessageMetadata } from "../shared/conversation";
 import { failuresOf, testFailures, type TestCounts, type TestReport } from "../shared/test-report";
-import { listTemplates } from "../templates";
-import type { Workspace } from "../workspace";
+import { addonHeading, listAddons, listTemplates } from "../templates";
+import type { AddonsAdded, Workspace } from "../workspace";
 
 /** The Agent's model: `AGENT_MODEL` on the Anthropic API, or on the scripted model at `AGENT_BASE_URL`. */
 export function agentModel(env: Env): LanguageModel {
@@ -37,7 +37,7 @@ export const instructions = `You are the Agent on a development platform where y
 
 Talking with the Developer:
 - Use plain, everyday words. Never put code, file names, commands or error messages in your replies, unless the Developer asks for them. The page keeps your tool calls behind "Technical details" for anyone curious.
-- Use the page's words: "your app" for the Workspace and what it runs, "live" for an app that's published, "making sure it works" for the checks that end each Turn, and "a ready-made part" for a Package. Don't say Workspace, Turn, Check, Build, Template, Package, Preview or Deployment.
+- Use the page's words: "your app" for the Workspace and what it runs, "live" for an app that's published, "making sure it works" for the checks that end each Turn, and "a ready-made part" for a Package. Don't say Workspace, Turn, Check, Build, Template, add-on, Package, Preview or Deployment.
 - Keep replies short: a sentence or two before you start, and at the end one paragraph of no more than three plain sentences, saying what changed and what the Developer could try in their app. No headings, lists or second paragraph, and don't say how you made sure it works: the steps show that.
 - Show what you're doing with the steps tool. Call it at the start of every Turn with the steps you plan, each in a few plain words such as "Adding a waiting list", and again as each step finishes, with that step ticked off. Make each call alongside your other tool calls in the same step, so it doesn't use up a step of its own. Keep to 2 to 6 steps. If your plan changes, call it with the new list. When a step decides something, give it a detail saying what it decided, in a few plain words, which the page shows under the step.
 - When something only the Developer can decide would change what you build, ask rather than guess: call ask with the question and 2 to 4 answers they can pick, and stop there. Ask before you change any files: a Turn that ends with a question gets no retries, so if the app doesn't work then, your changes are put back. Put the question in ask only, not in your reply as well. Otherwise choose something sensible and say what you chose.
@@ -47,6 +47,14 @@ Talking with the Developer:
 Starting the app:
 - A new Workspace has no files: it starts from the Developer's description of the app they want. Before anything else, start the app with start_app, alongside your first call to steps and no other tool: choose the Template that suits the description, and a short name for the app from it, such as Sunday Runs. In that call to steps, tick off "Choosing a starting point" and "Naming your app", with what you chose as their details, such as "A web page that remembers things" and "Sunday Runs". The platform writes the Template's files and makes the app's web address from the name. Until the app is started, the tools that change, check, build or test files refuse. Then tell the Developer in plain words what you started from and why, such as "a web page that remembers things, because people need to put their names down". The Templates:
 ${listTemplates()
+  .map(({ id, name, description, fits }) => `  - ${id} (${name}): ${description} ${fits}`)
+  .join("\n")}
+
+Add-ons:
+- An add-on is a tested set of files and notes that gives the app one ability. Add one with add_addon, in the first Turn or any later one, whenever the Developer's request needs its ability: prefer it to writing the same ability yourself. It brings the add-ons it needs, writes its own files, and adds its notes to AGENTS.md, which then say how to use it. It doesn't change your files: it tells you the edits that join it to the app, which you then make, and the secrets it needs. An app already has an add-on when its AGENTS.md has a heading naming it, such as "${addonHeading("storage", "Storage")}".
+- An add-on's secrets are the one exception to asking before you change files: ask for them with ask_for_secret once you've made its edits and the app works, so your changes are kept.
+- Give each add-on its own step, saying in plain words what it adds, such as "Adding somewhere to keep things", with what it gave as its detail, such as "A store for the messages". The add-ons:
+${listAddons()
   .map(({ id, name, description, fits }) => `  - ${id} (${name}): ${description} ${fits}`)
   .join("\n")}
 
@@ -216,6 +224,7 @@ export function agentTools(workspace: {
   /** A test run, of every test file or only `files`, after the step's other tools have finished. */
   test: (files?: string[]) => Promise<TestReport>;
   addPackageForAgent: Workspace["addPackageForAgent"];
+  addAddonForAgent: Workspace["addAddonForAgent"];
   requestPreview: Workspace["requestPreview"];
   previewLogs: Workspace["previewLogs"];
   secretNames: Workspace["secretNames"];
@@ -350,9 +359,22 @@ export function agentTools(workspace: {
         const result = await workspace.addPackageForAgent(name, { range, dev });
         // Thrown, so the Conversation shows the call as failed. The model still reads the message.
         if (!result.ok) throw new Error(`Couldn't add ${name}: ${result.error}`);
-        const warnings = result.status.warnings.map((warning) => `\nPackage warning: ${warning}`).join("");
-        const failed = result.status.state === "failed" ? `\nThe install failed: ${result.status.error}` : "";
-        return `Added ${name} ${result.version}.${failed}${warnings}`;
+        return [`Added ${name} ${result.version}.`, ...describeInstall(result.status)].join("\n");
+      },
+    }),
+    add_addon: tool({
+      description:
+        "Adds an add-on to the app by its ID, with the add-ons it needs first: writes its files, installs its Packages, and adds its notes to AGENTS.md. It refuses an add-on the app already has, or one whose files would overwrite different ones, and then changes nothing. Returns its notes, the edits that join it to the app for you to make, the secrets it needs, and its tests to run.",
+      inputSchema: z.object({
+        addon: z.string().describe("The add-on's ID, such as storage."),
+      }),
+      execute: async ({ addon }) => {
+        const result = await workspace.addAddonForAgent(addon);
+        // Thrown, so the Conversation shows the call as failed. The model still reads the message.
+        if (!result.ok) throw new Error(`Couldn't add the ${addon} add-on. ${result.error}`);
+        const secretsNeeded = result.added.flatMap(({ secrets }) => secrets);
+        const given = secretsNeeded.length > 0 ? new Set((await workspace.secretNames()).map(({ name }) => name)) : new Set<string>();
+        return describeAddons(result, given);
       },
     }),
     request_preview: tool({
@@ -395,6 +417,37 @@ export function agentTools(workspace: {
     }),
   };
 }
+
+/** What `add_addon` added, for the Agent: its notes, and the edits, Secrets and tests that follow. `given` is the Secrets the Workspace already has. */
+export function describeAddons({ added, had, written, tests, status }: Extract<AddonsAdded, { ok: true }>, given: Set<string>): string {
+  const lines: string[] = [];
+  // Needs come first, so the add-on asked for is the last.
+  const needed = added.slice(0, -1).map(({ id }) => id);
+  const after = needed.length > 0 ? `, after ${andList(needed)}, which it needs` : "";
+  lines.push(`Added the ${added.at(-1)!.id} add-on${after}.${written.length > 0 ? ` Wrote ${andList(written.map((path) => `/${path}`))}.` : ""}`);
+  if (had.length > 0) lines.push(`It needs ${andList(had.map(({ id }) => id))} too, which the app already had.`);
+  const packages = added.flatMap(({ packages }) => Object.entries(packages).map(([name, version]) => `${name} ${version}`));
+  if (packages.length > 0) lines.push(`Added the Packages ${andList(packages)}.`);
+  if (status) lines.push(...describeInstall(status));
+  lines.push("", "Its notes, now in /AGENTS.md:", "", "<notes>", ...added.map(({ notes }) => notes.trim()), "</notes>");
+  const edits = added.flatMap(({ edits }) => edits);
+  if (edits.length > 0) lines.push("", "To join it to the app, make these edits in the files as they stand:", ...edits.map((edit) => `- ${edit}`));
+  if (tests.length > 0) lines.push("", `Then run its tests with the test tool: ${andList(tests.map((path) => `/${path}`))}.`);
+  const secrets = added.flatMap(({ secrets }) => secrets).filter(({ name }) => !given.has(name));
+  if (secrets.length > 0) {
+    lines.push("", "It needs secrets the Developer hasn't given. Once the app works, ask for each with ask_for_secret, giving this reason:");
+    lines.push(...secrets.map(({ name, reason }) => `- ${name}: ${reason}`));
+  }
+  return lines.join("\n");
+}
+
+/** An install's failure and warnings, a line each, for the Agent. */
+function describeInstall({ state, error, warnings }: PackageStatus): string[] {
+  return [...(state === "failed" ? [`The install failed: ${error}`] : []), ...warnings.map((warning) => `Package warning: ${warning}`)];
+}
+
+/** For example "/a.ts, /b.ts and /c.ts". */
+const andList = (items: string[]) => new Intl.ListFormat("en-GB").format(items);
 
 const summaryInstructions = `Summarise this Conversation between a Developer and the Agent about a Workspace's files, so the Agent can carry on from the summary alone. Keep what the Developer wants, what was decided, which files were made or changed and why, and anything left unfinished. Leave out pleasantries. Write at most 300 words.`;
 
