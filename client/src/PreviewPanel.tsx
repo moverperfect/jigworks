@@ -40,6 +40,9 @@ export function PreviewPanel({
   onShowCode,
   showCodeButton,
   narrow,
+  problemLines,
+  onSeeDetails,
+  onHideProblems,
 }: {
   preview: PreviewFrame;
   state: AppAreaState;
@@ -54,6 +57,11 @@ export function PreviewPanel({
   showCodeButton: Ref<HTMLButtonElement>;
   /** Whether the page is narrow, as on a phone. */
   narrow: boolean;
+  /** What the app's server errors stopped it doing, in the page's words, or null (see `problemsNote`). */
+  problemLines: string[] | null;
+  /** Shows the code with the logs. */
+  onSeeDetails(): void;
+  onHideProblems(): void;
 }) {
   const pathId = useId();
   const moreId = useId();
@@ -162,6 +170,27 @@ export function PreviewPanel({
         )}
       </div>
 
+      {/* Always there, so screen readers hear a new note (#104). */}
+      <div className="app-problems" aria-live="polite">
+        {problemLines && (
+          <div className="message message-notice">
+            <div>
+              {problemLines.map((line) => (
+                <p key={line}>{line}</p>
+              ))}
+            </div>
+            <div className="app-problems-actions">
+              <button type="button" className="button button-small" onClick={onSeeDetails}>
+                See the details
+              </button>
+              <button type="button" className="button button-small" onClick={onHideProblems}>
+                Hide
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* The app on a Paper sheet, held in the jig: its brackets and their label say what's happening to it. */}
       <div className={`preview-view preview-${device}`} data-state={state}>
         {/* Always there, so screen readers hear each change of state. */}
@@ -229,10 +258,22 @@ function FirstBuild({ progress }: { progress: TurnProgress }) {
 }
 
 /** The Preview's server logs and front-end errors, newest last, which follow new lines unless the Developer scrolls up. */
-export function PreviewLogs({ id, visible }: { id: string; visible: boolean }) {
+export function PreviewLogs({
+  id,
+  visible,
+  expanded,
+  onToggle,
+  toggleButton,
+}: {
+  id: string;
+  visible: boolean;
+  expanded: boolean;
+  onToggle(): void;
+  /** The button that shows and hides them, which "See the details" beside the app focuses. */
+  toggleButton: Ref<HTMLButtonElement>;
+}) {
   const headingId = useId();
-  const [expanded, setExpanded] = useState(true);
-  const { logs, error, refresh } = usePreviewLogs(id, visible && expanded);
+  const { data: logs, error, refresh } = usePreviewLogs(id, visible && expanded);
   const body = useRef<HTMLDivElement>(null);
   const following = useRef(true);
 
@@ -246,11 +287,12 @@ export function PreviewLogs({ id, visible }: { id: string; visible: boolean }) {
       <div className="problems-header">
         <h3 id={`${headingId}-heading`} className="problems-heading">
           <button
+            ref={toggleButton}
             type="button"
             className="problems-toggle"
             aria-expanded={expanded}
             aria-controls={`${headingId}-body`}
-            onClick={() => setExpanded((shown) => !shown)}
+            onClick={onToggle}
           >
             <span className="chevron" aria-hidden="true">
               {expanded ? "▾" : "▸"}

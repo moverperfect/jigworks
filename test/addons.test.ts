@@ -8,7 +8,7 @@ import type { Workspace } from "../src/workspace";
 import { summaryReply } from "./fixtures/fake-anthropic";
 import { resendAccountAddress, resendKey } from "./fixtures/fake-resend";
 import { call, create } from "./helpers/api";
-import { connect, history, runTurn, toolResults, turnLines } from "./helpers/conversation";
+import { connect, history, runTurn, textOf, toolResults, turnEnd, turnLines } from "./helpers/conversation";
 
 // The Agent adds an add-on with add_addon (ADR 0019). The model is the
 // scripted one in test/fixtures/agent-scripts.ts.
@@ -211,6 +211,32 @@ describe("sending email", () => {
       ok: false,
       error: expect.stringMatching(/^Resend refused the email: You can only send testing emails to your own email address/),
     });
+  });
+});
+
+describe("a key the Developer saves", () => {
+  it("is tried by the Agent's next Turn, which reads the logs and says plainly when Resend refused it (#104)", async () => {
+    const workspace = await create("Sign-ups", undefined, "worker-react");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:add-email-then-try-key] Email me when someone signs up");
+
+    // A made-up key, saved as the page saves it, which starts the next Turn with the platform's note.
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/RESEND_API_KEY`, { method: "PUT", body: { value: "re_made_up" } })).status).toBe(204);
+    const from = conversation.frames.length;
+    expect((await call(`/api/workspaces/${workspace.id}/turns`, { method: "POST", body: { secret: "RESEND_API_KEY" } })).status).toBe(202);
+    expect(await turnEnd(conversation, from)).toMatchObject({ status: "completed", restored: false });
+    conversation.close();
+
+    const messages = await history(workspace.id);
+    const note = textOf(messages.at(-2)!);
+    expect(note).toContain("(From the platform: the Developer added the Secret RESEND_API_KEY.");
+    expect(note).toContain("request_preview");
+    expect(note).toContain("preview_logs");
+    // The Agent tried the app, and read the refusal in the logs straight after, though the tail delivers it late.
+    const tried = (await toolResults(workspace.id)).slice(-2);
+    expect(tried.map(({ tool }) => tool)).toEqual(["request_preview", "preview_logs"]);
+    expect(tried[1]!.result).toContain("server error: Resend refused the email: API key is invalid");
+    expect(textOf(messages.at(-1)!)).toBe("Resend refused your key, so the email wasn't sent. Check it at resend.com/api-keys.");
   });
 });
 

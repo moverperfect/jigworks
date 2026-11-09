@@ -1,12 +1,14 @@
 import { useEffect, useEffectEvent, useRef, useState, type RefObject } from "react";
 import type { BuildReport } from "../../src/shared/build-report.ts";
-import { getPreview, getPreviewLogs, previewFrameLink, toApiError, type ApiError, type AppLogEntry } from "./api";
+import { getPreview, getPreviewLogs, getPreviewProblems, previewFrameLink, toApiError, type ApiError, type AppLogEntry } from "./api";
+import type { PreviewProblems } from "../../src/shared/app-logs.ts";
 import { useLoad, usePageVisible, type LoadState } from "./hooks";
 import { forgetBuilds, noBuildsSeen, seeBuilds } from "./publish";
 
 /** A sign-out this soon after the last one came straight after a fresh link, so the browser isn't keeping the cookie. */
 const refusedWithinMs = 10_000;
 const logsEveryMs = 3_000;
+const problemsEveryMs = 5_000;
 
 export interface PreviewFrame {
   /** Where the Preview answers, whether it has a Build to run yet, and that Build's hash. */
@@ -154,30 +156,35 @@ export function usePreviewFrame(id: string, build: BuildReport | null, visible: 
   };
 }
 
-export interface PreviewLogs {
-  /** The newest lines, oldest first, or null until they've loaded. */
-  logs: AppLogEntry[] | null;
+interface Polled<T> {
+  /** The latest read, or null until the first has come back. */
+  data: T | null;
   error: ApiError | null;
   refresh(): void;
 }
 
-/** The Preview's logs, read every few seconds while `active` and the page is showing. */
-export function usePreviewLogs(id: string, active: boolean): PreviewLogs {
+/**
+ * Reads `read` every `everyMs` while `active` and the page is showing, each
+ * read after the last has come back. `read` reads Workspace `id`, which
+ * starts the reads afresh when it changes.
+ */
+function usePolled<T>(id: string, read: () => Promise<T>, active: boolean, everyMs: number): Polled<T> {
   const pageVisible = usePageVisible();
-  const [logs, setLogs] = useState<AppLogEntry[] | null>(null);
+  const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [refreshes, setRefreshes] = useState(0);
+  const latestRead = useEffectEvent(read);
 
   useEffect(() => {
     if (!active || !pageVisible) return;
     let current = true;
     let timer: ReturnType<typeof setTimeout> | undefined;
     // Each read waits for the last, so a slow platform isn't sent a queue of them.
-    const read = async () => {
+    const next = async () => {
       try {
-        const latest = await getPreviewLogs(id);
+        const latest = await latestRead();
         if (!current) return;
-        setLogs(latest);
+        setData(latest);
         setError(null);
       } catch (caught) {
         if (!current) return;
@@ -186,14 +193,24 @@ export function usePreviewLogs(id: string, active: boolean): PreviewLogs {
         // Reading again won't help until the Developer signs in again.
         if (failure.signedOut) return;
       }
-      timer = setTimeout(read, logsEveryMs);
+      timer = setTimeout(next, everyMs);
     };
-    void read();
+    void next();
     return () => {
       current = false;
       clearTimeout(timer);
     };
-  }, [id, active, pageVisible, refreshes]);
+  }, [id, active, pageVisible, everyMs, refreshes]);
 
-  return { logs, error, refresh: () => setRefreshes((count) => count + 1) };
+  return { data, error, refresh: () => setRefreshes((count) => count + 1) };
+}
+
+/** The Preview's logs, newest last, read every few seconds while `active` and the page is showing. */
+export function usePreviewLogs(id: string, active: boolean): Polled<AppLogEntry[]> {
+  return usePolled(id, () => getPreviewLogs(id), active, logsEveryMs);
+}
+
+/** The Preview's problems since its Build, for the note beside the app (#104), read every few seconds while `active` and the page is showing. */
+export function usePreviewProblems(id: string, active: boolean): PreviewProblems | null {
+  return usePolled(id, () => getPreviewProblems(id), active, problemsEveryMs).data;
 }

@@ -263,6 +263,12 @@ api.get("/workspaces/:id/preview/logs", async (c) => {
   return record ? c.json({ logs: await workspace(c, record.id).previewLogs() }) : noSuchWorkspace(c);
 });
 
+// What the page says beside the app about its Preview's problems (#104).
+api.get("/workspaces/:id/preview/problems", async (c) => {
+  const record = await ownWorkspace(c);
+  return record ? c.json(await workspace(c, record.id).latestPreviewProblems()) : noSuchWorkspace(c);
+});
+
 api.get("/workspaces/:id/check", async (c) => {
   const record = await ownWorkspace(c);
   return record ? c.json(await workspace(c, record.id).latestCheck()) : noSuchWorkspace(c);

@@ -14,5 +14,14 @@ export interface AppLogEntry {
   message: string;
 }
 
+/**
+ * The Build the Preview runs, or null before it has one, and its errors and
+ * warnings since it took it, or since its Secrets last changed, for the page (#104).
+ */
+export interface PreviewProblems {
+  hash: string | null;
+  problems: AppLogEntry[];
+}
+
 /** Whether a log line is a warning, rather than an error, among the Preview's problems (see `AppHost.problemsSince`). */
 export const isWarning = (entry: AppLogEntry) => entry.level === "warn";

@@ -1,3 +1,4 @@
+import { isWarning, type PreviewProblems } from "../../src/shared/app-logs.ts";
 import type { ConversationState } from "../../src/shared/conversation.ts";
 import type { TurnProgress } from "./agentMessage";
 import { liveNote, type PublishState } from "./publish";
@@ -72,4 +73,46 @@ export function appAreaNotes(
   if (state === "live") return { ...note, beside: liveNote(openToEveryone) };
   if (state === "ready" && publishing && publishing !== "live") return { ...note, beside: held[publishing] };
   return note;
+}
+
+/**
+ * What a server error stopped the app doing, in the page's words, from the
+ * add-ons' own words for it (addons/email, addons/ai), wherever they are in
+ * the line. The first that matches says it.
+ */
+const sayings: [RegExp, string][] = [
+  [/Resend refused the email: API key is invalid/, "Your app couldn't send an email: Resend refused the key."],
+  [/Resend refused the email: You can only send testing emails/, "Your app couldn't send an email: until you set up your own domain with Resend, it can only email the address you signed up with."],
+  [/The email wasn't sent: the Secret \w+ hasn't been set yet/, "Your app couldn't send an email: it doesn't have the key yet."],
+  [/Resend refused the email|The email wasn't sent/, "Your app couldn't send an email."],
+  [/Claude wasn't asked: Anthropic answered 40[13]/, "Your app couldn't ask Claude: Anthropic refused the key."],
+  [/Claude wasn't asked: Anthropic answered 400 .*credit/, "Your app couldn't ask Claude: the Anthropic account needs credit."],
+  [/Claude wasn't asked: the Secret \w+ hasn't been set yet/, "Your app couldn't ask Claude: it doesn't have the key yet."],
+  [/Claude wasn't asked|Claude's reply|Claude declined/, "Your app couldn't get an answer from Claude."],
+];
+const mostLinesShown = 3;
+
+/**
+ * The note beside a ready or live app about the server errors its Preview
+ * logged since its latest Build, or since its Secrets changed (#104), each
+ * said once in the page's words, newest last, with the time of the newest,
+ * which hiding the note records. Null when there's nothing to say: in any
+ * other state, when `read` is of a Build other than `goodHash`, the one the
+ * page shows, or when the Developer hid the note at `hiddenThrough` and no
+ * error came after. A new Build clears it, as its problems start afresh.
+ */
+export function problemsNote(
+  read: PreviewProblems | null,
+  state: AppAreaState,
+  goodHash: string | null,
+  hiddenThrough: string | null,
+): { lines: string[]; newest: string } | null {
+  if ((state !== "ready" && state !== "live") || !read?.hash || read.hash !== goodHash) return null;
+  // ISO 8601 times from the app host's clock, so they sort as strings.
+  const errors = read.problems.filter((entry) => entry.source === "server" && !isWarning(entry) && !(hiddenThrough && entry.at <= hiddenThrough));
+  if (errors.length === 0) return null;
+  const said = errors.map(({ message }) => sayings.find(([pattern]) => pattern.test(message))?.[1] ?? "Your app ran into a problem.");
+  // Each once, where it last came.
+  const lines = said.filter((line, index) => said.lastIndexOf(line) === index).slice(-mostLinesShown);
+  return { lines, newest: errors.at(-1)!.at };
 }

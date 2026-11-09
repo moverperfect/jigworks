@@ -69,6 +69,7 @@ How you work:
 - After building, try what you changed against the Preview with request_preview, beyond GET /: the routes, forms and actions you added or changed, as a browser would send them. Then read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
 - When the app needs a secret the Developer hasn't given, such as an email service's key, ask for it with ask_for_secret, saying why and where they'll find it, and stop there. As with a question, ask before you change any files, or your changes are put back if the app doesn't work then. Don't ask them to type or paste it to you, or to add it themselves from a menu. ask_for_secret is only for values that must stay secret, such as keys and passwords. Anything else the app needs, such as the address emails go to, ask for with ask, or choose something sensible.
+- A secret can be wrong, such as a key the service refuses, and you can't tell until the app uses it. Once the Developer adds one, try the part of the app that uses it once, with request_preview, and read preview_logs. If the service refused it, say so plainly and ask them to check it. Never say it works, or that an email should arrive, before you've seen it work.
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.`;
 
 /** Ends a Think turn after the step in which the Agent asked the Developer something, once `ask` or `ask_for_secret` took it. */
@@ -103,7 +104,7 @@ export function withAgentsMd(system: string, agentsMd: string | null): string {
  * its name.
  */
 export function developerMessage(request: TurnRequest, changedFiles: string[], turnStartedAt: string, undone: boolean): UIMessage<MessageMetadata> {
-  const text = typeof request === "string" ? request : `(From the platform: the Developer added the Secret ${request.addedSecret}.)`;
+  const text = typeof request === "string" ? request : addedSecretNote(request.addedSecret);
   const addedSecret = typeof request === "string" ? undefined : request.addedSecret;
   const parts: UIMessage["parts"] = [{ type: "text", text }];
   if (undone) {
@@ -118,6 +119,13 @@ export function developerMessage(request: TurnRequest, changedFiles: string[], t
   }
   return { id: crypto.randomUUID(), role: "user", parts, metadata: { from: "developer", changedFiles, turnStartedAt, addedSecret } };
 }
+
+/**
+ * The platform's note starting the Turn after the Developer added the Secret
+ * `name`: a key can be wrong, and only trying the app shows it (#104).
+ */
+export const addedSecretNote = (name: string) =>
+  `(From the platform: the Developer added the Secret ${name}. Try the part of the app that uses it once with request_preview, then read preview_logs, minding only the lines logged for your request. If it was refused, say so plainly and ask the Developer to check it, rather than saying it works.)`;
 
 /**
  * What came of the platform trying a new Preview: the status `GET /` answered
@@ -318,7 +326,7 @@ export function agentTools(workspace: {
     }),
     ask_for_secret: tool({
       description:
-        "Asks the Developer for a secret the app needs, such as an email service's key, and ends your Turn. Only for values that must stay secret, such as keys and passwords: ask for anything else, such as an email address, with ask. The page shows why, with a field that saves the value as a secret under the name, which the app reads from env. The value never enters the Conversation and you never see it. Once they save it, your next Turn starts with the platform's note that they added it. They can write to you instead.",
+        "Asks the Developer for a secret the app needs, such as an email service's key, and ends your Turn. Only for values that must stay secret, such as keys and passwords: ask for anything else, such as an email address, with ask. The page shows why, with a field that saves the value as a secret under the name, which the app reads from env. The value never enters the Conversation and you never see it. Once they save it, your next Turn starts with the platform's note that they added it, and you try it. They can write to you instead.",
       inputSchema: z.object({
         name: z
           .string()

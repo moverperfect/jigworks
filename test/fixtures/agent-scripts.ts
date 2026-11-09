@@ -94,7 +94,9 @@ app.get("/api/hello/:name", (c) => {
 app.post("/api/signups/:name", async (c) => {
   const name = c.req.param("name");
   const to = c.req.query("to") ?? c.env.OWNER_EMAIL;
-  return c.json(await sendEmail(c.env, { to, subject: \`\${name} signed up\`, text: \`\${name} has signed up.\` }));
+  const sent = await sendEmail(c.env, { to, subject: \`\${name} signed up\`, text: \`\${name} has signed up.\` });
+  if (!sent.ok) console.error(sent.error);
+  return c.json(sent);
 });
 
 export default app;
@@ -196,6 +198,21 @@ function addAndJoin(addons: string | string[], edits: { name: string; input: Rec
 }
 
 const organiserReply = "Your app has an organiser's area now.";
+
+/** The email add-on's joining edits to a Worker + React Template app, with the owner's address as a var. */
+const emailEdits: { name: string; input: Record<string, string> }[] = [
+  { name: "edit", input: { path: "/wrangler.jsonc", old_string: '"GREETING": "Hello"', new_string: '"GREETING": "Hello",\n    "OWNER_EMAIL": "owner@example.com"' } },
+  {
+    name: "edit",
+    input: {
+      path: "/worker-configuration.d.ts",
+      old_string: '\tGREETING: "Hello";\n',
+      new_string: '\tGREETING: "Hello";\n\tOWNER_EMAIL: string;\n\tRESEND_API_KEY?: string;\n',
+    },
+  },
+  { name: "write", input: { path: "/src/server/index.ts", content: emailIndex } },
+];
+const emailReply = "Your app emails you when someone signs up.";
 
 export const agentScripts: Record<string, Script> = {
   // Answers once, with no tools.
@@ -368,22 +385,27 @@ export const agentScripts: Record<string, Script> = {
   ], organiserReply),
 
   // Adds the email add-on to a Worker + React Template app, then makes its joining edits, with the owner's address as a var.
-  "add-email-and-join": addAndJoin(
-    "email",
-    [
-      { name: "edit", input: { path: "/wrangler.jsonc", old_string: '"GREETING": "Hello"', new_string: '"GREETING": "Hello",\n    "OWNER_EMAIL": "owner@example.com"' } },
-      {
-        name: "edit",
-        input: {
-          path: "/worker-configuration.d.ts",
-          old_string: '\tGREETING: "Hello";\n',
-          new_string: '\tGREETING: "Hello";\n\tOWNER_EMAIL: string;\n\tRESEND_API_KEY?: string;\n',
-        },
-      },
-      { name: "write", input: { path: "/src/server/index.ts", content: emailIndex } },
-    ],
-    "Your app emails you when someone signs up.",
-  ),
+  "add-email-and-join": addAndJoin("email", emailEdits, emailReply),
+
+  // As add-email-and-join, then, once the Developer adds the key, tries a
+  // sign-up and reads the logs in the same step, as Opus calls tools, and
+  // says what they showed, as the platform's note asks (#104).
+  "add-email-then-try-key": (request) => {
+    if (!latestInstruction(request).includes("the Developer added the Secret")) return addAndJoin("email", emailEdits, emailReply)(request);
+    if (!afterToolResult(request)) {
+      return {
+        toolCalls: [
+          { name: "request_preview", input: { method: "POST", path: "/api/signups/Ada" } },
+          { name: "preview_logs", input: {} },
+        ],
+      };
+    }
+    return {
+      text: lastToolResult(request).includes("Resend refused the email: API key is invalid")
+        ? "Resend refused your key, so the email wasn't sent. Check it at resend.com/api-keys."
+        : "The email went through.",
+    };
+  },
 
   // Adds the AI add-on to a Worker + React Template app, then makes its joining edits, with a route that sorts messages.
   "add-ai-and-join": addAndJoin(

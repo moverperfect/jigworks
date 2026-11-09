@@ -12,7 +12,7 @@ import {
 import { createPortal, flushSync } from "react-dom";
 import { ApiError, getDeployment, getWorkspace, listFiles, type Workspace } from "./api";
 import { appStartedIn, turnProgress } from "./agentMessage";
-import { appAreaState } from "./appArea";
+import { appAreaState, problemsNote } from "./appArea";
 import { AppName } from "./AppName";
 import { ConversationPanel } from "./ConversationPanel";
 import { ErrorMessage } from "./ErrorMessage";
@@ -27,7 +27,7 @@ import { foldersOf } from "./tree";
 import { useChecks, type Checks } from "./useChecks";
 import { useConversation } from "./useConversation";
 import { useOpenFile, type CursorTarget, type OpenFile } from "./useOpenFile";
-import { usePreviewFrame } from "./usePreview";
+import { usePreviewFrame, usePreviewProblems } from "./usePreview";
 import { useTests, type Tests } from "./useTests";
 import { WorkspaceMenu } from "./WorkspaceMenu";
 
@@ -139,6 +139,14 @@ function WorkspaceView({
   const failureLeft = leftTurnEndedAt !== null && leftTurnEndedAt === state?.lastTurn?.endedAt;
   const areaState = appAreaState(state, preview.built, publishing, failureLeft);
   const progress = state?.turn ? turnProgress(conversation.messages, state.turn) : null;
+  // The app's server errors since its latest Build, beside the app while it shows, until the Developer hides them (#104).
+  const appShown = rightShown && !codeShown && (areaState === "ready" || areaState === "live");
+  const previewProblems = usePreviewProblems(id, appShown);
+  // The time of the newest error the Developer hid.
+  const [problemsHiddenThrough, setProblemsHiddenThrough] = useState<string | null>(null);
+  const problems = problemsNote(previewProblems, areaState, preview.goodHash, problemsHiddenThrough);
+  const [logsExpanded, setLogsExpanded] = useState(true);
+  const logsToggle = useRef<HTMLButtonElement>(null);
 
   // Another tab may have built or published meanwhile, so look again when the page comes back into view.
   const pageVisible = usePageVisible();
@@ -218,6 +226,15 @@ function WorkspaceView({
   function swapView(toCode: boolean) {
     flushSync(() => setCodeShown(toCode));
     (toCode ? showAppButton : showCodeButton).current?.focus();
+  }
+
+  // "See the details" beside the app: the code, with the logs open and focused.
+  function seeDetails() {
+    flushSync(() => {
+      setCodeShown(true);
+      setLogsExpanded(true);
+    });
+    logsToggle.current?.focus();
   }
 
   function onTabKeyDown(event: KeyboardEvent<HTMLDivElement>) {
@@ -301,6 +318,13 @@ function WorkspaceView({
               onShowCode={() => swapView(true)}
               showCodeButton={showCodeButton}
               narrow={narrow}
+              problemLines={problems?.lines ?? null}
+              onSeeDetails={seeDetails}
+              onHideProblems={() => {
+                if (problems) setProblemsHiddenThrough(problems.newest);
+                // The note goes with the button.
+                showCodeButton.current?.focus();
+              }}
             />
           </section>
           {/* Kept on the page while hidden, so the editor keeps its file and any unsaved changes. */}
@@ -308,6 +332,9 @@ function WorkspaceView({
             id={id}
             hidden={!codeShown}
             logsVisible={rightShown && codeShown}
+            logsExpanded={logsExpanded}
+            onToggleLogs={() => setLogsExpanded((shown) => !shown)}
+            logsToggle={logsToggle}
             files={files}
             file={file}
             checks={checks}
@@ -327,6 +354,9 @@ function CodeView({
   id,
   hidden,
   logsVisible,
+  logsExpanded,
+  onToggleLogs,
+  logsToggle,
   files,
   file,
   checks,
@@ -338,6 +368,9 @@ function CodeView({
   id: string;
   hidden: boolean;
   logsVisible: boolean;
+  logsExpanded: boolean;
+  onToggleLogs(): void;
+  logsToggle: RefObject<HTMLButtonElement | null>;
   files: Loader<string[]>;
   file: OpenFile;
   checks: Checks;
@@ -466,7 +499,7 @@ function CodeView({
             canOpen={(path) => knownPaths.has(path)}
             onOpen={(path, line, column) => showFile(path, { line, column })}
           />
-          <PreviewLogs id={id} visible={logsVisible} />
+          <PreviewLogs id={id} visible={logsVisible} expanded={logsExpanded} onToggle={onToggleLogs} toggleButton={logsToggle} />
         </div>
       </div>
     </section>
