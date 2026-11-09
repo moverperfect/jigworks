@@ -840,7 +840,7 @@ On 2026-11-09 after #98's deploy (`939735a`), the same ten rounds in two Workspa
 
 ## How large an app can build (#99)
 
-**Verdict, locally: what decides the limit is the Packages an app bundles, not how much code it has, and starting esbuild with `GOGC=25` lowers its peak by a fifth to a quarter. Where the limit sits deployed, before and after, is still to measure (below).** A Build that goes over the Builder's memory limit twice, the second time in a new isolate, now fails with "Your app has grown too big to build here. Try removing a ready-made part.", which the page shows as it is. The Agent is told it once, with instructions to tell the Developer in plain words and suggest a ready-made part the app could do without, rather than remove one itself. The Turn then ends and is undone, as any Turn that leaves the app broken is (`test/conversation.test.ts`). The second try is because a Builder is shared: another Workspace's Build there, or earlier Builds' memory, can put a Build that fits over the limit (ADR 0010).
+**Verdict: what decides the limit is the Packages an app bundles, not how much code it has, and starting esbuild with `GOGC=25` lowers its peak by a fifth to a quarter, enough to move the limit. Deployed, the moderate app with the UI kit now builds, and the large app gets the plain message.** A Build that goes over the Builder's memory limit twice, the second time in a new isolate, now fails with "Your app has grown too big to build here. Try removing a ready-made part.", which the page shows as it is. The Agent is told it once, with instructions to tell the Developer in plain words and suggest a ready-made part the app could do without, rather than remove one itself. The Turn then ends and is undone, as any Turn that leaves the app broken is (`test/conversation.test.ts`). The second try is because a Builder is shared: another Workspace's Build there, or earlier Builds' memory, can put a Build that fits over the limit (ADR 0010).
 
 ### How it was measured
 
@@ -887,12 +887,31 @@ Deployed, a Builder is reused by its ID, and its memory builds up across Builds 
 | Before | 99 MB | 108 MB | 121 MB | 121 MB | 13.0–13.8 s |
 | With `GOGC=25` | 82 MB | 91 MB | 91 MB | 91–93 MB | 11.9–14.0 s |
 
+### After, deployed
+
+On 2026-11-09 after #119's deploy (`73941cc`, and docs since, at `c618c87`), from the Developer's signed-in browser (Chrome), with the tail running: `small` with the script's ten rounds, `ui` with three, and `large` with one. Each Workspace was made for the check and deleted after it.
+
+| Shape | New Builds | Outcome | esbuild in the Builder | Durable Object CPU / wall, from the call's trace | Build, as the page waits | Durable Object's isolate |
+| --- | ---: | --- | ---: | ---: | ---: | --- |
+| `small` | 12 | all built | 22 and 81 MB while it was written, then 91–95 MB | 541–1,022 / 7,550–10,491 ms, rounds 2–10 | 9.6–12.6 s (rounds 2–10) | `c55cb4ba` throughout |
+| `ui` | 3 recorded | all built | 22, 129 and 109 MB | 125–411 / 13,260–13,342 ms, in the Checks' calls | 0.8–2.1 s, reused | `53336c54` throughout |
+| `large` | 9 failed once written | "Your app has grown too big to build here. Try removing a ready-made part." | not reported | 1,426–2,302 / 16,715–44,699 ms, in the Build calls | 45.4 s | `0b1f99f2` throughout |
+
+- **`small` and `ui` built in every round,** each with a new hash, and every Check found no errors. esbuild stayed at 91–95 MB in `small`'s reused Builder, as locally (82–93 MB).
+- **`ui` went past 128 MB of esbuild memory and still built:** 129 MB, then 109 MB in a new Builder, since linear memory never shrinks. So the limit that stops a Builder isn't simply esbuild's memory against 128 MB. The tail stopped for about a minute during `ui`'s rounds (exit 144, cause unknown), so round 3's figure is missing.
+- **`large` gets the plain message,** in the problems list under Build, word for word, and from the API. Each failed Build took two tries, 17–45 s; the page's own Build waited 45 s. The saves had left Builds scheduled, which failed again until they ran out, as in #87. No call ended `exceededMemory`, and no other Workspace's Build failed in the tail meanwhile.
+
 ### Where the limit sits
 
-- **Deployed, before:** `moderate` builds, with esbuild at 49–59 MB in a reused Builder, and `large` doesn't (#87). A Builder's 128 MB also holds what esbuild doesn't: the files it's sent, held as text, and the JavaScript heap, which workerd doesn't report.
-- **So, locally, before:** apps without the UI kit, like `moderate`, fit; `small`, with esbuild at 99–121 MB, very likely doesn't, and nor does any larger shape.
-- **With `GOGC=25`:** `small` peaks at 82–93 MB, which may fit; `ui` at 111 MB very likely doesn't. Whether a small app with the UI kit now builds deployed is the question the deployed check answers.
-- **To measure deployed,** from the Developer's signed-in browser with the tail running, as for #87: `small`, then `ui`, before the deploy and after it, with the outcome and esbuild's memory of each Build. Access asked for a sign-in on 2026-11-09, so neither has run yet.
+| Shape | esbuild, locally, before → `GOGC=25` | Deployed, before | Deployed, after |
+| --- | --- | --- | --- |
+| `moderate` | 47 → 36 MB | builds (#87) | not rerun |
+| `small` | 110 → 82 MB | not measured | builds |
+| `ui` | 150 → 111 MB | not measured | builds |
+| `large` | 176–209 → 158 MB | too big (#87) | too big, with the plain message |
+
+- **Before,** an app with the UI kit very likely didn't build: `small`'s esbuild alone reached 99–121 MB in a reused Builder locally. The deployed before couldn't be measured: Access asked for a sign-in before #119's deploy, and the platform has had `GOGC=25` since.
+- **After,** the limit sits between `ui`, the moderate app with the UI kit, and `large`, which adds the charting library and half as many Package files again. `half` wasn't run deployed.
 
 ## Add-ons (#88)
 
