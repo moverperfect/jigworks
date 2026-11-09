@@ -57,7 +57,7 @@ import {
   type LastTurn,
   type TurnStage,
 } from "../shared/conversation";
-import { getTemplate } from "../templates";
+import { addonHeading, addonWithNeeds, getTemplate, hasAddon, type Addon } from "../templates";
 
 export type { CheckReport, TestReport };
 
@@ -69,6 +69,14 @@ export type DeveloperChange<T = object> = ({ ok: true } & T) | { ok: false; erro
 
 /** What came of adding a Package, for the Developer or the Agent. */
 export type PackageAdded = DeveloperChange<{ version: string; status: PackageStatus }>;
+
+/**
+ * What came of adding an add-on for the Agent: the add-ons added, needs
+ * first, and those it needs that the app already had; the files written and
+ * the test files among them; and how installing their Packages went, if they
+ * had any.
+ */
+export type AddonsAdded = DeveloperChange<{ added: Addon[]; had: Addon[]; written: string[]; tests: string[]; status: PackageStatus | null }>;
 
 const checkKey = "check:latest";
 const buildKey = "build:latest";
@@ -87,6 +95,8 @@ const developerKey = "developer";
 const appStartedKey = "app:started";
 // Which Turn the files were last copied for, and whether the app had started then, so the Turn can be undone (ADR 0018).
 const copyKey = "turn:copy";
+// The add-ons the latest Turn to add any added, for its log line, so a restart doesn't lose them.
+const turnAddonsKey = "turn:addons";
 // What the Workspace keeps about its app, which undoing the Turn that started the app forgets.
 // A new key about the app belongs here too.
 const appKeys = [appStartedKey, appLabelKey, appSentKey, checkKey, buildKey, testKey];
@@ -105,7 +115,7 @@ const watchingFrames = new Set(["cf_agent_stream_resume_request", "cf_agent_stre
 // The Agent's tools that read the files, and so wait for the others in their step.
 const waitingTools = new Set(["check", "build", "test"]);
 // The Agent's tools that refuse until it has started the app, so nothing is written without a Template under it (ADR 0018).
-const needAppTools = new Set(["write", "edit", "delete", "bash", "add_package", "check", "build", "test"]);
+const needAppTools = new Set(["write", "edit", "delete", "bash", "add_package", "add_addon", "check", "build", "test"]);
 const startAppFirst = "The app hasn't started yet, so this tool can't run. Start it first with start_app.";
 // For the Developer, in the page's words.
 const notStartedYet = { ok: false, error: "Your app hasn't started yet. Wait for the Agent to start it." } as const;
@@ -250,6 +260,7 @@ export class Workspace extends Think<Env, ConversationState> {
         return this.runTests("agent", files);
       },
       addPackageForAgent: (name, options) => this.addPackageForAgent(name, options),
+      addAddonForAgent: (id) => this.addAddonForAgent(id),
       requestPreview: (init) => this.requestPreview(init),
       previewLogs: (limit) => this.previewLogs(limit),
       secretNames: () => this.secretNames(),
@@ -776,6 +787,64 @@ export class Workspace extends Think<Env, ConversationState> {
     });
   }
 
+  /** Adds the add-on `id` for the Agent's `add_addon` tool, during its Turn, with the add-ons it needs (ADR 0019). */
+  async addAddonForAgent(id: string): Promise<AddonsAdded> {
+    const chain = addonWithNeeds(id);
+    if (!chain) return { ok: false, error: `There's no add-on called ${id}.` };
+    return this.addAddons(chain);
+  }
+
+  /**
+   * Adds the last add-on in `chain`, after those it needs, which come first
+   * in it, skipping any the app already has: writes their files, adds their
+   * Packages and installs them, and appends their notes to AGENTS.md. The
+   * edits that join them to the app are the Agent's to make. Refused, with
+   * nothing written, when the app already has the last, when a file one
+   * writes exists with different contents, or when a Package can't be added.
+   */
+  private addAddons(chain: Addon[]): Promise<AddonsAdded> {
+    return this.exclusive(async (): Promise<AddonsAdded> => {
+      const agentsMd = this.files.read("AGENTS.md") ?? "";
+      const wanted = chain.at(-1)!;
+      if (hasAddon(agentsMd, wanted.id)) {
+        return { ok: false, error: `The app already has it: AGENTS.md has its heading, ${addonHeading(wanted.id, wanted.name)}.` };
+      }
+      const had = chain.filter(({ id }) => hasAddon(agentsMd, id));
+      const added = chain.filter((addon) => !had.includes(addon));
+
+      // Everything that could refuse comes before anything is written.
+      const files = added.flatMap(({ files }) => Object.entries(files));
+      const clashes = files.filter(([path, text]) => (this.files.read(path) ?? text) !== text).map(([path]) => `/${path}`);
+      if (clashes.length > 0) {
+        return { ok: false, error: `It would overwrite ${new Intl.ListFormat("en-GB").format(clashes)}, which ${clashes.length === 1 ? "has" : "have"} different contents. Nothing was added.` };
+      }
+      const fresh = files.filter(([path]) => this.files.read(path) === null);
+      const registry = registryClient();
+      const packages = added.flatMap(({ packages }) => Object.entries(packages));
+      let packageJson = this.files.read("package.json") ?? "{}";
+      for (const [name, version] of packages) {
+        const result = await this.packages.add(packageJson, name, { range: version, registry });
+        if (!result.ok) return { ok: false, error: `Couldn't add the Package ${name}: ${result.error} Nothing was added.` };
+        packageJson = result.packageJson;
+      }
+
+      for (const [path, text] of fresh) await this.files.write(path, text);
+      const notes = added.map(({ notes }) => notes.trimEnd());
+      await this.files.write("AGENTS.md", `${[agentsMd.trimEnd(), ...notes].filter(Boolean).join("\n\n")}\n`);
+      if (packages.length > 0) await this.files.write("package.json", packageJson);
+      const status = packages.length > 0 ? await this.install({ registry }) : null;
+      const { turn } = this.state;
+      if (turn) {
+        const kept = this.ctx.storage.kv.get<TurnAddons>(turnAddonsKey);
+        const before = kept?.startedAt === turn.startedAt ? kept.ids : [];
+        this.ctx.storage.kv.put<TurnAddons>(turnAddonsKey, { startedAt: turn.startedAt, ids: [...before, ...added.map(({ id }) => id)] });
+      }
+      const written = fresh.map(([path]) => path);
+      // Every test file the add-ons bring, including any the app already had the same.
+      return { ok: true, added, had, written, tests: files.map(([path]) => path).filter(isTestFile), status };
+    });
+  }
+
   /** Every Package file, at `node_modules/<name>/<path>`. */
   async packageFiles(): Promise<Record<string, string>> {
     return Object.fromEntries(this.packages.snapshot());
@@ -911,7 +980,10 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** Logs a Turn's `turn` line as it ends, for Workers Logs and for `scripts/tail-events.py` to read from `wrangler tail`. */
   private logTurn(startedAt: string, lastTurn: LastTurn, log?: TurnLog): void {
-    console.log(JSON.stringify({ event: "turn", workspace: this.name, startedAt, ...lastTurn, ...log }));
+    // Even when the Turn was undone (`restored`), and their files with it.
+    const kept = this.ctx.storage.kv.get<TurnAddons>(turnAddonsKey);
+    const addons = kept?.startedAt === startedAt ? kept.ids : [];
+    console.log(JSON.stringify({ event: "turn", workspace: this.name, startedAt, ...lastTurn, ...log, addons }));
   }
 
   /**
@@ -1017,6 +1089,12 @@ interface TurnCopy {
 
 /** What a Turn's log line adds to its outcome. */
 type TurnLog = Partial<TurnUsage> & { durationMs?: number };
+
+/** The add-ons the Turn that started at `startedAt` added (see `turnAddonsKey`). */
+interface TurnAddons {
+  startedAt: string;
+  ids: string[];
+}
 
 /** A Turn's outcome when the Workspace restarted during it. */
 function stoppedByRestart(): LastTurn {

@@ -14,6 +14,28 @@ export const unbuildableIndex =
 export const buildableIndex = 'import { Hono } from "hono";\nexport default new Hono().get("/", (c) => c.text("hi"));\n';
 // A test that fails, beside the Template's, which passes.
 export const failingTest = 'import { expect, it } from "vitest";\n\nit("adds", () => {\n  expect(1 + 1).toBe(3);\n});\n';
+/** The Worker Template's Worker with the storage add-on joined to it, and routes that keep and list messages in it. */
+export const messagesIndex = `import { Hono } from "hono";
+import { collection } from "./server/store";
+
+interface Message {
+  text: string;
+}
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/", (c) => c.text(\`\${c.env.GREETING} from your Worker\`));
+
+app.get("/api/hello/:name", (c) => c.json({ message: \`\${c.env.GREETING}, \${c.req.param("name")}\` }));
+
+app.post("/api/messages/:text", async (c) => c.json(await collection<Message>(c.env.STORE, "messages").add({ text: c.req.param("text") })));
+
+app.get("/api/messages", async (c) => c.json(await collection<Message>(c.env.STORE, "messages").list()));
+
+export default app;
+
+export { Store } from "./server/store";
+`;
 /** The value the Developer gives for the Secret that `ask-for-secret` asks for, which must never reach the model. */
 export const askedSecretValue = "key-from-the-email-service";
 
@@ -77,6 +99,44 @@ export const agentScripts: Record<string, Script> = {
   "list-secrets": echoTool("list_secrets", {}),
   "use-test": echoTool("test", {}),
   "use-test-file": echoTool("test", { files: ["/src/sum.test.ts"] }),
+
+  // Adds the storage add-on, then says what add_addon said.
+  "add-storage": echoTool("add_addon", { addon: "storage" }),
+
+  // Answers the Developer's first message, and adds the storage add-on in a later Turn.
+  "add-storage-later": (request) => (laterMessage(request) ? echoTool("add_addon", { addon: "storage" })(request) : { text: "Hello." }),
+
+  // Adds the storage add-on, then makes its joining edits, with routes that keep and list messages.
+  "add-storage-and-join": (request) => {
+    switch (toolStepsTaken(request)) {
+      case 0:
+        return { toolCalls: [{ name: "add_addon", input: { addon: "storage" } }] };
+      case 1:
+        return {
+          toolCalls: [
+            {
+              name: "edit",
+              input: {
+                path: "/wrangler.jsonc",
+                old_string: '"vars": {',
+                new_string: '"durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },\n  "vars": {',
+              },
+            },
+            {
+              name: "edit",
+              input: {
+                path: "/worker-configuration.d.ts",
+                old_string: '\tGREETING: "Hello";\n',
+                new_string: '\tGREETING: "Hello";\n\tSTORE: DurableObjectNamespace<import("./src/server/store").Store>;\n',
+              },
+            },
+            { name: "write", input: { path: "/src/index.ts", content: messagesIndex } },
+          ],
+        };
+      default:
+        return { text: "Your app remembers messages now." };
+    }
+  },
 
   // Writes a failing test, and does nothing more when the tests fail.
   "write-failing-test": (request) =>
@@ -150,6 +210,7 @@ export const agentScripts: Record<string, Script> = {
             { name: "delete", input: { path: "/src/count.ts" } },
             { name: "bash", input: { script: "echo hi > /hi.txt" } },
             { name: "add_package", input: { name: "@fake/a" } },
+            { name: "add_addon", input: { addon: "storage" } },
             { name: "check", input: {} },
             { name: "build", input: {} },
             { name: "test", input: {} },

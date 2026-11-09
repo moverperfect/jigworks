@@ -255,6 +255,7 @@ describe("tool calls in plain words", () => {
     for (const name of ["read", "list", "find", "grep"]) expect(describeTool(name)).toBe("Looking at your app");
     for (const name of ["write", "edit", "delete", "bash"]) expect(describeTool(name)).toBe("Changing your app");
     expect(describeTool("add_package")).toBe("Adding a ready-made part");
+    expect(describeTool("add_addon")).toBe("Adding to your app");
     expect(describeTool("request_preview")).toBe("Trying your app");
     expect(describeTool("preview_logs")).toBe("Seeing how your app ran");
     expect(describeTool("list_secrets")).toBe("Looking at your app's Secrets");
@@ -275,6 +276,7 @@ describe("a tool call under Technical details", () => {
       verb: "Couldn't write",
       subject: "/src/App.tsx",
     });
+    expect(call("add_addon", { addon: "storage" }, "output-available")).toEqual({ outcome: "done", verb: "Added", subject: "storage" });
     expect(call("something_new", {}, "output-available")).toEqual({ outcome: "done", verb: "Used something_new", subject: "" });
   });
 

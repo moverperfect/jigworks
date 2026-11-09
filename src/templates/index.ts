@@ -1,5 +1,7 @@
 import packed from "../generated/templates.txt";
-import type { Packed, PackedAddon, PackedTemplate } from "./pack";
+import { withNeeds, type Packed, type PackedAddon, type PackedTemplate } from "./pack";
+
+export { addonHeading, hasAddon } from "./pack";
 
 /** A starting set of files for a new Workspace, packed from templates/ by templates/pack.mjs. */
 export interface Template extends PackedTemplate {
@@ -35,4 +37,10 @@ const addons = new Map(Object.entries(packedAddons).map(([id, addon]) => [id, { 
 /** Every add-on's ID, name, description and when it fits. */
 export function listAddons(): Pick<Addon, "id" | "name" | "description" | "fits">[] {
   return [...addons.values()].map(({ id, name, description, fits }) => ({ id, name, description, fits }));
+}
+
+/** The add-on `id` and those it needs, needs first, or undefined if there's no such add-on. */
+export function addonWithNeeds(id: string): Addon[] | undefined {
+  if (!addons.has(id)) return undefined;
+  return withNeeds(packedAddons, [id], "").map((need) => addons.get(need)!);
 }

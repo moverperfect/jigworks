@@ -4,8 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { WorkspaceRecord } from "../src/developer";
 import { maxRetries } from "../src/shared/conversation";
 import { call, create, createFromMessage } from "./helpers/api";
-import { connect, firstTurnEnd, history, runTurn, turnEnd } from "./helpers/conversation";
-import type { UIMessage } from "ai";
+import { connect, firstTurnEnd, history, runTurn, toolResults, turnEnd } from "./helpers/conversation";
 
 // A new app starts from the Developer's message, and the Agent starts it
 // with start_app (ADR 0018). The model is the scripted one in
@@ -19,17 +18,6 @@ const listed = async (id: string) => {
 };
 const files = async (id: string) => (await call(`/api/workspaces/${id}/files`)).json<{ files: string[] }>();
 const latest = async (id: string, report: "check" | "build") => (await call(`/api/workspaces/${id}/${report}`)).json();
-
-/** What each tool call in the Agent's messages returned, or the error it failed with, in order. */
-async function toolResults(id: string): Promise<{ tool: string; result: unknown }[]> {
-  return (await history(id))
-    .flatMap((message: UIMessage) => message.parts)
-    .filter((part) => part.type.startsWith("tool-"))
-    .map((part) => {
-      const tool = part as { type: string; output?: unknown; errorText?: string };
-      return { tool: tool.type.slice("tool-".length), result: tool.errorText ?? tool.output };
-    });
-}
 
 describe("creating a Workspace from a message", () => {
   it("lists an empty Workspace named New app, and starts its first Turn with the message", async () => {
@@ -110,8 +98,8 @@ describe("start_app", () => {
     const workspace = await createFromMessage("[script:use-tools-before-start] Anything");
     await firstTurnEnd(workspace.id);
     const results = await toolResults(workspace.id);
-    expect(results.map(({ tool }) => tool)).toEqual(["write", "edit", "delete", "bash", "add_package", "check", "build", "test"]);
-    expect(results.map(({ result }) => result)).toEqual(Array(8).fill(startAppFirst));
+    expect(results.map(({ tool }) => tool)).toEqual(["write", "edit", "delete", "bash", "add_package", "add_addon", "check", "build", "test"]);
+    expect(results.map(({ result }) => result)).toEqual(Array(9).fill(startAppFirst));
     expect(await files(workspace.id)).toEqual({ files: [] });
     // Refused tools are counted as finished, so a later check or build doesn't wait for them.
     await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (instance) => {
