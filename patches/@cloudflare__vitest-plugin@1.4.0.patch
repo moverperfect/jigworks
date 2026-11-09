@@ -1,0 +1,23 @@
+diff --git a/dist/worker/index.mjs b/dist/worker/index.mjs
+index cbeffc9c87e7746f2c10fdf30915a4fb1f4f6457..7c9c814a6b44a7d68948fecb749b9099f38d9e62 100644
+--- a/dist/worker/index.mjs
++++ b/dist/worker/index.mjs
+@@ -885,6 +885,18 @@ var __VITEST_POOL_WORKERS_RUNNER_DURABLE_OBJECT__ = class extends DurableObject
+ 				pendingConsoleLogs.shift();
+ 			}
+ 		};
++		const pendingConsoleLogsFlushInterval = setInterval(() => {
++			if (pendingConsoleLogs.length === 0) return;
++			try {
++				sendPendingConsoleLogs();
++			} catch (error) {
++				clearInterval(pendingConsoleLogsFlushInterval);
++				__console.error("Error flushing console logs from the runner:", error);
++			}
++		}, 50);
++		poolSocket.addEventListener("close", () => {
++			clearInterval(pendingConsoleLogsFlushInterval);
++		});
+ 		init({
+ 			post: (response) => {
+ 				try {
