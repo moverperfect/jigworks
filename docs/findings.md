@@ -743,9 +743,9 @@ The typed address went into the app's `vars` in `wrangler.jsonc`.
 
 ## Builds of a large app (#87)
 
-**Verdict: over, so Builds moved to a Dynamic Worker.** On the deployed platform, every Build of a large app reset the Workspace's Durable Object: 37 in a row, and more until the Workspace was deleted. The reset came before esbuild had done much, from holding every Package file at once. Builds now run in the Builder, a Dynamic Worker reused by ID (ADR 0010), which is sent the files as a stream. Locally, the Durable Object then kept one isolate through ten rounds of saves, Checks and Builds, and a Turn. The deployed rerun waits for the deploy.
+**Verdict: over, so Builds moved to a Dynamic Worker.** On the deployed platform, every Build of a large app reset the Workspace's Durable Object: 37 in a row, and more until the Workspace was deleted. The reset came before esbuild had done much, from holding every Package file at once. Builds now run in the Builder, a Dynamic Worker reused by ID (ADR 0010), which is sent the files as a stream. The Durable Object then kept one isolate through ten rounds of saves, Checks and Builds, locally and deployed ("After, deployed", below), and through a Turn locally.
 
-**But an app this size probably can't be built deployed at all.** Locally, the Builder's esbuild reached 210–295 MB of linear memory, against an isolate's 128 MB. Deployed, such a Build would fail as unable to run, with the Durable Object unharmed. The move protects the Workspace, its Conversation and Turns; it doesn't make large apps buildable.
+**But an app this size can't be built deployed at all (#99).** Locally, the Builder's esbuild reached 210–295 MB of linear memory, against an isolate's 128 MB. Deployed, every full Build failed as "The Build couldn't run: Worker exceeded memory limit.", with the Durable Object unharmed. The move protects the Workspace, its Conversation and Turns; it doesn't make large apps buildable. A moderately large app builds deployed, with esbuild at about half the limit.
 
 ### How it was measured
 
@@ -787,7 +787,7 @@ Locally, ten rounds in the finished app, with a fresh Builder. Each round's new 
 
 - **Every Build passed,** each with a new hash, and every Check found no errors.
 - **esbuild's memory** stays at its peak, since linear memory never shrinks. An earlier run in a fresh Builder went the same way, from 211 MB to 301 MB.
-- **The cost of sending the files:** a stream of 9,513 files and 36.6 MB for each new Build, which one call couldn't carry (32 MiB). The Builder took 0.7–1.0 s to receive it, about 4% of the Build, on a machine with a load average over 30 from other work. A reused Build sends nothing. The Builder logs it as `receivingMs`, which is I/O, so the deployed rerun can read it too.
+- **The cost of sending the files:** a stream of 9,513 files and 36.6 MB for each new Build, which one call couldn't carry (32 MiB). The Builder took 0.7–1.0 s to receive it, about 4% of the Build, on a machine with a load average over 30 from other work. A reused Build sends nothing. The Builder logs it as `receivingMs`. Deployed, it reads 0: the clock didn't move while the stream arrived, so it measures nothing there.
 - **Hash and output unchanged:** the hash is computed as before from every file, type declarations included. The Build tests check it against the old one, and check a Builder's Build equals one made in this isolate (`test/builder.test.ts`).
 
 **A Turn,** with the scripted model, locally, in a second copy of the app whose first message picked the `break-then-fix` script (`scripts/large-workspace.mjs`'s `turn`):
@@ -797,11 +797,42 @@ Locally, ten rounds in the finished app, with a fresh Builder. Each round's new 
 | 24.4 s (Turn log) | 2 | no errors | new, ok | 295 MB | 776 ms | `17bd0d67`, as before it |
 
 - **The tests that end the Turn** bundled through the same stream: 7 passed and 1 failed, the Template's own `App.test.tsx`, which looks for the heading the large app replaced.
-- **The deployed rerun** of the ten rounds needs this change deployed, which a merge to `main` does. It's the live check after the deploy.
+
+### After, deployed
+
+On 2026-11-09 after #98's deploy (`939735a`), the same ten rounds in two Workspaces made by the script, from the Developer's signed-in browser, with the tail running. CPU and wall time are the Durable Object's, from the trace of each new Build's call.
+
+**A moderately large app,** the script's `moderate` shape: the Worker + React Template with 60 components, 15 pages and 5 routes, and date-fns as its one added Package. 100 Workspace files, 756 KB, 8 Packages.
+
+| Round | Save | Check | Build, as the page waits | Durable Object CPU / wall | esbuild in the Builder | Durable Object's isolate |
+| ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 77 ms | 2,375 ms | 3,642 ms | 215 / 5,647 ms | 49 MB | `12a792df` |
+| 2 | 79 ms | 1,165 ms | 2,882 ms | 396 / 3,021 ms | 51 MB | `12a792df` |
+| 3 | 81 ms | 1,345 ms | 4,114 ms | 217 / 2,031 ms | 51 MB | `12a792df` |
+| 4 | 116 ms | 1,079 ms | 2,814 ms | 378 / 1,772 ms | 53 MB | `12a792df` |
+| 5 | 74 ms | 1,126 ms | 2,683 ms | 220 / 1,671 ms | 53 MB | `12a792df` |
+| 6 | 91 ms | 1,076 ms | 4,885 ms | 225 / 2,901 ms | 53 MB | `12a792df` |
+| 7 | 74 ms | 1,344 ms | 2,749 ms | 223 / 1,753 ms | 53 MB | `12a792df` |
+| 8 | 85 ms | 1,199 ms | 2,667 ms | 207 / 1,578 ms | 55 MB | `12a792df` |
+| 9 | 79 ms | 1,093 ms | 2,613 ms | 222 / 1,295 ms | 59 MB | `12a792df` |
+| 10 | 90 ms | 1,190 ms | 2,855 ms | 378 / 1,809 ms | 59 MB | `12a792df` |
+
+- **Every Build passed,** each with a new hash, and every Check found no errors. esbuild stayed under half the Builder's 128 MB.
+
+**The large app,** as before: 180 Workspace files, 122 Packages, 46.6 MB of Package text.
+
+| Rounds | Save | Check | Build, as the page waits | Durable Object CPU / wall per Build | Outcome | Durable Object's isolate |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| 1–10 | 2.2–7.6 s | 11.1–15.0 s, no errors | 11.4–15.2 s | 490–1,721 / 6,001–16,602 ms | "The Build couldn't run: Worker exceeded memory limit." | `524e28e9` throughout |
+
+- **No reset:** the Durable Object's 75 Build and Check log lines all came from one isolate, and no call ended `exceededMemory`. While the app was being written, its Builds passed, with esbuild at 25–33 MB; once `App.tsx` imported every page, every Build failed in the Builder.
+- **The Durable Object's share of a failing Build** was 0.5–1.7 s of CPU: reading and hashing every file, then streaming 36.6 MB. A failed Build isn't kept, so the same files are built, and fail, again each time: the page's Build after the save's, and each Build a save scheduled.
+- **The saves waited** 2–8 s for the Workspace's lock, held by failing Builds.
 
 ### Found along the way
 
 - **A Build that resets the Durable Object in an alarm runs again every 30 s, without end.** The Build after a save is an Agents SDK schedule; after the first reset, it was tried again every 30 s from 07:32 until the Workspace was deleted at 09:35. With Builds in the Builder, a Build no longer resets the object, but anything else that does in an alarm would loop the same way. Not looked into.
 - **esbuild's Go heap can't be capped from outside.** esbuild's browser build makes its Go runtime with an empty environment, so `GOGC` can't be set without patching esbuild at pack time.
 - **The test bundle had the same limits:** `runTests` also held every Package file, and its call to the Test bundler couldn't carry more than 32 MiB. It now gets the same stream.
+- **Saves made at the same time leave extra Builds scheduled.** Each save schedules a Build a second later, and cancels only the one whose ID it stored, so saves that overlap, as the script's six at a time do, each leave one. In the large app, 44 Builds that saves scheduled failed in all, and the leftovers ran about one every 6 s for 80 s after the last round. In the moderate app they were reused Builds and cost nothing. The page saves one file at a time. Not looked into.
 - **Local workerd does enforce the RPC limit:** one call with 40 MB of arguments failed with "Serialized RPC arguments or return values are limited to 32MiB". A stream of more went through.

@@ -1,14 +1,16 @@
 // Makes a large test Workspace through the platform's API and runs ten
 // Builds in it, interleaved with saves and Checks as the page causes them
-// (#87). The app is the Worker + React Template with 120 components, 30 pages
-// and 10 server routes, using a charting library, a date library and a UI kit.
-// Nothing here calls the Agent, so no Turns on the real model run.
+// (#87). The large app is the Worker + React Template with 120 components, 30
+// pages and 10 server routes, using a charting library, a date library and a
+// UI kit. The moderate one has 60 components, 15 pages and 5 routes, with the
+// date library alone. Nothing here calls the Agent, so no Turns on the real
+// model run.
 //
 // It has no imports, so a browser can run it too. Locally, against
 // `pnpm platform:dev` (`.dev.vars` as in docs/development.md):
 //
-//   node scripts/large-workspace.mjs http://127.0.0.1:8787 make
-//   node scripts/large-workspace.mjs http://127.0.0.1:8787 builds <workspace id>
+//   node scripts/large-workspace.mjs http://127.0.0.1:8787 make [large|moderate]
+//   node scripts/large-workspace.mjs http://127.0.0.1:8787 builds <workspace id> [large|moderate]
 //   node scripts/large-workspace.mjs http://127.0.0.1:8787 turn <workspace id>
 //   node scripts/large-workspace.mjs http://127.0.0.1:8787 delete <workspace id>
 //
@@ -19,7 +21,7 @@
 //     [await (await fetch("https://raw.githubusercontent.com/<owner>/<repo>/<sha>/scripts/large-workspace.mjs")).text()],
 //     { type: "text/javascript" })));
 //   m.progress; // each step as it finishes
-//   await m.make(location.origin); await m.builds(location.origin, id); await m.remove(location.origin, id);
+//   await m.make(location.origin, "large"); await m.builds(location.origin, id, "large"); await m.remove(location.origin, id);
 //
 // Times here are the round trips the caller sees. CPU and wall time, esbuild's
 // memory and the isolate come from the tail (docs/development.md, Live checks).
@@ -33,11 +35,22 @@ const addedPackages = {
   recharts: "3.10.1",
 };
 
-const counts = { components: 120, pages: 30, routes: 10 };
-
 const kinds = ["Chart", "Dates", "Form", "Table", "Stats", "Notice"];
+
+/** The two apps: their size, the Packages they add, their components' kinds, and whether they use the UI kit. */
+const shapes = {
+  large: { components: 120, pages: 30, routes: 10, packages: addedPackages, kinds, ui: true },
+  moderate: { components: 60, pages: 15, routes: 5, packages: { "date-fns": addedPackages["date-fns"] }, kinds: ["Stats"], ui: false },
+};
+let counts = shapes.large;
+/** Every step below makes the app of this shape. */
+const use = (shape) => {
+  if (!shapes[shape]) throw new Error(`No app shape "${shape}": use large or moderate.`);
+  counts = shapes[shape];
+};
+
 const pad = (n) => String(n).padStart(3, "0");
-const componentName = (i) => `${kinds[i % kinds.length]}${pad(i)}`;
+const componentName = (i) => `${counts.kinds[i % counts.kinds.length]}${pad(i)}`;
 const pageName = (i) => `Page${pad(i)}`;
 
 /** The files the app adds or replaces, path to text. */
@@ -57,7 +70,7 @@ function largeAppFiles() {
 /** The Template's `package.json` with the added Packages. */
 function packageJson(template) {
   const manifest = JSON.parse(template);
-  manifest.dependencies = { ...manifest.dependencies, ...addedPackages };
+  manifest.dependencies = { ...manifest.dependencies, ...counts.packages };
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }
 
@@ -66,7 +79,7 @@ function component(i, edit = 0, stamp = "") {
   const name = componentName(i);
   const title = `${name} ${["overview", "this week", "by team", "history", "summary"][i % 5]}${edit ? ` (edit ${edit}${stamp ? `, ${stamp}` : ""})` : ""}`;
   const seed = (i * 7919) % 97;
-  switch (i % kinds.length) {
+  switch (kinds.indexOf(counts.kinds[i % counts.kinds.length])) {
     case 0: {
       const chart = [
         ["LineChart", "Line", `<Line type="monotone" dataKey="value" stroke="#0284c7" strokeWidth={2} dot={false} />`],
@@ -339,18 +352,22 @@ export function ${name}({ action = "Cancel the booking", onConfirm }: { action?:
 
 function page(i) {
   const used = [0, 1, 2, 3].map((n) => componentName((i * 4 + n) % counts.components));
+  const tabs = counts.ui
+    ? `      <Tabs value={tab} onChange={(_, next: number) => setTab(next)} variant="scrollable">
+${used.map((name) => `        <Tab label="${name}" />`).join("\n")}
+      </Tabs>`
+    : `      <div className="flex gap-2">
+${used.map((name, n) => `        <button type="button" className="rounded px-2 py-1 text-sm" onClick={() => setTab(${n})}>${name}</button>`).join("\n")}
+      </div>`;
   return `import { useState } from "react";
-import { Tab, Tabs } from "@mui/material";
-${used.map((name) => `import { ${name} } from "../components/${name}";`).join("\n")}
+${counts.ui ? 'import { Tab, Tabs } from "@mui/material";\n' : ""}${used.map((name) => `import { ${name} } from "../components/${name}";`).join("\n")}
 
 /** Page ${i}, with a tab for each of its parts. */
 export function ${pageName(i)}() {
   const [tab, setTab] = useState(0);
   return (
     <div className="flex flex-col gap-6">
-      <Tabs value={tab} onChange={(_, next: number) => setTab(next)} variant="scrollable">
-${used.map((name) => `        <Tab label="${name}" />`).join("\n")}
-      </Tabs>
+${tabs}
 ${used.map((name, n) => `      {tab === ${n} ? <${name} /> : null}`).join("\n")}
     </div>
   );
@@ -417,19 +434,17 @@ export interface Summary {
 
 function app() {
   const pages = Array.from({ length: counts.pages }, (_, i) => pageName(i));
+  const [open, close] = counts.ui ? ["<ThemeProvider theme={theme}>\n      <CssBaseline />", "</ThemeProvider>"] : ["<>", "</>"];
   return `import { useState } from "react";
-import { CssBaseline, ThemeProvider, createTheme } from "@mui/material";
-${pages.map((name) => `import { ${name} } from "./pages/${name}";`).join("\n")}
+${counts.ui ? 'import { CssBaseline, ThemeProvider, createTheme } from "@mui/material";\n' : ""}${pages.map((name) => `import { ${name} } from "./pages/${name}";`).join("\n")}
 
-const theme = createTheme({ palette: { primary: { main: "#0284c7" } } });
-const pages = { ${pages.join(", ")} };
+${counts.ui ? 'const theme = createTheme({ palette: { primary: { main: "#0284c7" } } });\n' : ""}const pages = { ${pages.join(", ")} };
 
 export function App() {
   const [shown, setShown] = useState<keyof typeof pages>("${pages[0]}");
   const Shown = pages[shown];
   return (
-    <ThemeProvider theme={theme}>
-      <CssBaseline />
+    ${open}
       <div className="flex min-h-screen">
         <nav className="flex w-48 flex-col gap-1 border-r border-slate-200 p-3">
           {Object.keys(pages).map((name) => (
@@ -447,7 +462,7 @@ export function App() {
           <Shown />
         </main>
       </div>
-    </ThemeProvider>
+    ${close}
   );
 }
 `;
@@ -514,7 +529,8 @@ const note = (step) => {
 };
 
 /** Makes the Workspace from the Worker + React Template, adds the Packages, and writes the app's files. */
-export async function make(origin, name = "Load test (#87)") {
+export async function make(origin, shape = "large", name = `Load test (#87, ${shape})`) {
+  use(shape);
   const { call, put } = api(origin);
   const { body: created } = await call("POST", "/workspaces", { name, template: "worker-react" });
   const id = created.workspace.id;
@@ -523,11 +539,12 @@ export async function make(origin, name = "Load test (#87)") {
   const installed = await put(id, "package.json", packageJson(template));
   const { body: status } = await call("GET", `/workspaces/${id}/packages`);
   note({ step: "packages", ms: installed.ms, state: status.state, count: status.packages.length, warnings: status.warnings, error: status.error });
-  return write(origin, id);
+  return write(origin, id, shape);
 }
 
 /** Writes the app's files into the Workspace, a few at a time, as an editor's saves would come. Each save also schedules a Build. */
-export async function write(origin, id) {
+export async function write(origin, id, shape = "large") {
+  use(shape);
   const { put } = api(origin);
   const files = largeAppFiles();
   const paths = Object.keys(files);
@@ -558,7 +575,8 @@ export async function stats(origin, id) {
  * second after the save, for the Preview; whichever Build comes second is
  * cached. Each round edits a different component, so each makes a new Build.
  */
-export async function builds(origin, id, rounds = 10) {
+export async function builds(origin, id, shape = "large", rounds = 10) {
+  use(shape);
   const { call, put } = api(origin);
   const results = [];
   // Each run's edits differ from the last's, so every round's save changes the files.
@@ -623,10 +641,18 @@ export async function remove(origin, id) {
 
 // Run from Node: node scripts/large-workspace.mjs <origin> make|write|builds|turn|stats|delete [id]
 if (typeof process !== "undefined" && import.meta.url === `file://${process.argv[1]}`) {
-  const [origin, command, id] = process.argv.slice(2);
-  const run = { make: () => make(origin), write: () => write(origin, id), turn: () => turn(origin, id), builds: () => builds(origin, id), delete: () => remove(origin, id), stats: () => stats(origin, id) }[command];
+  const [origin, command, ...rest] = process.argv.slice(2);
+  const [id, shape = "large"] = command === "make" ? [undefined, ...rest] : rest;
+  const run = {
+    make: () => make(origin, shape),
+    write: () => write(origin, id, shape),
+    turn: () => turn(origin, id),
+    builds: () => builds(origin, id, shape),
+    delete: () => remove(origin, id),
+    stats: () => stats(origin, id),
+  }[command];
   if (!origin || !run) {
-    console.error("usage: node scripts/large-workspace.mjs <origin> make|write|builds|turn|stats|delete [workspace id]");
+    console.error("usage: node scripts/large-workspace.mjs <origin> make [shape]|write|builds|turn|stats|delete [workspace id] [shape]");
     process.exit(2);
   }
   await run();
