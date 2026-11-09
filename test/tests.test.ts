@@ -336,6 +336,32 @@ describe("bundling the tests", () => {
     });
   });
 
+  it('sets NODE_ENV to "test", as vitest does, so a Package that picks its code by it brings in only its development code', async () => {
+    const snapshot = workspace({
+      "wrangler.jsonc": '{ "name": "app", "main": "src/index.ts", "compatibility_date": "2026-10-01", "compatibility_flags": ["nodejs_compat"] }',
+      "node_modules/fake-react/package.json": JSON.stringify({ name: "fake-react", version: "1.0.0", main: "index.js" }),
+      "node_modules/fake-react/index.js":
+        'if (process.env.NODE_ENV === "production") module.exports = require("./production.js");\nelse module.exports = require("./development.js");\n',
+      "node_modules/fake-react/production.js": 'module.exports = "the production code";\n',
+      "node_modules/fake-react/development.js": 'module.exports = "the development code";\n',
+      "src/index.test.ts": [
+        'import { expect, it } from "vitest";',
+        'import code from "fake-react";',
+        'it("sees the test environment", () => {',
+        '  expect(code).toBe("the development code");',
+        '  expect(process.env.NODE_ENV).toBe("test");',
+        "});",
+        "",
+      ].join("\n"),
+    });
+    const bundle = await bundleTests(snapshot, ["src/index.test.ts"], { vitest: vitestModule });
+    if (!bundle.ok) throw new Error(`The tests didn't bundle: ${JSON.stringify(bundle.errors)}`);
+    expect(bundle.code).toContain("the development code");
+    expect(bundle.code).not.toContain("the production code");
+    const [report] = await testInDynamicWorkers(env.LOADER, bundle, ["src/index.test.ts"]);
+    expect(report!.tests).toEqual([{ name: ["sees the test environment"], state: "passed", line: 3, failure: null }]);
+  });
+
   it("reports a Test bundler that fails, or never answers, as a bundling error", async () => {
     const broken = {
       get: () => {

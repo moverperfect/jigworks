@@ -45,6 +45,10 @@ export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtu
       virtualModules,
       jsx: "automatic",
       jsxImportSource: "react",
+      // vitest sets NODE_ENV to "test". Left unset, a Package that picks its
+      // development or production code by NODE_ENV, as React's do, brings
+      // both in, and every test file's Dynamic Worker parses both (#55).
+      define: { "process.env.NODE_ENV": '"test"' },
       sourcemap: true,
     });
     const main = worker.modules[worker.mainModule];
