@@ -308,3 +308,26 @@ describe("probe: ping", () => {
     expect({ pinged: pinged - opened, messaged: messaged - opened, starts, messages: h!.messages }).toEqual({});
   });
 });
+
+describe("probe: a Build after hibernation", () => {
+  it("drops a hibernated instance's sockets, or not", async () => {
+    const workspace = await roomWorkspace("Sockets Hibernated Build");
+    const base = await previewUrl(workspace.id);
+    const cookie = await signIn(workspace.id);
+    const [h] = await sockets(base, "room=h", 1, cookie);
+    await until(() => false, 15_000);
+    await save(workspace.id, "src/index.ts", roomApp("v2"));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await until(() => h!.closed.code !== undefined, 3000);
+    const closedByBuild = { ...h!.closed };
+    let sendError = "";
+    try {
+      h!.socket.send("after");
+    } catch (error) {
+      sendError = String(error);
+    }
+    await until(() => h!.messages.length >= 2, 3000);
+    const count = await (await open(base, "/broadcast?room=h&text=x", { cookie })).text();
+    expect({ closedByBuild, sendError, messages: h!.messages, count }).toEqual({});
+  });
+});

@@ -645,7 +645,9 @@ export class AppHost extends DurableObject<Env> {
 
   /** Stops the slot's running instances, so the next call starts them with the slot's new code or secrets. */
   private abortFacets(slot: Slot): void {
-    for (const name of [...this.running].filter((running) => running.startsWith(`${slot}:`))) {
+    // PROBE (#109): every facet the slot ever started, since a hibernated one woken by a socket isn't in `running`.
+    const known = this.sql().exec<{ name: string }>("SELECT name FROM facets").toArray().map(({ name }) => name);
+    for (const name of new Set([...this.running, ...known].filter((running) => running.startsWith(`${slot}:`)))) {
       this.ctx.facets.abort(name, new Error("The app has new code or secrets."));
       this.running.delete(name);
     }
