@@ -15,6 +15,8 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - Under vitest 5, plugin 1.4.0 fails everywhere.
   - Plugin 1.4.7 needs a miniflare beta. It passes locally, but crashes `builds.test.ts` and `files.test.ts` on GitHub's 2-core runner, even one file at a time.
   - Try again once the plugin's miniflare leaves beta. Keep `wrangler` on the plugin's version, so tests, dev and deploys share one workerd.
+- **The vitest plugin's patch** (`patches/`, in `pnpm.patchedDependencies`) gives 1.4.0 the plugin's own fix from 1.4.11 (cloudflare/workers-sdk#15565). Without it, a run sometimes hung after its last test file had passed (#106). The plugin holds back a `console.log` made in a Durable Object's own context, such as the `build` line of a Build that a save scheduled, until the runner's next message. vitest waits for every log's reply before it ends a file, so a log held back after the file's last result is never sent. On upgrading the plugin, delete the patch and its entry: `pnpm install` refuses a patch it can't apply (`ERR_PNPM_PATCH_NOT_APPLIED`).
+- **CI's test step** stops after 6 minutes, about three times its usual 2, so a hang fails in minutes and can be rerun, rather than holding the runner for the job's 20.
 - **Overrides** (`pnpm.overrides` in `package.json`) lift two packages past exact pins in the test tools: miniflare pins `undici` 7.29.1, and plugin 1.4.0 pins `zod` 4.6.5. Both versions have security alerts (#27). An override applies only below the patched version, so it stops mattering once those tools pin patched versions themselves. Delete both then.
 
 ## Deploys

@@ -32,7 +32,9 @@ jobs:
       - run: pnpm typecheck
       # The client's build runs its typecheck first.
       - run: pnpm --filter client build
+      # Usually 2 minutes. A hang fails in 6, rather than at the job's 20.
       - run: pnpm test
+        timeout-minutes: 6
 
   # Every merge to main deploys, once the checks pass. Only this job can read
   # the deploy token: it lives in the production environment, which only main
