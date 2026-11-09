@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ApiError, toApiError } from "./api";
+import { ApiError, isSignedOut, onSignedOutChange, toApiError } from "./api";
 
 export type LoadState<T> = { status: "loading" } | { status: "failed"; error: ApiError } | { status: "ready"; data: T };
 
@@ -47,6 +47,11 @@ const onVisibilityChange = (changed: () => void) => {
 /** Whether the page is showing, rather than in a background tab or a minimised window. */
 export function usePageVisible(): boolean {
   return useSyncExternalStore(onVisibilityChange, () => document.visibilityState === "visible");
+}
+
+/** Whether a request has found the Developer's sign-in expired, which only reloading the page clears. */
+export function useSignedOut(): boolean {
+  return useSyncExternalStore(onSignedOutChange, isSignedOut);
 }
 
 export function useTitle(title: string | undefined): void {

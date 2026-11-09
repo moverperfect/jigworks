@@ -27,9 +27,45 @@ export class ApiError extends Error {
     this.status = status;
   }
 
+  /** Whether the Developer's sign-in has expired, rather than the platform refusing them or failing. */
   get signedOut(): boolean {
-    return this.status === 401 || this.status === 403;
+    return this.status === 401;
   }
+}
+
+let signedOut = false;
+const signedOutListeners = new Set<() => void>();
+
+/**
+ * Whether a request has found the Developer's sign-in expired. Only reloading
+ * the page, which signs them in again, clears it.
+ */
+export function isSignedOut(): boolean {
+  return signedOut;
+}
+
+/** Calls `listener` when a request first finds the sign-in expired. Returns a function that stops it. */
+export function onSignedOutChange(listener: () => void): () => void {
+  signedOutListeners.add(listener);
+  return () => signedOutListeners.delete(listener);
+}
+
+/**
+ * Asks the platform whether the Developer is still signed in. The
+ * Conversation's socket does when it closes: a browser tells it nothing about
+ * why, so Access's redirect looks like any dropped connection.
+ */
+export async function checkSignIn(): Promise<void> {
+  if (!signedOut) await getMe().catch(() => {});
+}
+
+/** A failed request's error, once the page knows if it found the sign-in expired. */
+function reportFailure(error: ApiError): ApiError {
+  if (error.signedOut && !signedOut) {
+    signedOut = true;
+    for (const listener of signedOutListeners) listener();
+  }
+  return error;
 }
 
 export function toApiError(error: unknown): ApiError {
@@ -50,8 +86,9 @@ async function send(method: string, path: string, body?: { type: string; text: s
   } catch {
     throw new ApiError("Couldn't reach Jigworks. Check your connection and try again.", 0);
   }
-  if (response.type === "opaqueredirect") throw new ApiError("Your sign-in has expired.", 401);
-  if (!response.ok) throw new ApiError(await errorMessage(response), response.status);
+  // `as string`: the tests check this file with Workers' types, which leave the browser's response types out.
+  if ((response.type as string) === "opaqueredirect") throw reportFailure(new ApiError("Your sign-in has expired.", 401));
+  if (!response.ok) throw reportFailure(new ApiError(await errorMessage(response), response.status));
   return response;
 }
 

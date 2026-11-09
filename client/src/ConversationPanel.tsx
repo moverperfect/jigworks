@@ -24,7 +24,7 @@ import {
   type ToolPart,
 } from "./agentMessage";
 import { setSecret, startTurn, toApiError, type ApiError } from "./api";
-import { sendsMessage } from "./composer";
+import { sendsMessage, useDraft } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
 import { canLeaveForNow, describeLastTurn } from "./lastTurn";
 import { renderMarkdown, type MarkdownNode } from "./markdown";
@@ -51,7 +51,7 @@ export function ConversationPanel({
   leaveFailure: () => void;
 }) {
   const headingId = useId();
-  const [text, setText] = useState("");
+  const [text, setText] = useDraft(`jigworks:message:${id}`);
   const [posting, setPosting] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const list = useRef<HTMLOListElement>(null);
@@ -457,13 +457,15 @@ function describeOutput(output: unknown): string {
 
 /** Whether the socket is connected, and what the Agent is doing or last did. */
 function ConversationStatus({ conversation, failureLeft }: { conversation: Conversation; failureLeft: boolean }) {
-  const { state, connected, failed } = conversation;
+  const { state, connected, failed, signedOut } = conversation;
   const startedAt = connected ? state?.turn?.startedAt : undefined;
   const now = useNow(startedAt !== undefined);
 
   let status: ReactNode = null;
   let warning = false;
-  if (failed) status = "Couldn't connect to the Conversation. Reload the page to try again.";
+  // The page's signed-out note says why the socket stopped.
+  if (signedOut) status = null;
+  else if (failed) status = "Couldn't connect to the Conversation. Reload the page to try again.";
   else if (!connected) status = state ? "Disconnected. Reconnecting…" : "Connecting…";
   else if (state?.startingFresh) status = "Starting fresh…";
   // The page calls the end-of-Turn Check, Build and tests "making sure it works" (ADR 0018).
