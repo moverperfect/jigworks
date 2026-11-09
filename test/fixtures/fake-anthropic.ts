@@ -47,8 +47,13 @@ export function fakeAnthropic(
     const url = new URL(request.url);
     if (url.origin !== new URL(api).origin) return null;
     if (request.method !== "POST" || !url.pathname.endsWith("/v1/messages")) return error(404, "not_found_error", "Not found");
-    if (request.headers.get("x-api-key") !== apiKey) return error(401, "authentication_error", "invalid x-api-key");
+    // The key comes as Authorization: Bearer, or as x-api-key, which the platform's AI SDK sends.
+    const key = request.headers.get("x-api-key") ?? request.headers.get("authorization")?.replace(/^Bearer /, "");
+    if (key !== apiKey) return error(401, "authentication_error", "invalid x-api-key");
 
+    // The platform's AI SDK sends the older version, and apps the newer.
+    const version = request.headers.get("anthropic-version");
+    if (version !== "2023-06-01" && version !== "2026-10-21") return error(400, "invalid_request_error", `anthropic-version: ${version} isn't a version`);
     const body = (await request.json()) as MessagesRequest;
     if (body.messages[0]?.role !== "user") return error(400, "invalid_request_error", "The first message must use the user role");
     let reply: Reply = { text: summaryReply };

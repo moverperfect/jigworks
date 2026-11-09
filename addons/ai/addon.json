@@ -1,0 +1,17 @@
+{
+  "name": "Calling an AI model",
+  "description": "Asks Claude, Anthropic's AI model, a question from the app with the Developer's own key, and says plainly when there's no answer.",
+  "fits": "Add it when the app has to understand or write words, such as sorting or summarising what people send.",
+  "needs": [],
+  "packages": {},
+  "secrets": [
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "reason": "Your app asks Claude, an AI model from Anthropic, with a key from your own Anthropic account, so what it uses is charged to you, not to the people using it. Sign up at platform.claude.com and add some credit on its Billing page. Then create a key on its API Keys page, platform.claude.com/settings/keys, choosing the Default workspace in your Anthropic account for it. Anthropic's settings also let you set a monthly spending limit."
+    }
+  ],
+  "edits": [
+    "In worker-configuration.d.ts, add `ANTHROPIC_API_KEY?: string;` to the __BaseEnv_Env interface: it's a Secret, which isn't set until the Developer gives it.",
+    "Where the app asks Claude, import `askClaude` from `./ai` (`./server/ai` from src/index.ts) and call it as its notes say."
+  ]
+}
