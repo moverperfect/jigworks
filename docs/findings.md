@@ -1249,3 +1249,32 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 ### Found along the way
 
 - **Nothing tells the Agent that sockets fail.** The Templates' notes don't mention WebSockets. An Agent that forwards an upgrade to a Durable Object writes an app whose `fetch` fails with `DataCloneError`. Left for the spec, which changes those notes anyway.
+
+## The Preview's errors after each Build (#45)
+
+**Verdict: yes.** On the deployed platform, the Agent saw its app's error twice without asking for the logs: in the `build` tool's result, and when the Turn ended. It then fixed the app. The Turn took one retry for it, and $0.11.
+
+- **Platform:** the deployed platform at `main` (`00e3e43`, with #115), checked on 2026-11-09 from the Developer's signed-in browser (Chrome, T3's preview tools) in the UK, with `wrangler tail` running.
+- **Turns:** one Turn of Opus 5.5, in a Workspace made for the check from the Worker Template and deleted afterwards. The budget was $1; it cost $0.113 at the tail script's prices.
+- **The request** spelt out the steps, since a Developer wouldn't break their own app: make the home page throw "The list is missing", build it and say what the build said; change the error to "The list is still missing" without building; and fix the home page if the platform then reports errors.
+
+**What the Agent was given:**
+
+| When | What it read |
+| --- | --- |
+| The `build` tool, after the first change | "The Build succeeded. The platform tried the Preview with GET /, which answered 500. Since this Build, it has logged 1 error: … server error: Error: The list is missing" |
+| The Turn's end, after the second change, which it didn't build | "After your Turn, the Preview logged 1 error when the platform tried it. Fix any that need it. If none do, change nothing and end your Turn. This is retry 1 of 3." and the same report, with "The list is still missing" |
+| The `build` tool, after its fix | "… which answered 200. It has logged no errors or warnings since this Build." |
+
+- **The page** showed "Tried your app and found a problem, looking into it (try 1 of 3)" between the Agent's two replies.
+- **The Agent's replies** were plain: the first said opening the home page "gave a server error, and the app's log recorded one error"; after the fix, that the home page "opens with no errors, and nothing was recorded in the app's log".
+- **Only the new Build's lines:** each report had only its own Build's error, not the earlier one.
+
+**The Turn's log line:** completed, 40.3 s, 10 steps, 1 retry, no Check or Build errors, the tests passing; `previewTries` 3, `previewErrors` 2, `previewWarnings` 0 and `previewRetries` 1.
+
+**What the tries cost in time:** each sends `GET /`, then waits 3 s. The Agent's two Builds took 10.0 s and 9.3 s of wall time, with the try inside their trace, against 5.3 s for the Turn's own Build, whose try runs outside it. So a try added about 4 s. A Build the Agent had already seen tried, such as the Turn's cached Build after the fix, isn't tried again: that trace took 0.8 s.
+
+**Not covered:**
+- **Front-end errors from an open Preview pane:** the Worker Template has no front end. The Workspace page, with its Preview pane, was open during the Turn.
+- **Warnings,** and the Agent judging one harmless: covered only by the scripted model's tests (`test/preview-errors.test.ts`).
+- **`request_preview` beyond `GET /`:** the Agent didn't call it. The only route it changed was `GET /`, which the platform's tries covered.
