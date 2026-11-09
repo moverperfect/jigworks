@@ -42,6 +42,13 @@
   // one's own copy of its Packages (ADR 0020). A deploy creates the bucket if
   // it's missing, and so does scripts/set-up-installation.sh.
   "r2_buckets": [{ "binding": "PACKAGE_CACHE", "bucket_name": "jigworks-package-cache" }],
+  // Cap requests to a Preview, since Access lets them through (ADR 0013):
+  // strictly without its session cookie, loosely with one, which only the app
+  // host can check. See docs/development.md.
+  "ratelimits": [
+    { "name": "PREVIEW_RATE_LIMIT", "namespace_id": "1301", "simple": { "limit": 60, "period": 60 } },
+    { "name": "PREVIEW_SESSION_RATE_LIMIT", "namespace_id": "1302", "simple": { "limit": 600, "period": 60 } }
+  ],
   // Checks run in Dynamic Workers (ADR 0010).
   "worker_loaders": [{ "binding": "LOADER" }],
   "vars": {

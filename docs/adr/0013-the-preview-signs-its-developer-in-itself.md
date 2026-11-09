@@ -9,6 +9,7 @@ The Workspace page shows the Preview in a frame, and a frame on the platform's h
 ## Consequences
 
 - **The platform is the only gate on Previews.** An Access token never counts on a Preview hostname, and the gate treats a missing or unknown session as signed out.
+- **Nothing but the platform limits how fast Previews are asked for.** The platform Worker caps requests to each Preview from each address (#113, `docs/development.md`). Without a signing key it can't tell a real session from a made-up one, so requests with any session cookie count against a looser limit of their own, well clear of the Developer's use.
 - **No signing key.** Tokens and sessions are random values kept in the app host's own SQLite, so there's no secret to set or rotate. Ending sessions early means deleting rows.
 - **App code never sees or sets the session cookie.** It's stripped from requests before they reach app code, and an app's attempt to set it is dropped with a warning. Apps still pass only `__Host-` cookies. In the pane, the platform adds `Partitioned; SameSite=None` to them, so an app's own sign-in works there as it does in a tab.
 - **Only the platform's pages and the Preview's own may frame a Preview:** every Preview response carries `Content-Security-Policy: frame-ancestors 'self' <platform origin>`, beside the app's own policy.

@@ -3,6 +3,8 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import { browserErrorsPath, sessionCookie, signInPath, type AppLogEntry } from "../src/apphost";
 import type { BuildReport } from "../src/shared/build-report";
+import { parseJsonc } from "../src/shared/jsonc";
+import wranglerConfig from "../wrangler.jsonc?raw";
 import { accessToken, testAccess } from "./helpers/access";
 import { call, create, waitFor } from "./helpers/api";
 
@@ -521,6 +523,91 @@ describe("signing in to the Preview", () => {
     // A browser that sends no Sec-Fetch-Site still sends Origin.
     const sibling = `https://sibling-k3x9p2qa.${testAccess.appsDomain}`;
     expect((await visit(workspace.id, "/", { method: "POST", headers: { Origin: sibling } })).status).toBe(403);
+  });
+});
+
+describe("limiting requests to the Preview (#113)", () => {
+  // Access lets Preview hostnames through (ADR 0013), so the platform Worker caps how fast one client may knock.
+  const limits = (parseJsonc(wranglerConfig) as { ratelimits: { name: string; simple: { limit: number; period: number } }[] }).ratelimits;
+  const simple = (name: string) => limits.find((binding) => binding.name === name)!.simple;
+  const { limit, period } = simple("PREVIEW_RATE_LIMIT");
+  // Requests with a session cookie, real or made up, count against a looser limit of their own.
+  const withSession = simple("PREVIEW_SESSION_RATE_LIMIT");
+  const from = (ip: string) => ({ "CF-Connecting-IP": ip });
+  /**
+   * Miniflare's rate-limit windows follow the clock, and a burst that runs
+   * into the next one starts a fresh count. Waits for a new window of
+   * `period` seconds unless this one has `seconds` left.
+   */
+  const freshWindow = async (period: number, seconds: number) => {
+    const left = period * 1000 - (Date.now() % (period * 1000));
+    if (left < seconds * 1000) await new Promise((resolve) => setTimeout(resolve, left + 100));
+  };
+
+  it("answers a burst from one client past the limit with 429, and only that client on that Preview", async () => {
+    const workspace = await create("Limit Burst");
+    const other = await create("Limit Other");
+    const { url } = await preview(workspace.id);
+    await freshWindow(period, 10);
+    for (let i = 0; i < limit; i++) expect((await browse(url, { dest: "empty", headers: from("203.0.113.7") })).status).not.toBe(429);
+    const over = await browse(url, { dest: "empty", headers: from("203.0.113.7") });
+    expect(over.status).toBe(429);
+    expect(over.headers.get("Retry-After")).toBe(String(period));
+
+    expect((await browse(url, { dest: "empty", headers: from("203.0.113.8") })).status).not.toBe(429);
+    expect((await browse((await preview(other.id)).url, { dest: "empty", headers: from("203.0.113.7") })).status).not.toBe(429);
+  });
+
+  it("counts an IPv6 client by its /64, the block one subscriber is given", async () => {
+    const workspace = await create("Limit Six");
+    const { url } = await preview(workspace.id);
+    await freshWindow(period, 10);
+    for (let i = 0; i < limit; i++) await browse(url, { dest: "empty", headers: from(`2001:db8:0:1::${i.toString(16)}`) });
+    expect((await browse(url, { dest: "empty", headers: from("2001:db8:0:1:ffff::1") })).status).toBe(429);
+    expect((await browse(url, { dest: "empty", headers: from("2001:db8:0:2::1") })).status).not.toBe(429);
+  });
+
+  it("answers a flood with a made-up session cookie with 429 past the looser limit", async () => {
+    const workspace = await create("Limit Made Up");
+    await build(workspace.id);
+    const { url } = await preview(workspace.id);
+    const madeUp = { dest: "empty", cookie: `${sessionCookie}=made-up`, headers: from("203.0.113.10") };
+    await freshWindow(withSession.period, 30);
+    for (let i = 0; i < withSession.limit; i++) expect((await browse(url, madeUp)).status).toBe(401);
+    const over = await browse(url, madeUp);
+    expect(over.status).toBe(429);
+    expect(over.headers.get("Retry-After")).toBe(String(withSession.period));
+
+    // The Developer, signed in from another address, is untouched.
+    const cookie = await signIn(workspace.id);
+    expect((await browse(new URL("/api/hello/Pane", url).href, { dest: "empty", cookie, headers: from("203.0.113.11") })).status).toBe(200);
+  });
+
+  it("leaves a busy minute of signed-in use well clear of the looser limit", async () => {
+    const workspace = await create("Limit Busy");
+    await build(workspace.id);
+    const { url } = await preview(workspace.id);
+    const cookie = await signIn(workspace.id);
+    const signedIn = { dest: "empty", cookie, headers: from("203.0.113.12") };
+    // A page polling every 5 s, as the live-updates add-on's can, and 20 page loads of a page with 5 assets.
+    const busyMinute = [...Array<string>(60 / 5).fill("/api/hello/Poll"), ...Array<string>(20 * 6).fill("/")];
+    for (const path of busyMinute) expect((await browse(new URL(path, url).href, signedIn)).status).toBe(200);
+    expect(busyMinute.length * 4).toBeLessThanOrEqual(withSession.limit);
+  });
+
+  it("doesn't count the Developer's signed-in requests against the strict limit, nor the Agent's at all", async () => {
+    const workspace = await create("Limit Developer");
+    await build(workspace.id);
+    const { url } = await preview(workspace.id);
+    const cookie = await signIn(workspace.id);
+    for (let i = 0; i <= limit; i++) await browse(url, { dest: "empty", headers: from("203.0.113.9") });
+    // A page that polls, as the live-updates add-on's do, keeps going past the limit.
+    for (let i = 0; i <= limit; i++) {
+      expect((await browse(new URL("/api/hello/Poll", url).href, { dest: "empty", cookie, headers: from("203.0.113.9") })).status).toBe(200);
+    }
+    // The Agent's request_preview reaches the app host without passing the Worker's fetch.
+    for (let i = 0; i <= limit; i++) await browse(url, { dest: "empty" });
+    expect((await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/" })).status).toBe(200);
   });
 });
 
