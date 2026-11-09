@@ -1,0 +1,17 @@
+{
+  "name": "Organiser's area",
+  "description": "A part of the app at /organiser that only someone with the passcode can open, with a sign-in page and signing out.",
+  "fits": "Add it when only the person running the app should see or change something, such as changing a rota or seeing everyone's details.",
+  "needs": ["storage"],
+  "packages": {},
+  "secrets": [
+    {
+      "name": "ORGANISER_PASSCODE",
+      "reason": "The passcode that opens your app's organiser's area. Anyone who has it can see and change what's there, so choose one that's hard to guess. Changing it signs everyone out."
+    }
+  ],
+  "edits": [
+    "In the Worker's main module (main in wrangler.jsonc), import `organiser` from `./organiser` (`./server/organiser` from src/index.ts), add the organiser's own routes to it as its notes say, then mount it after them: `app.route(\"/organiser\", organiser);`.",
+    "If the app has a front end (index.html), add \"/organiser/sign-in\" and \"/organiser/api/*\" to `run_worker_first` in wrangler.jsonc's `assets`, so the Worker answers them rather than the front end."
+  ]
+}

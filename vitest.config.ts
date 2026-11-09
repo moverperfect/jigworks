@@ -5,9 +5,12 @@ import { testAccess } from "./test/fixtures/access-settings.ts";
 import { agentScripts } from "./test/fixtures/agent-scripts.ts";
 import { fakeAnthropic } from "./test/fixtures/fake-anthropic.ts";
 import { fakeRegistry } from "./test/fixtures/fake-registry.ts";
+import { realPackage } from "./test/fixtures/real-package.mjs";
 import { registryPackages } from "./test/fixtures/registry-data.ts";
 
-const registry = fakeRegistry(registryPackages);
+// The Templates' Hono is the real one, so their apps and the add-ons run as a
+// Developer's would: just the parts the Templates and add-ons import.
+const registry = fakeRegistry([realPackage("hono", [".", "./cookie", "./html"]), ...registryPackages]);
 const anthropicKey = "test-anthropic-key";
 const anthropic = fakeAnthropic(agentScripts, { apiKey: anthropicKey });
 

@@ -38,11 +38,12 @@ describe("installing a new Workspace's Packages", () => {
   it("keeps only the file types a Check or a Build reads", async () => {
     const workspace = await create("Filtered");
     const files = await env.WORKSPACES.getByName(workspace.id).packageFiles();
-    expect(Object.keys(files).sort()).toEqual([
-      "node_modules/hono/dist/index.d.ts",
-      "node_modules/hono/dist/index.js",
-      "node_modules/hono/package.json",
-    ]);
+    const paths = Object.keys(files);
+    expect(paths).toEqual(
+      expect.arrayContaining(["node_modules/hono/dist/types/index.d.ts", "node_modules/hono/dist/index.js", "node_modules/hono/package.json"]),
+    );
+    // Hono's README is in the tarball, but not kept.
+    expect(paths.filter((path) => !/(\.js|\.d\.ts|\/package\.json)$/.test(path))).toEqual([]);
   });
 
   it("never puts Packages in the Workspace's files", async () => {

@@ -275,6 +275,8 @@ export class AppHost extends DurableObject<Env> {
         method: init.method,
         headers: init.headers,
         body: init.body && init.method !== "GET" && init.method !== "HEAD" ? init.body : undefined,
+        // A redirect comes back as the app sent it, Set-Cookie and all, as a browser's first request sees it.
+        redirect: "manual",
       }),
       "preview",
       false,

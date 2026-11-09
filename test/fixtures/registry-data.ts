@@ -1,6 +1,7 @@
 import type { FakePackage } from "./fake-registry.ts";
 
-// The Packages the fake npm registry serves in tests (see vitest.config.ts).
+// The Packages the fake npm registry serves in tests (see vitest.config.ts),
+// besides the real Hono it serves from the platform's own copy.
 // Ages are in hours: anything under 24 is too new to install.
 
 const files = (name: string) => ({
@@ -9,65 +10,6 @@ const files = (name: string) => ({
 });
 
 export const registryPackages: FakePackage[] = [
-  {
-    // The Worker Template's one Package.
-    name: "hono",
-    versions: {
-      "4.13.13": {
-        ageHours: 240,
-        files: {
-          "package.json": JSON.stringify({
-            name: "hono",
-            version: "4.13.13",
-            type: "module",
-            main: "dist/index.js",
-            types: "dist/index.d.ts",
-          }),
-          // Just enough of Hono to run the Worker Template's routes in the Preview.
-          "dist/index.js": [
-            "export class Hono {",
-            "  #routes = [];",
-            "  get(path, handler) { this.#routes.push(['GET', path, handler]); return this; }",
-            "  post(path, handler) { this.#routes.push(['POST', path, handler]); return this; }",
-            "  fetch = (request, env) => {",
-            "    const { pathname } = new URL(request.url);",
-            "    for (const [method, path, handler] of this.#routes) {",
-            "      if (method !== request.method) continue;",
-            "      const names = [];",
-            "      const pattern = new RegExp('^' + path.replace(/:([^/]+)/g, (_, name) => { names.push(name); return '([^/]+)'; }) + '$');",
-            "      const match = pattern.exec(pathname);",
-            "      if (!match) continue;",
-            "      const params = Object.fromEntries(names.map((name, i) => [name, decodeURIComponent(match[i + 1])]));",
-            "      return handler({ env, req: { param: (name) => params[name] }, text: (text) => new Response(text), json: (value) => Response.json(value) });",
-            "    }",
-            "    return new Response('Not Found', { status: 404 });",
-            "  };",
-            "  request = (input, init, env) => this.fetch(new Request(new URL(input, 'http://localhost'), init), env);",
-            "}",
-            "",
-          ].join("\n"),
-          // Just enough of Hono's types for the Worker Template to pass a Check.
-          "dist/index.d.ts": [
-            "export interface Context<E extends { Bindings?: object } = {}> {",
-            '  env: E["Bindings"];',
-            "  req: { param(name: string): string };",
-            "  text(text: string): Response;",
-            "  json(value: unknown): Response;",
-            "}",
-            "export declare class Hono<E extends { Bindings?: object } = {}> {",
-            "  get(path: string, handler: (c: Context<E>) => Response | Promise<Response>): this;",
-            "  post(path: string, handler: (c: Context<E>) => Response | Promise<Response>): this;",
-            "  fetch(request: Request): Response | Promise<Response>;",
-            '  request(input: string, init?: RequestInit, env?: E["Bindings"]): Promise<Response>;',
-            "}",
-            "",
-          ].join("\n"),
-          "dist/index.js.map": "{}",
-          "README.md": "# Hono\n",
-        },
-      },
-    },
-  },
   // The Worker + React Template's Packages: just enough of React and its
   // types for the Template to pass a Check and bundle.
   {

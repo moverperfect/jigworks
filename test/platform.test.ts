@@ -102,14 +102,15 @@ describe("Templates", () => {
 
   it("lists the add-ons, with when each fits", async () => {
     const { addons } = await (await call("/api/addons")).json<{ addons: unknown[] }>();
-    expect(addons).toEqual([
-      {
-        id: "storage",
-        name: "Storage",
-        description: expect.stringContaining("typed store of records"),
-        fits: expect.stringContaining("started from the Worker Template has to remember things"),
-      },
-    ]);
+    expect(addons).toContainEqual({
+      id: "storage",
+      name: "Storage",
+      description: expect.stringContaining("typed store of records"),
+      fits: expect.stringContaining("started from the Worker Template has to remember things"),
+    });
+    // Each add-on, whichever there are, gives the Agent what it needs to choose it.
+    const given = expect.stringMatching(/\S/);
+    for (const addon of addons) expect(addon).toEqual({ id: given, name: given, description: given, fits: given });
   });
 });
 

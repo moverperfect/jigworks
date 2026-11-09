@@ -36,8 +36,59 @@ export default app;
 
 export { Store } from "./server/store";
 `;
+/** The Worker + React Template's Worker with the organiser's area joined to it, and a route only the organiser can use. */
+export const organiserIndex = `import { Hono } from "hono";
+import type { Hello } from "../shared/api";
+import { organiser } from "./organiser";
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/hello/:name", (c) => {
+  const hello: Hello = { message: \`\${c.env.GREETING}, \${c.req.param("name")}\` };
+  return c.json(hello);
+});
+
+organiser.get("/api/signups", (c) => c.json(["Ada", "Grace"]));
+app.route("/organiser", organiser);
+
+export default app;
+
+// The app's storage (see "Storage" in AGENTS.md).
+export { Store } from "./store";
+`;
+/** The Worker Template's Worker with storage and the organiser's area joined to it, and the area's own page. */
+export const organiserWorkerIndex = `import { Hono } from "hono";
+import { organiser } from "./server/organiser";
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/", (c) => c.text(\`\${c.env.GREETING} from your Worker\`));
+
+app.get("/api/hello/:name", (c) => c.json({ message: \`\${c.env.GREETING}, \${c.req.param("name")}\` }));
+
+organiser.get("/", (c) => c.html("<h1>The rota</h1>"));
+app.route("/organiser", organiser);
+
+export default app;
+
+export { Store } from "./server/store";
+`;
 /** The value the Developer gives for the Secret that `ask-for-secret` asks for, which must never reach the model. */
 export const askedSecretValue = "key-from-the-email-service";
+
+/** Adds the organiser's area, then makes the joining `edits`. */
+function addOrganiserAndJoin(edits: { name: string; input: Record<string, string> }[]): Script {
+  return (request) => {
+    switch (toolStepsTaken(request)) {
+      case 0:
+        return { toolCalls: [{ name: "add_addon", input: { addon: "organiser" } }] };
+      case 1:
+        return { toolCalls: edits };
+      default:
+        return { text: "Your app has an organiser's area now." };
+    }
+  };
+}
 
 export const agentScripts: Record<string, Script> = {
   // Answers once, with no tools.
@@ -137,6 +188,40 @@ export const agentScripts: Record<string, Script> = {
         return { text: "Your app remembers messages now." };
     }
   },
+
+  // Adds the organiser's area to a Worker + React Template app, then makes its joining edits.
+  "add-organiser-and-join": addOrganiserAndJoin([
+    {
+      name: "edit",
+      input: {
+        path: "/wrangler.jsonc",
+        old_string: '"run_worker_first": ["/api/*"]',
+        new_string: '"run_worker_first": ["/api/*", "/organiser/sign-in", "/organiser/api/*"]',
+      },
+    },
+    { name: "write", input: { path: "/src/server/index.ts", content: organiserIndex } },
+  ]),
+
+  // Adds the organiser's area to a Worker Template app, which brings storage, then makes both's joining edits.
+  "add-organiser-to-worker-and-join": addOrganiserAndJoin([
+    {
+      name: "edit",
+      input: {
+        path: "/wrangler.jsonc",
+        old_string: '"vars": {',
+        new_string: '"durable_objects": { "bindings": [{ "name": "STORE", "class_name": "Store" }] },\n  "vars": {',
+      },
+    },
+    {
+      name: "edit",
+      input: {
+        path: "/worker-configuration.d.ts",
+        old_string: '\tGREETING: "Hello";\n',
+        new_string: '\tGREETING: "Hello";\n\tSTORE: DurableObjectNamespace<import("./src/server/store").Store>;\n',
+      },
+    },
+    { name: "write", input: { path: "/src/index.ts", content: organiserWorkerIndex } },
+  ]),
 
   // Writes a failing test, and does nothing more when the tests fail.
   "write-failing-test": (request) =>
