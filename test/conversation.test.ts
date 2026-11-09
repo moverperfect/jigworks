@@ -1,3 +1,4 @@
+import type { ToolCallResultContext } from "@cloudflare/think";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
@@ -5,7 +6,7 @@ import type { PackageStatus } from "../src/packages";
 import { restartedDuringTurn, type ConversationState, type LastTurn } from "../src/shared/conversation";
 import type { CheckReport, Workspace } from "../src/workspace";
 import type { TestReport } from "../src/shared/test-report";
-import { askedSecretValue, brokenCount, buildableIndex, failingTest, fixedCount } from "./fixtures/agent-scripts";
+import { askedSecretValue, brokenCount, buildableIndex, failingTest, fixedCount, twoLines } from "./fixtures/agent-scripts";
 import { summaryReply } from "./fixtures/fake-anthropic";
 import { call, create } from "./helpers/api";
 import { testAccess } from "./helpers/access";
@@ -470,6 +471,67 @@ describe("the Agent's own tools", () => {
     await runTurn(workspace.id, conversation, "[script:bash-and-build] Break it");
     const [, reply] = await history(workspace.id);
     expect(textOf(reply!)).toMatch(/The Build failed:\n\/src\/index\.ts:1:\d+: /);
+  });
+
+  it("keeps both of two edits to one file in the same step", async () => {
+    const workspace = await create("Two edits");
+    expect((await call(`/api/workspaces/${workspace.id}/files/src/pair.ts`, { method: "PUT", text: twoLines })).status).toBe(204);
+    await runTurn(workspace.id, await connect(workspace.id), "[script:two-edits] Change both");
+    const file = await (await call(`/api/workspaces/${workspace.id}/files/src/pair.ts`)).text();
+    expect(file).toBe("export const first = 10;\nexport const second = 20;\n");
+  });
+
+  it("runs an edit after bash in the same step, as the model gave them, so the edit finds what bash wrote", async () => {
+    const workspace = await create("Bash then edit");
+    await runTurn(workspace.id, await connect(workspace.id), "[script:bash-and-edit] Write it");
+    const file = await (await call(`/api/workspaces/${workspace.id}/files/src/pair.ts`)).text();
+    expect(file).toBe("export const first = 10;\n");
+  });
+
+  /** Starts and finishes a tool call through the Workspace's hooks, as Think does, with the tool's name as its ID. */
+  function toolHooks(instance: Workspace) {
+    return {
+      start: (toolName: string) =>
+        instance.beforeToolCall({ type: "tool-call", toolName, toolCallId: toolName, input: {}, stepNumber: 0, messages: [], abortSignal: undefined }),
+      finish: (toolName: string) => instance.afterToolCall({ toolName, toolCallId: toolName } as unknown as ToolCallResultContext),
+    };
+  }
+
+  it("runs a step's tools that change the files one at a time, and doesn't make reading tools wait", async () => {
+    const workspace = await create("One at a time");
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), async (instance: Workspace) => {
+      const { start, finish } = toolHooks(instance);
+      const settled = (started: unknown) => Promise.race([Promise.resolve(started).then(() => true), scheduler.wait(100).then(() => false)]);
+
+      expect(await settled(start("edit"))).toBe(true);
+      const bash = start("bash");
+      expect(await settled(bash)).toBe(false);
+      for (const reading of ["read", "list", "find", "grep"]) expect(start(reading)).toBeUndefined();
+      finish("edit");
+      expect(await settled(bash)).toBe(true);
+      for (const tool of ["bash", "read", "list", "find", "grep"]) finish(tool);
+      expect((instance as unknown as { toolsRunning: number }).toolsRunning).toBe(0);
+    });
+  });
+
+  it("makes check, build and test wait for a step's tools that change the files, however long they take together", async () => {
+    const workspace = await create("Slow changes");
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), async (instance: Workspace) => {
+      const { start, finish } = toolHooks(instance);
+      const waiting = instance as unknown as { otherToolsFinished(waitMs: number): Promise<void> };
+
+      void start("add_addon");
+      void start("bash");
+      let checked = false;
+      // Each of them takes most of the wait, so together they take longer than it.
+      const check = waiting.otherToolsFinished(1_000).then(() => (checked = true));
+      await scheduler.wait(700);
+      finish("add_addon");
+      await scheduler.wait(700);
+      expect(checked).toBe(false);
+      finish("bash");
+      await check;
+    });
   });
 
   it("reports a Package it couldn't add as a failed call", async () => {

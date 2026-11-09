@@ -120,8 +120,14 @@ const turnSteps = 40;
 const watchingFrames = new Set(["cf_agent_stream_resume_request", "cf_agent_stream_resume_ack"]);
 // The Agent's tools that read the files, and so wait for the others in their step.
 const waitingTools = new Set(["check", "build", "test"]);
+// The Agent's tools that change the files, which run one at a time, in the
+// order the model gave them, so two in one step can't lose a change.
+const changingTools = new Set(["write", "edit", "delete", "bash", "add_package", "add_addon"]);
+// How long `check`, `build` or `test` waits for one of the other tools in
+// its step to finish, in case one never reports back.
+const siblingWaitMs = 60_000;
 // The Agent's tools that refuse until it has started the app, so nothing is written without a Template under it (ADR 0018).
-const needAppTools = new Set(["write", "edit", "delete", "bash", "add_package", "add_addon", "check", "build", "test"]);
+const needAppTools = new Set([...changingTools, ...waitingTools]);
 const startAppFirst = "The app hasn't started yet, so this tool can't run. Start it first with start_app.";
 // For the Developer, in the page's words.
 const notStartedYet = { ok: false, error: "Your app hasn't started yet. Wait for the Agent to start it." } as const;
@@ -167,10 +173,14 @@ export class Workspace extends Think<Env, ConversationState> {
   // The running Turn's tries of the Preview, for its log line.
   private turnPreview: TurnPreview | null = null;
   private builder: Builder | null = null;
-  // The model's tool calls that are running, other than check and build, and
-  // what's waiting for them to finish (see `otherToolsFinished`).
+  // The model's tool calls that are running, other than check, build and
+  // test, and what's waiting for the next to finish (see `otherToolsFinished`).
   private toolsRunning = 0;
   private toolsFinished: (() => void)[] = [];
+  // The latest tool call that changes the files to start, which the next
+  // waits for, and how each running one says it's finished.
+  private lastChange: Promise<void> = Promise.resolve();
+  private changesFinished = new Map<string, () => void>();
   // Test runs in the order they read the files, and the latest run kept, so
   // a slow run can't replace the report of one that read the files after it.
   private testRunsStarted = 0;
@@ -284,30 +294,54 @@ export class Workspace extends Think<Env, ConversationState> {
     };
   }
 
-  override beforeToolCall(ctx: ToolCallContext): ToolCallDecision | void {
+  /**
+   * Think calls this as each tool call starts, in the order the model gave
+   * them, and runs the tool once it returns. A tool that changes the files
+   * waits for the one before it to finish; reading tools don't wait.
+   */
+  override beforeToolCall(ctx: ToolCallContext): ToolCallDecision | void | Promise<void> {
     // Counted even when refused: `afterToolCall` follows either way.
     if (!waitingTools.has(ctx.toolName)) this.toolsRunning += 1;
     if (needAppTools.has(ctx.toolName) && !this.appStarted()) return { action: "block", reason: startAppFirst };
+    if (changingTools.has(ctx.toolName)) return this.waitForEarlierChange(ctx.toolCallId);
   }
 
   override afterToolCall(ctx: ToolCallResultContext): void {
+    this.changesFinished.get(ctx.toolCallId)?.();
+    this.changesFinished.delete(ctx.toolCallId);
     if (waitingTools.has(ctx.toolName)) return;
     this.toolsRunning -= 1;
-    if (this.toolsRunning === 0) for (const resolve of this.toolsFinished.splice(0)) resolve();
+    for (const resolve of this.toolsFinished.splice(0)) resolve();
+  }
+
+  /**
+   * Waits for the tool call that changes the files before `toolCallId`,
+   * which becomes the latest. It waits however long that takes, so two never
+   * overlap: the model's step can't end before its tools have anyway.
+   */
+  private waitForEarlierChange(toolCallId: string): Promise<void> {
+    const before = this.lastChange;
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.lastChange = promise;
+    this.changesFinished.set(toolCallId, resolve);
+    return before;
   }
 
   /**
    * Waits for the other tools the model called in the same step, which run
-   * alongside `check` and `build`, so those read the files after the
+   * alongside `check`, `build` and `test`, so those read the files after the
    * others' changes. Bash writes its changes back only when its script ends.
+   * In case a tool never reports back, it stops waiting after `waitMs` in
+   * which none of them finished: the tools that change the files run one
+   * after another, so together they can take longer.
    */
-  private async otherToolsFinished(): Promise<void> {
+  private async otherToolsFinished(waitMs = siblingWaitMs): Promise<void> {
     // Lets the step's other calls start, and so be counted.
     await scheduler.wait(0);
-    if (this.toolsRunning === 0) return;
-    const finished = new Promise<void>((resolve) => this.toolsFinished.push(resolve));
-    // In case a tool never reports back, a Check or a Build still runs.
-    await Promise.race([finished, scheduler.wait(60_000)]);
+    while (this.toolsRunning > 0) {
+      const finished = new Promise<void>((resolve) => this.toolsFinished.push(resolve)).then(() => true);
+      if (!(await Promise.race([finished, scheduler.wait(waitMs).then(() => false)]))) return;
+    }
   }
 
   override onStepEnd(ctx: StepContext): void {
