@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { getMe } from "./api";
-import { ErrorMessage } from "./ErrorMessage";
-import { useLoad, useTitle, type Loader } from "./hooks";
+import { SignedOutNote } from "./ErrorMessage";
+import { useLoad, useSignedOut, useTitle, type Loader } from "./hooks";
 import { Menu } from "./Menu";
 import { Link, matchRoute, usePath } from "./router";
 import { StartPage } from "./StartPage";
@@ -18,9 +18,9 @@ export function App() {
   // The bar along the top. The Workspace page fills it with the Workspace's name, Publish and its own menu.
   const [bar, setBar] = useState<HTMLElement | null>(null);
 
-  const signedOut = me.state.status === "failed" && me.state.error.signedOut;
+  const signedOut = useSignedOut();
   const account = <Account me={me} />;
-  const workspacePage = route.page === "workspace" && !signedOut;
+  const workspacePage = route.page === "workspace";
 
   // After a page change, start screen readers and the keyboard at the top of the new page.
   // The Workspace page's heading, the Workspace's name, is in the bar.
@@ -32,14 +32,7 @@ export function App() {
   }, [path]);
 
   let page;
-  if (me.state.status === "failed" && me.state.error.signedOut) {
-    page = (
-      <>
-        <h1>Sign in again</h1>
-        <ErrorMessage error={me.state.error} />
-      </>
-    );
-  } else if (route.page === "home") {
+  if (route.page === "home") {
     page = <StartPage />;
   } else if (route.page === "workspace") {
     page = (
@@ -57,8 +50,14 @@ export function App() {
         <Link to="/" className="product-name">
           Jigworks
         </Link>
-        {!workspacePage && !signedOut && <Menu account={account} />}
+        {!workspacePage && <Menu account={account} />}
       </header>
+      {/* Above the page, which stays as it was, so nothing the Developer typed goes. */}
+      {signedOut && (
+        <div className="signed-out">
+          <SignedOutNote />
+        </div>
+      )}
       <main ref={main} tabIndex={-1} className={workspacePage ? "workspace-main" : undefined}>
         {page}
       </main>

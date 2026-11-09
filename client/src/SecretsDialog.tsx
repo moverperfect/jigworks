@@ -60,7 +60,7 @@ export function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) 
           Your app reads each secret from <code>env</code> by its name, in the Preview and the Deployment. The Agent sees
           only the names. A value is never shown again once saved. To replace one, add it again under its name.
         </p>
-        {loaded.state.status === "failed" && <ErrorMessage error={loaded.state.error} retry={loaded.retry} />}
+        {loaded.state.status === "failed" && <ErrorMessage error={loaded.state.error} retry={loaded.retry} inDialog />}
         {loaded.state.status === "ready" && secrets.length === 0 && <p className="hint">No secrets yet.</p>}
         {secrets.length > 0 && (
           <ul className="secret-list" aria-label="Secrets">
@@ -102,7 +102,7 @@ export function SecretsDialog({ id, onClose }: { id: string; onClose(): void }) 
               required
             />
           </div>
-          {error && <ErrorMessage error={error} />}
+          {error && <ErrorMessage error={error} inDialog />}
           <div className="dialog-actions">
             <button type="button" className="button" onClick={() => dialog.current?.close()}>
               Close

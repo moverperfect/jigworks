@@ -1,7 +1,7 @@
 import { useId, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { createWorkspace, listWorkspaces, toApiError, type ApiError } from "./api";
 import { changedWhen } from "./changed";
-import { sendsMessage } from "./composer";
+import { sendsMessage, useDraft } from "./composer";
 import { ErrorMessage } from "./ErrorMessage";
 import { useLoad, useTitle } from "./hooks";
 import { Link, navigate, workspacePath } from "./router";
@@ -23,7 +23,7 @@ export function StartPage() {
   useTitle("What would you like to make?");
   const id = useId();
   const workspaces = useLoad(listWorkspaces);
-  const [text, setText] = useState("");
+  const [text, setText] = useDraft("jigworks:new-app");
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);

@@ -76,7 +76,7 @@ export function DeleteDialog({
             spellCheck={false}
           />
         </div>
-        {error && <ErrorMessage error={error} />}
+        {error && <ErrorMessage error={error} inDialog />}
         <div className="dialog-actions">
           <button type="button" className="button" onClick={() => dialog.current?.close()} disabled={deleting}>
             Cancel
