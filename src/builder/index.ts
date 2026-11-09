@@ -57,8 +57,8 @@ export interface MadeBuild {
   /** How far esbuild's linear memory grew in the Builder. */
   wasmMemoryBytes: Record<string, number>;
   /**
-   * How long the Builder took to receive the files. Receiving is I/O, so the
-   * clock moves even deployed (docs/development.md, "The deployed clock").
+   * How long the Builder took to receive the files, locally. Deployed it reads
+   * 0, as the clock doesn't move while the stream arrives (#87, docs/findings.md).
    * Null when no files were sent.
    */
   receivingMs: number | null;
