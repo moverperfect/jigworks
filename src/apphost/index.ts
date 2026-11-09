@@ -94,6 +94,8 @@ export const signInPath = `${reservedPaths}sign-in`;
 export const sessionCookie = "__Host-jigworks-preview";
 const signInSeconds = 60;
 const sessionSeconds = 8 * 60 * 60;
+// PROBE (#109): no app hostname is this, so a browser can't send it.
+const internalFacetHost = "facet.jigworks.internal";
 const unsafeMethods = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const notReady = "The Preview starts after the Workspace's first successful Build.";
 const notPublished = "This app hasn't been published yet.";
@@ -270,6 +272,15 @@ export class AppHost extends DurableObject<Env> {
    */
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    // PROBE (#109): an upgrade from an app's binding, which AppData sends here over fetch.
+    if (url.hostname === internalFacetHost) {
+      const { slot, binding, id, name, url: original } = JSON.parse(request.headers.get("x-jigworks-facet")!) as {
+        slot: Slot; binding: string; id: string; name: string | null; url: string;
+      };
+      const headers = new Headers(request.headers);
+      headers.delete("x-jigworks-facet");
+      return this.facet(slot, binding, id, name).fetch(new Request(original, { headers }));
+    }
     const slot = slotOf(url.hostname);
     if (this.workspaceId() === null) return new Response("There's no app here.", { status: 404 });
     // The platform Worker has checked Access for the Deployment.
@@ -708,6 +719,13 @@ export class AppHost extends DurableObject<Env> {
  * runs as a facet in the app's app host, in the slot the call came from (ADR 0015).
  */
 export class AppData extends WorkerEntrypoint<Env, { label: string; slot: Slot }> {
+  // PROBE (#109): upgrades only, from the binding's stand-in.
+  override async fetch(request: Request): Promise<Response> {
+    const { label, slot } = this.ctx.props;
+    const headers = new Headers(request.headers);
+    headers.set("x-jigworks-facet", JSON.stringify({ ...JSON.parse(headers.get("x-jigworks-facet")!), slot }));
+    return this.env.APP_HOSTS.getByName(label).fetch(new Request(`https://${internalFacetHost}/`, { headers }));
+  }
   callFacet(binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {
     const { label, slot } = this.ctx.props;
     return this.env.APP_HOSTS.getByName(label).callFacet(slot, binding, id, name, method, args);

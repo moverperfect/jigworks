@@ -56,7 +56,16 @@ const { withBindings, classes } = ((bindings, appData) => {
           if (key === "id") return id;
           if (key === "name") return id.name;
           if (typeof key === "symbol" || key === "then") return undefined;
-          if (key === "fetch") return (input, init) => call("fetch", [new Request(input, init)]);
+          if (key === "fetch") {
+            return (input, init) => {
+              const request = new Request(input, init);
+              // PROBE (#109): an upgrade goes over fetch, since RPC can't carry a WebSocket.
+              if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return call("fetch", [request]);
+              const headers = new Headers(request.headers);
+              headers.set("x-jigworks-facet", JSON.stringify({ binding, id: String(id), name: id.name ?? null, url: request.url }));
+              return data.fetch(new Request("https://facet.jigworks.internal/", { headers }));
+            };
+          }
           return (...args) => call(key, args);
         },
       },
