@@ -673,6 +673,21 @@ h2.code-view-heading {
   --jig-label: var(--primary);
 }
 
+/* What the app's server errors stopped it doing (#104), between the toolbar and the jig. */
+.app-problems:not(:empty) {
+  margin: 1rem 2rem 0;
+}
+
+.app-problems .message {
+  justify-content: space-between;
+  background: var(--surface);
+}
+
+.app-problems-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
 /* The label's last line sits level with the top-left bracket's arm, and a long label wraps upwards. */
 .jig-label {
   position: absolute;
@@ -756,6 +771,10 @@ h2.code-view-heading {
     padding: 0.35rem 1rem;
     background: var(--surface);
     border-bottom: 1px solid var(--border);
+  }
+
+  .app-problems:not(:empty) {
+    margin: 0.75rem 1rem 0;
   }
 
   .preview-view {

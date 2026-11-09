@@ -54,7 +54,7 @@ export function runnable(build: Build): RunnableBuild {
 /** A Build as the app host keeps it. Builds kept before ticket 09 have no assets, and before ticket 11 no Durable Object bindings. */
 type KeptBuild = Omit<RunnableBuild, keyof AppAssets | "durableObjects"> & Partial<Pick<RunnableBuild, keyof AppAssets | "durableObjects">>;
 
-/** The Build the Preview took last, and the id of the last log line before it. */
+/** The Build the Preview took last, and the id of the last log line before it, or before the Secrets last changed, if later. */
 interface PreviewLogsFrom {
   hash: string;
   afterLine: number;
@@ -138,8 +138,7 @@ export class AppHost extends DurableObject<Env> {
       kv.put("preview", build.hash);
       // Where the new Build's logs start (see `problemsSince`).
       // deferred: a log line from the old Build that arrives after this counts as the new Build's; tag lines with their Build if that misleads the Agent.
-      const lastLine = this.sql().exec<{ id: number | null }>("SELECT MAX(id) AS id FROM logs").one().id ?? 0;
-      kv.put<PreviewLogsFrom>("preview:logs-from", { hash: build.hash, afterLine: lastLine });
+      kv.put<PreviewLogsFrom>("preview:logs-from", { hash: build.hash, afterLine: this.lastLogLine() });
       // So the Preview's instances pick up the new code, their data kept.
       this.abortFacets("preview");
     });
@@ -344,8 +343,9 @@ export class AppHost extends DurableObject<Env> {
   }
 
   /**
-   * The Preview's errors and warnings since it took Build `hash`, oldest
-   * first: every log line but plain `log`, `info` and `debug` ones. Null when
+   * The Preview's errors and warnings since it took Build `hash`, or since
+   * its Secrets last changed, if later, oldest first: every log line but
+   * plain `log`, `info` and `debug` ones. Null when
    * the Preview runs another Build, or took this one before it kept where
    * its logs start.
    */
@@ -607,9 +607,19 @@ export class AppHost extends DurableObject<Env> {
 
   /** Makes both slots pick up the new secrets: new Workers, and running instances stopped. */
   private secretsChanged(): void {
-    this.ctx.storage.kv.put("secrets:version", this.secretsVersion() + 1);
+    const kv = this.ctx.storage.kv;
+    kv.put("secrets:version", this.secretsVersion() + 1);
+    // The Preview's problems start afresh, as it runs with the new Secrets (#104).
+    // deferred: a request made with the old Secrets that logs after this counts as the new ones', as for a Build; tag lines with their Secrets' version if that misleads.
+    const from = kv.get<PreviewLogsFrom>("preview:logs-from");
+    if (from) kv.put<PreviewLogsFrom>("preview:logs-from", { ...from, afterLine: this.lastLogLine() });
     this.abortFacets("preview");
     this.abortFacets("deployment");
+  }
+
+  /** The id of the newest log line, or 0 before there's one. */
+  private lastLogLine(): number {
+    return this.sql().exec<{ id: number | null }>("SELECT MAX(id) AS id FROM logs").one().id ?? 0;
   }
 
   /** Stops the slot's running instances, so the next call starts them with the slot's new code or secrets. */

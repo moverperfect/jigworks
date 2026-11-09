@@ -1,5 +1,5 @@
 import type { BuildReport } from "../../src/shared/build-report.ts";
-import type { AppLogEntry } from "../../src/shared/app-logs.ts";
+import type { AppLogEntry, PreviewProblems } from "../../src/shared/app-logs.ts";
 import type { CheckReport } from "../../src/shared/check-report.ts";
 import type { Deployment } from "../../src/shared/deployment.ts";
 import type { Secret } from "../../src/shared/secret.ts";
@@ -211,6 +211,11 @@ export async function publish(id: string, replaces: string | null): Promise<Depl
 export async function getPreviewLogs(id: string): Promise<AppLogEntry[]> {
   const { logs } = await request<{ logs: AppLogEntry[] }>("GET", `${workspaceApiPath(id)}/preview/logs`);
   return logs;
+}
+
+/** The Build the Preview runs, and its errors and warnings since it took it (#104). */
+export async function getPreviewProblems(id: string): Promise<PreviewProblems> {
+  return request<PreviewProblems>("GET", `${workspaceApiPath(id)}/preview/problems`);
 }
 
 /** The Conversation socket's path, for `useAgent`'s `basePath`, which takes it without the leading slash. */

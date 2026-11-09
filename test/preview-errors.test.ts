@@ -140,3 +140,35 @@ describe("the Preview's problems since a Build", () => {
     expect(await env.WORKSPACES.getByName(workspace.id).previewProblems(before.hash)).toBeNull();
   });
 });
+
+describe("the Preview's problems, for the page", () => {
+  it("are those since the Build it runs, with that Build's hash, and none before it has one (#104)", async () => {
+    const workspace = await create("For the page");
+    const read = async () => (await call(`/api/workspaces/${workspace.id}/preview/problems`)).json<{ hash: string | null; problems: { level: string; message: string }[] }>();
+    expect(await read()).toEqual({ hash: null, problems: [] });
+
+    const host = env.APP_HOSTS.getByName(await env.WORKSPACES.getByName(workspace.id).appLabel());
+    const { hash } = await (await call(`/api/workspaces/${workspace.id}/build`, { method: "POST" })).json<{ hash: string }>();
+    await host.log("preview", "server", [
+      { level: "log", message: "just saying" },
+      { level: "error", message: "Resend refused the email: API key is invalid" },
+    ]);
+    expect(await read()).toEqual({ hash, problems: [expect.objectContaining({ source: "server", level: "error", message: "Resend refused the email: API key is invalid" })] });
+  });
+
+  it("start afresh when a Secret changes, as the app then runs with it, though its Build is the same", async () => {
+    const workspace = await create("Key changed");
+    const read = async () => (await call(`/api/workspaces/${workspace.id}/preview/problems`)).json<{ hash: string | null; problems: { message: string }[] }>();
+    const host = env.APP_HOSTS.getByName(await env.WORKSPACES.getByName(workspace.id).appLabel());
+    const { hash } = await (await call(`/api/workspaces/${workspace.id}/build`, { method: "POST" })).json<{ hash: string }>();
+    await host.log("preview", "server", [{ level: "error", message: "The email wasn't sent: the Secret RESEND_API_KEY hasn't been set yet." }]);
+
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/RESEND_API_KEY`, { method: "PUT", body: { value: "re_made_up" } })).status).toBe(204);
+    expect(await read()).toEqual({ hash, problems: [] });
+    await host.log("preview", "server", [{ level: "error", message: "Resend refused the email: API key is invalid" }]);
+    expect((await read()).problems.map(({ message }) => message)).toEqual(["Resend refused the email: API key is invalid"]);
+
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/RESEND_API_KEY`, { method: "DELETE" })).status).toBe(204);
+    expect(await read()).toEqual({ hash, problems: [] });
+  });
+});

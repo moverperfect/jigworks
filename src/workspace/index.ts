@@ -43,7 +43,7 @@ import { checkInDynamicWorker } from "../checker/isolated";
 import { isHidden, normalisePath, storeFiles, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
-import { isWarning } from "../shared/app-logs";
+import { isWarning, type PreviewProblems } from "../shared/app-logs";
 import type { BuildReport } from "../shared/build-report";
 import type { Deployment } from "../shared/deployment";
 import type { Secret } from "../shared/secret";
@@ -185,6 +185,8 @@ export class Workspace extends Think<Env, ConversationState> {
   // a slow run can't replace the report of one that read the files after it.
   private testRunsStarted = 0;
   private testRunKept = 0;
+  // The Agent's latest request_preview, until its logs have had time to arrive, which preview_logs waits for.
+  private previewRequestLogged: Promise<unknown> = Promise.resolve();
 
   /**
    * A Turn or Start fresh can't outlive the isolate it ran in (see
@@ -277,7 +279,7 @@ export class Workspace extends Think<Env, ConversationState> {
       addPackageForAgent: (name, options) => this.addPackageForAgent(name, options),
       addAddonForAgent: (id) => this.addAddonForAgent(id),
       requestPreview: (init) => this.requestPreview(init),
-      previewLogs: (limit) => this.previewLogs(limit),
+      previewLogs: (limit) => this.previewLogsForAgent(limit),
       secretNames: () => this.secretNames(),
       appStarted: () => this.appStarted(),
     });
@@ -643,7 +645,10 @@ export class Workspace extends Think<Env, ConversationState> {
 
   /** Sends the Preview a request for the Agent's `request_preview` tool. */
   async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
-    return this.appHost().requestPreview(init);
+    const answer = this.appHost().requestPreview(init);
+    // Its logs reach the app host through the tail, a moment after the answer.
+    this.previewRequestLogged = answer.then(() => scheduler.wait(this.env.PREVIEW_LOGS_WAIT_MS), () => undefined);
+    return answer;
   }
 
   /** Where the Deployment answers, and what it runs. */
@@ -723,6 +728,14 @@ export class Workspace extends Think<Env, ConversationState> {
     return this.appHost().problemsSince(hash);
   }
 
+  /** For the page: the Build the Preview runs, and its problems since it took it, or since its Secrets changed (see `AppHost.problemsSince`), or none before it has one (#104). */
+  async latestPreviewProblems(): Promise<PreviewProblems> {
+    const hash = await this.appHost().previewHash();
+    // Null if the Preview took another Build since.
+    const problems = hash ? await this.previewProblems(hash) : null;
+    return problems ? { hash, problems } : { hash: null, problems: [] };
+  }
+
   /**
    * After a Build for the Agent or a Turn: if it changed the Preview, which
    * the Agent hasn't seen tried, sends the Preview `GET /` so it logs
@@ -746,7 +759,19 @@ export class Workspace extends Think<Env, ConversationState> {
     return { status: answer.unanswered ? null : answer.status, waitSeconds: previewTrySeconds, problems };
   }
 
-  /** The Preview's newest server logs and front-end errors, for the Agent's `preview_logs` tool. */
+  /**
+   * The Preview's newest logs for the Agent's `preview_logs` tool, once those
+   * of its latest `request_preview`, even one in the same step, have had time
+   * to arrive (#104).
+   */
+  private async previewLogsForAgent(limit?: number): Promise<AppLogEntry[]> {
+    // Lets a request_preview in the same step start first.
+    await scheduler.wait(0);
+    await this.previewRequestLogged;
+    return this.previewLogs(limit);
+  }
+
+  /** The Preview's newest server logs and front-end errors, for the page and the Agent. */
   async previewLogs(limit?: number): Promise<AppLogEntry[]> {
     return this.appHost().logs("preview", limit);
   }

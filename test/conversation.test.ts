@@ -2,6 +2,7 @@ import type { ToolCallResultContext } from "@cloudflare/think";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
+import { addedSecretNote } from "../src/agent";
 import type { Builder } from "../src/builder";
 import { cachingBuilder, tooBigToBuild } from "../src/builder/isolated";
 import type { PackageStatus } from "../src/packages";
@@ -364,9 +365,9 @@ describe("the Agent's own tools", () => {
     expect(messages[2]!.metadata).toEqual({ from: "developer", changedFiles: [], turnStartedAt: startedAt, addedSecret: "EMAIL_KEY" });
     // With the note that the last Turn's changes were put back.
     const undone = "(From the platform: your last Turn's changes were put back, because the app didn't work after them.)";
-    expect(textOf(messages[2]!)).toBe(`(From the platform: the Developer added the Secret EMAIL_KEY.)${undone}`);
+    expect(textOf(messages[2]!)).toBe(`${addedSecretNote("EMAIL_KEY")}${undone}`);
     // The Agent carried on from the notes, and the value never reached the model.
-    expect(textOf(messages[3]!)).toBe(`Told: (From the platform: the Developer added the Secret EMAIL_KEY.)\n${undone} Saw the value: false`);
+    expect(textOf(messages[3]!)).toBe(`Told: ${addedSecretNote("EMAIL_KEY")}\n${undone} Saw the value: false`);
     expect(await fileText(workspace.id, "src/count.ts")).toBe(fixedCount);
     // Nor the Conversation, nor the logs.
     expect(JSON.stringify(messages)).not.toContain(askedSecretValue);
