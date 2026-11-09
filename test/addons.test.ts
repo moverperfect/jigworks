@@ -272,6 +272,47 @@ describe("calling an AI model", () => {
   });
 });
 
+describe("showing changes as they happen", () => {
+  it("is listed with when it fits", async () => {
+    const { addons } = await (await call("/api/addons")).json<{ addons: unknown[] }>();
+    expect(addons).toContainEqual(expect.objectContaining({ id: "live", fits: expect.stringContaining("other people's changes without being reloaded") }));
+  });
+
+  it("joined to the default Template's app with its edits, passes its tests, and a change one request makes reaches another reader's next ask in the Preview", async () => {
+    const workspace = await create("Sign-ups", undefined, "worker-react");
+    const conversation = await connect(workspace.id);
+    const [line] = await turnLines(() => runTurn(workspace.id, conversation, "[script:add-live-and-join] Show new sign-ups as they come in"));
+    expect(line).toMatchObject({ addons: ["live"], status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+
+    const [added] = await toolResults(workspace.id);
+    const result = added!.result as string;
+    // Storage came with the Template.
+    expect(result).toMatch(/^Added the live add-on\. Wrote \/src\/client\/live\.test\.ts and \/src\/client\/live\.ts\.\nIt needs storage too, which the app already had\./);
+    expect(result).toContain("<notes>\n## Showing changes as they happen (add-on `live`)\n\nA page keeps up to date");
+    expect(result).not.toContain("ask_for_secret");
+    expect(await testStates(workspace.id)).toContainEqual(["src/client/live.test.ts", ["passed"], []]);
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const ask = (etag?: string) => preview.requestPreview({ method: "GET", path: "/api/signups", headers: etag ? { "If-None-Match": etag } : {} });
+    // Two readers open the page.
+    const first = await ask();
+    expect(first.status).toBe(200);
+    expect(JSON.parse(first.body)).toEqual([]);
+    const seen = first.headers.etag!;
+    expect(seen).toMatch(/^(W\/)?"/);
+    // Nothing has changed, so each reader's next ask gets 304, without the list.
+    expect(await ask(seen)).toMatchObject({ status: 304, body: "" });
+
+    expect((await preview.requestPreview({ method: "POST", path: "/api/signups/Ada" })).status).toBe(200);
+    // The second reader's next ask brings Ada.
+    const next = await ask(seen);
+    expect(next.status).toBe(200);
+    expect(JSON.parse(next.body)).toEqual([{ id: expect.any(String), name: "Ada" }]);
+    expect(next.headers.etag).not.toBe(seen);
+    expect((await ask(next.headers.etag)).status).toBe(304);
+  });
+});
+
 describe("add-ons together", () => {
   it("the organiser's area, email and AI, added in one step and joined, have a clean Check, Build, pass every test and work together in the Preview", async () => {
     const workspace = await create("Sign-ups", undefined, "worker-react");

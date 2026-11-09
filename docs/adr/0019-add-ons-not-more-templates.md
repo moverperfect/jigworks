@@ -20,5 +20,6 @@ Most apps people ask for need more than either Template gives: a sign-up sheet h
 - **An add-on's notes go under a heading that names it,** such as `## Storage (add-on \`storage\`)`, which also records that the app has it.
 - **Packing fails, saying what to fix,** when a manifest names a missing add-on or a Package without an exact version, when an add-on and its Template, or two add-ons, write the same file, or when an add-on needs itself.
 - **A Template can't yet be built from an add-on with Packages.** Packing refuses one, rather than leave the Template's `package.json` without them.
-- **Add-on files have fixed paths,** under `src/server/`, in apps from either Template. The Worker Template's Worker imports them from `./server/`.
+- **Add-on files have fixed paths,** under `src/server/`, in apps from either Template. The Worker Template's Worker imports them from `./server/`. An add-on for the front end, such as `live`, puts its files under `src/client/`, and fits only apps that have one.
+- **Live updates came first as an add-on after all,** `live`, in which a page asks one of the app's routes for changes every few seconds (#108). It works without WebSockets, at the cost of a request per page every few seconds; WebSockets into apps are researched in #109.
 - **The store suits small apps:** its collections live in one Durable Object instance, and filtering and sorting are done in code over the whole list. Changes that must happen together are methods on that one instance, whose calls run one at a time.
