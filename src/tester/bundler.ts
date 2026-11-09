@@ -5,12 +5,12 @@
 // `esbuild.wasm`, where worker-bundler imports it from, and sends the files
 // as a stream, as for a Build (see `bundledStream`).
 import { WorkerEntrypoint } from "cloudflare:workers";
-import { snapshotFrom } from "../builder/bundling";
+import { snapshotFrom, textFiles } from "../builder/bundling";
 import { bundleTests, type TestBundleResult } from "../builder/tests";
 
 export class TestBundler extends WorkerEntrypoint {
   async bundle(files: ReadableStream<Uint8Array>, testFiles: string[], virtualModules: Record<string, string>): Promise<TestBundleResult> {
-    return bundleTests(await snapshotFrom(files), testFiles, virtualModules);
+    return bundleTests(textFiles(await snapshotFrom(files)), testFiles, virtualModules);
   }
 }
 

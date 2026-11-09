@@ -1,10 +1,14 @@
 // What a Build and the tests' bundle share: the files the bundler is given,
 // and how its output and errors are read.
 import { parse } from "es-module-lexer/js";
+import { fromBase64, toBase64 } from "../shared/base64";
 import type { BuildProblem } from "../shared/build-report";
 
-/** A Workspace's files and Packages: path relative to the Workspace root, to text. */
+/** A Workspace's text files and Packages: path relative to the Workspace root, to text. */
 export type Snapshot = ReadonlyMap<string, string>;
+
+/** A file's text, or its bytes if it isn't UTF-8 text, as an image or a font isn't (#110). */
+export type FileContent = string | Uint8Array;
 
 /**
  * A Workspace's files and Packages, read one at a time. A large app's
@@ -12,13 +16,17 @@ export type Snapshot = ReadonlyMap<string, string>;
  * Workspace's Durable Object over its memory limit before esbuild started
  * (#87, docs/findings.md).
  */
-export interface FileSource {
+export interface FileSource<Content extends FileContent = FileContent> {
   /** Every path, once each. */
   paths(): string[];
-  read(path: string): string | undefined;
+  read(path: string): Content | undefined;
 }
 
-export const filesOf = (snapshot: Snapshot): FileSource => ({ paths: () => [...snapshot.keys()], read: (path) => snapshot.get(path) });
+export const filesOf = (files: ReadonlyMap<string, FileContent>): FileSource => ({ paths: () => [...files.keys()], read: (path) => files.get(path) });
+
+/** Only the text files, which is all the bundler and the front end's steps read. */
+export const textFiles = (files: ReadonlyMap<string, FileContent>): Snapshot =>
+  new Map([...files].filter((file): file is [string, string] => typeof file[1] === "string"));
 
 /** Package files a bundle never takes in: type declarations, source maps and Markdown. */
 export const notBundled = /^node_modules\/.*(\.d\.[cm]?ts|\.map|\.md)$/;
@@ -27,8 +35,9 @@ export const notBundled = /^node_modules\/.*(\.d\.[cm]?ts|\.map|\.md)$/;
 const chunkChars = 1 << 20;
 
 /**
- * The files a bundle takes in, one `[path, text]` JSON line each, read only
- * as the stream is. A stream isn't held to an RPC call's 32 MiB.
+ * The files a bundle takes in, one `[path, text]` JSON line each, or
+ * `[path, base64, "base64"]` for a file's bytes, read only as the stream is.
+ * A stream isn't held to an RPC call's 32 MiB.
  */
 export function bundledStream(files: FileSource): ReadableStream<Uint8Array> {
   const paths = files.paths().filter((path) => !notBundled.test(path));
@@ -39,9 +48,9 @@ export function bundledStream(files: FileSource): ReadableStream<Uint8Array> {
       const lines: string[] = [];
       for (let size = 0; next < paths.length && size < chunkChars; ) {
         const path = paths[next++]!;
-        const text = files.read(path);
-        if (text === undefined) continue;
-        const line = `${JSON.stringify([path, text])}\n`;
+        const content = files.read(path);
+        if (content === undefined) continue;
+        const line = `${JSON.stringify(typeof content === "string" ? [path, content] : [path, toBase64(content), "base64"])}\n`;
         lines.push(line);
         size += line.length;
       }
@@ -53,17 +62,17 @@ export function bundledStream(files: FileSource): ReadableStream<Uint8Array> {
   });
 }
 
-/** The snapshot a `bundledStream` carries. */
-export async function snapshotFrom(stream: ReadableStream<Uint8Array>): Promise<Map<string, string>> {
-  const snapshot = new Map<string, string>();
+/** The files a `bundledStream` carries, text and bytes. */
+export async function snapshotFrom(stream: ReadableStream<Uint8Array>): Promise<Map<string, FileContent>> {
+  const snapshot = new Map<string, FileContent>();
   // A file's line can span many chunks, so its pieces wait here until its end.
   let pieces: string[] = [];
   for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
     let start = 0;
     for (let end = chunk.indexOf("\n"); end !== -1; end = chunk.indexOf("\n", start)) {
       pieces.push(chunk.slice(start, end));
-      const [path, text] = JSON.parse(pieces.join("")) as [string, string];
-      snapshot.set(path, text);
+      const [path, content, encoding] = JSON.parse(pieces.join("")) as [string, string, "base64"?];
+      snapshot.set(path, encoding === "base64" ? fromBase64(content) : content);
       pieces = [];
       start = end + 1;
     }

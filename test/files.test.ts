@@ -21,13 +21,27 @@ describe("storeFiles", () => {
       // Think's bash writes a file it changed back as bytes, which the store keeps as base64.
       await store.writeFileBytes("/src/edited.ts", new TextEncoder().encode("export const café = 1;\n"));
       await store.writeFileBytes("/public/logo.png", logo);
+      await store.writeFileBytes("/wrangler.jsonc", new TextEncoder().encode("\uFEFF{}\n"));
+      await store.writeFileBytes("/public/notes.txt", new TextEncoder().encode("\uFEFFnotes\n"));
       await store.writeFile("/attachments/photo.txt", "a Conversation attachment");
 
-      expect(files.list()).toEqual(["public/logo.png", "src/edited.ts", "src/index.ts"]);
+      expect(files.list()).toEqual(["public/logo.png", "public/notes.txt", "src/edited.ts", "src/index.ts", "wrangler.jsonc"]);
       expect(files.readBytes("public/logo.png")).toEqual(logo);
       expect(files.read("src/edited.ts")).toBe("export const café = 1;\n");
       expect(files.snapshot().get("src/index.ts")).toBe("export {};\n");
       expect(files.bytes().get("public/logo.png")).toEqual(logo);
+      // Text, wherever the store keeps it, and bytes only for a file that isn't UTF-8 text (#110).
+      expect(files.contents()).toEqual(
+        new Map<string, string | Uint8Array>([
+          ["public/logo.png", logo],
+          // An asset keeps its byte order mark, so it's served as it was saved.
+          ["public/notes.txt", "\uFEFFnotes\n"],
+          ["src/edited.ts", "export const café = 1;\n"],
+          ["src/index.ts", "export {};\n"],
+          // Without the byte order mark, as `snapshot` reads it, so the Build can parse it.
+          ["wrangler.jsonc", "{}\n"],
+        ]),
+      );
       expect(files.read("attachments/photo.txt")).toBeNull();
     });
   });

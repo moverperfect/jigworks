@@ -56,7 +56,7 @@ export class Packages {
   }
 
   /** Every Package file, at `node_modules/<name>/<path>`, each read only when asked for (see `FileSource`). */
-  files(): FileSource {
+  files(): FileSource<string> {
     const rows = new Map<string, readonly [string, string]>(
       this.storage.sql
         .exec<{ name: string; path: string }>("SELECT name, path FROM workspace_package_files")

@@ -14,7 +14,7 @@ The experiment asks whether Workers isolates alone can be where an application i
 **The caveats:**
 - **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks, the tests' bundling and Builds run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), the React Template's third test run did (stage 6), and so did every Build of a large app (#87). What an app can build is limited by the Packages it bundles: a small app with a UI kit's Packages took esbuild near the limit by itself (#99).
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
-- **Apps get Durable Objects and nothing else** for storage (ADR 0006), and binary assets are served damaged (ADR 0014, #31).
+- **Apps get Durable Objects and nothing else** for storage (ADR 0006).
 - **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
 
 ## Stage 0: ts-rust's WebAssembly module
@@ -404,7 +404,7 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
 - **Size:** with Tailwind and the Worker + React Template, the Worker is 7,941 KiB compressed, 107 KiB more than before.
   - The Templates' Workers runtime types, 608 KiB, are now packed once, which saved 112 KiB compressed.
   - Ticket 13 has about 2.2 MB of the 10 MB limit.
-- **Binary assets:** a Build serves `public/` as text, so a binary file there is served damaged (ADR 0014, #31).
+- **Binary assets:** a Build served `public/` as text, so a binary file there was served damaged (ADR 0014, #31), until #110.
 
 ## Stage 5: Hosting (Deployments)
 
@@ -416,7 +416,7 @@ So the more specific hostname wins, as it does for paths, and only hostnames who
   - **Storage (ADR 0006):** apps get no KV, D1, R2, queues or cron triggers. Durable Objects are their only storage.
   - **Durable Objects (ADR 0015):** apps get no WebSockets into an instance and no alarms in one, and `env` imported from `cloudflare:workers` doesn't carry a binding.
   - **Secrets (ADR 0016):** hiding values keeps them out of the Agent's sight, not out of its reach. It writes the app's code, so code that encodes a value or sends it elsewhere can still get it out.
-  - **Assets:** binary files in `public/` are served damaged (ADR 0014, #31).
+  - **Assets:** binary files in `public/` were served damaged (ADR 0014, #31), until #110.
 
 ### Publishing a Deployment (ticket 10)
 

@@ -36,6 +36,7 @@ export function isolatedBuilder(loader: WorkerLoader, timeoutMs = buildTimeoutMs
       },
       globalOutbound: null,
     }));
+    // deferred: the Build comes back as one RPC result, held to 32 MiB, so images and fonts in public/ past about 30 MB fail the Build; send assets back as a stream if apps need more.
     const made = await beforeDeadline(worker.getEntrypoint<BuilderEntrypoint>("Builder").build(bundledStream(files), hash), Date.now() + timeoutMs);
     if (!made) throw new Error(`it took more than ${timeoutMs / 1000} seconds.`);
     return made;

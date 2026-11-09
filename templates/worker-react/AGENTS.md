@@ -40,7 +40,8 @@ The platform serves the front end and `public/` in front of the Worker, as Cloud
 
 - Link stylesheets from `index.html`. Don't import CSS from code, and don't use CSS modules (`*.module.css`): the Build drops CSS imported from code.
 - Import your own files by relative path (`./routes/users`). The Build ignores `paths` in the tsconfig files, so `@/` aliases don't resolve.
-- Don't import images from code. Put SVG images in `public/` and refer to them by URL, such as `/logo.svg`. Files in `public/` are served as text, so a PNG, a JPEG or a font file there would arrive damaged: use SVG, or a URL on another site.
+- Don't import images from code. Put images and fonts in `public/` and refer to them by URL, such as `/logo.png`. Files there are served exactly as they are, PNG, JPEG, WebP and font files included.
+- One file can be at most about 1.4 MB if it's an image, a font or anything else that isn't text, and about 1.9 MB if it's text. Shrink a bigger image, or link to it on another site.
 - Don't use `import.meta.env`: the Build has none. The Worker reads configuration from `c.env`; the front end asks the Worker for what it needs.
 - `Env`, the type of `c.env`, is declared in `worker-configuration.d.ts`. When you add a var to `wrangler.jsonc` or use a secret, add its name to the `__BaseEnv_Env` interface at the top of that file.
 

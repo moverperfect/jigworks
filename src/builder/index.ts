@@ -3,11 +3,11 @@ import { init as initLexer, parse } from "es-module-lexer/js";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
 import { platformEnvPrefix } from "../apphost/app-data";
-import { bundlerFiles, esbuildProblems, filesOf, missingImports, unplaced, type FileSource, type Snapshot } from "./bundling";
+import { bundlerFiles, esbuildProblems, filesOf, missingImports, textFiles, unplaced, type FileContent, type FileSource, type Snapshot } from "./bundling";
 import { hashOf } from "./hash";
 import { frontEnd, type TailwindFailure } from "./front-end";
 
-export type { BuildProblem, FileSource, Snapshot };
+export type { BuildProblem, FileContent, FileSource, Snapshot };
 
 /** The `assets` settings in `wrangler.jsonc` the app host follows (ADR 0014). */
 export interface AssetSettings {
@@ -26,8 +26,12 @@ export interface Build {
   compatibilityFlags: string[];
   /** Plain-text `vars` from `wrangler.jsonc`. */
   vars: Record<string, string>;
-  /** Pathname to content, which the app host serves in front of the Worker. Empty without a front end. */
-  assets: Record<string, string>;
+  /**
+   * Pathname to content, which the app host serves in front of the Worker:
+   * text, or the bytes of a file in `public/` that isn't text, such as an
+   * image or a font. Empty without a front end.
+   */
+  assets: Record<string, string | ArrayBuffer>;
   /** Pathname to each asset's content type, if the bundler knows it, and ETag. */
   assetManifest: Record<string, { contentType?: string; etag: string }>;
   assetSettings: AssetSettings;
@@ -76,9 +80,11 @@ export interface Builder {
  * fails if its output still imports a package the bundler couldn't find,
  * because the bundler otherwise leaves those imports in place without a word.
  * With an `index.html`, the Build has a front end too (see `front-end.ts`).
+ * Only text is bundled; a file in `public/` that isn't text is served as its bytes.
  */
-export async function build(snapshot: Snapshot, hash?: string): Promise<BuildResult> {
-  hash ??= await hashOf(filesOf(snapshot));
+export async function build(contents: ReadonlyMap<string, FileContent>, hash?: string): Promise<BuildResult> {
+  hash ??= await hashOf(filesOf(contents));
+  const snapshot = textFiles(contents);
   const files = bundlerFiles(snapshot);
   const config = (parseJsonc(snapshot.get("wrangler.jsonc") ?? "{}") ?? {}) as {
     compatibility_date?: string;
@@ -101,7 +107,7 @@ export async function build(snapshot: Snapshot, hash?: string): Promise<BuildRes
   let mainModule: string;
   let modules: Modules;
   let warningTexts: string[];
-  let assets: Record<string, string> = {};
+  let assets: Build["assets"] = {};
   let assetManifest: Build["assetManifest"] = {};
   let clientBundles: string[] = [];
   let tailwindCandidates: number | undefined;
@@ -114,14 +120,13 @@ export async function build(snapshot: Snapshot, hash?: string): Promise<BuildRes
       const app = await createApp({
         files,
         client: front.entries,
-        assets: { ...publicAssets(snapshot), "/index.html": front.html, ...front.compiled },
+        assets: { ...publicAssets(contents), "/index.html": front.html, ...front.compiled },
         jsx: "automatic",
         jsxImportSource: "react",
         minify: true,
       });
       ({ mainModule, modules } = app);
-      // Only text goes in: the Workspace's files and the bundler's output.
-      assets = app.assets as Record<string, string>;
+      assets = app.assets;
       assetManifest = Object.fromEntries(app.assetManifest);
       warningTexts = app.warnings ?? [];
       clientBundles = (app.clientBundles ?? []).filter((path) => !path.endsWith(".css"));
@@ -251,9 +256,12 @@ function wranglerBindings(config: Record<string, unknown>): { durableObjects: Re
 }
 
 /** Each file under `public/`, at its path below it. */
-function publicAssets(snapshot: Snapshot): Record<string, string> {
-  const assets: Record<string, string> = {};
-  for (const [path, text] of snapshot) if (path.startsWith("public/")) assets[`/${path.slice("public/".length)}`] = text;
+function publicAssets(contents: ReadonlyMap<string, FileContent>): Build["assets"] {
+  const assets: Build["assets"] = {};
+  for (const [path, content] of contents) {
+    // A copy, as the bytes may be a view on a larger buffer.
+    if (path.startsWith("public/")) assets[`/${path.slice("public/".length)}`] = typeof content === "string" ? content : content.slice().buffer;
+  }
   return assets;
 }
 
