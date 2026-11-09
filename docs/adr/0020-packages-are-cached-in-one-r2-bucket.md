@@ -2,7 +2,7 @@
 
 One R2 bucket, the Package cache, holds npm's tarballs for every Workspace, keyed by the tarball URL's host and path (stage 7, ticket 19). It sits behind each Workspace's own copy of its Packages, which stays in the Workspace's SQLite (ADR 0004): a Check reads hundreds of Package files and a Build thousands, and SQLite is in the same process. So the cache only saves the download from npm. It's the one exception to ADR 0004: an Operator now sets up Workers, Durable Objects and this bucket.
 
-Locally, it saved about a tenth of an install, since resolving against the registry takes most of it (`docs/findings.md`, stage 7). The deployed check after its first deploy confirms it, or takes it out again.
+Deployed, a cached tarball arrived in 86–138 ms, against 280–465 ms from npm, saving 0.14–0.34 s of each Package added (`docs/findings.md`, stage 7). Resolving against the registry is still the larger part of a Template's install.
 
 ## Consequences
 
