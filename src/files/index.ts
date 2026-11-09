@@ -1,4 +1,4 @@
-import type { Workspace as FileStore } from "@cloudflare/think";
+import { Workspace as FileStore } from "@cloudflare/think";
 import { fromBase64 } from "../shared/base64";
 
 /**
@@ -49,6 +49,47 @@ const workspaceRows = "path != '/' AND path != '/attachments' AND path NOT GLOB 
  */
 export function isHidden(path: string): boolean {
   return path === "attachments" || path.startsWith("attachments/");
+}
+
+/**
+ * Paths under `node_modules/`, where no Workspace file may be: Packages
+ * aren't Workspace files, and the Builder would take one there for a Package.
+ * `..` is resolved as the store resolves it.
+ */
+export function isPackagePath(path: string): boolean {
+  const resolved: string[] = [];
+  for (const part of path.split("/")) {
+    if (part === "..") resolved.pop();
+    else if (part !== "" && part !== ".") resolved.push(part);
+  }
+  return resolved[0] === "node_modules";
+}
+
+/** Throws for a path under `node_modules/`. */
+function refusePackagePath(path: string): void {
+  if (isPackagePath(path)) throw new Error("Packages aren't Workspace files, so nothing can be written under /node_modules.");
+}
+
+/**
+ * Think's file store, refusing to write under `node_modules/` (see
+ * `isPackagePath`), through the methods Think's file tools and bash's
+ * write-back call. `mv` and `symlink` aren't guarded: no tool calls them.
+ */
+export class WorkspaceStore extends FileStore {
+  override async writeFile(...args: Parameters<FileStore["writeFile"]>): Promise<void> {
+    refusePackagePath(args[0]);
+    return super.writeFile(...args);
+  }
+
+  override async writeFileBytes(...args: Parameters<FileStore["writeFileBytes"]>): Promise<void> {
+    refusePackagePath(args[0]);
+    return super.writeFileBytes(...args);
+  }
+
+  override async mkdir(...args: Parameters<FileStore["mkdir"]>): Promise<void> {
+    refusePackagePath(args[0]);
+    return super.mkdir(...args);
+  }
 }
 
 /** Rejects paths that could escape the Workspace or aren't plain relative paths. */

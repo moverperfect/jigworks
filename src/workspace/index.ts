@@ -1,6 +1,5 @@
 import {
   Think,
-  Workspace as FileStore,
   type ChatRecoveryOptions,
   type StepContext,
   type ThinkSession,
@@ -40,7 +39,7 @@ import {
 import type { Build, Builder, FileSource } from "../builder";
 import { isolatedBuilder, tooBigToBuild } from "../builder/isolated";
 import { checkInDynamicWorker } from "../checker/isolated";
-import { isHidden, normalisePath, storeFiles, textOrBytes, type Files } from "../files";
+import { isHidden, isPackagePath, normalisePath, storeFiles, textOrBytes, WorkspaceStore, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
 import { isWarning, type PreviewProblems } from "../shared/app-logs";
@@ -130,6 +129,23 @@ const startAppFirst = "The app hasn't started yet, so this tool can't run. Start
 // For the Developer, in the page's words.
 const notStartedYet = { ok: false, error: "Your app hasn't started yet. Wait for the Agent to start it." } as const;
 
+// Think's file tools that read or write, and the input that names the files each works on. `delete` isn't
+// refused, so the Agent can remove a file written under /node_modules before the store refused writes there.
+const fileToolPaths: Record<string, string> = { read: "path", write: "path", edit: "path", list: "path", find: "pattern", grep: "include" };
+const packagesAreNotFiles =
+  "Packages aren't in your file system, and nothing can be written under /node_modules. Read a Package's type declarations with read_package, and add one with add_package.";
+
+/**
+ * Whether a call to one of Think's file tools names /node_modules, where
+ * the Workspace's store holds no Packages (see the glossary's Package), so
+ * the Agent is pointed to read_package instead.
+ */
+function inNodeModules(toolName: string, input: unknown): boolean {
+  const key = fileToolPaths[toolName];
+  const value = key && input && typeof input === "object" ? (input as Record<string, unknown>)[key] : undefined;
+  return typeof value === "string" && isPackagePath(value);
+}
+
 /** Who a Check or a Build is for. */
 type RequestedBy = "developer" | "save" | "preview" | "turn" | "agent";
 
@@ -153,7 +169,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * Think's file store. Think fixes the property's name; our own code reaches
    * the files through `files` (ADR 0003).
    */
-  override workspace = new FileStore({ sql: this.ctx.storage.sql, name: () => this.name });
+  override workspace = new WorkspaceStore({ sql: this.ctx.storage.sql, name: () => this.name });
 
   override initialState = idleState;
   // Think truncates old tool output every few messages, which changes the
@@ -279,6 +295,7 @@ export class Workspace extends Think<Env, ConversationState> {
       requestPreview: (init) => this.requestPreview(init),
       previewLogs: (limit) => this.previewLogsForAgent(limit),
       secretNames: () => this.secretNames(),
+      packages: this.packages,
       appStarted: () => this.appStarted(),
     });
   }
@@ -303,6 +320,7 @@ export class Workspace extends Think<Env, ConversationState> {
     // Counted even when refused: `afterToolCall` follows either way.
     if (!waitingTools.has(ctx.toolName)) this.toolsRunning += 1;
     if (needAppTools.has(ctx.toolName) && !this.appStarted()) return { action: "block", reason: startAppFirst };
+    if (inNodeModules(ctx.toolName, ctx.input)) return { action: "block", reason: packagesAreNotFiles };
     if (changingTools.has(ctx.toolName)) return this.waitForEarlierChange(ctx.toolCallId);
   }
 

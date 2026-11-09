@@ -75,4 +75,21 @@ describe("storeFiles", () => {
       expect(await store.readFile("/attachments/photo.txt")).toBe("an attachment sent meanwhile");
     });
   });
+
+  it("refuses to write anything under node_modules, where only Packages are", async () => {
+    const stub = env.WORKSPACES.getByName("files-node-modules");
+    await stub.exportFiles();
+    await runInDurableObject(stub, async (instance) => {
+      const store = instance.workspace;
+      const refused = "Packages aren't Workspace files, so nothing can be written under /node_modules.";
+      await expect(store.writeFile("/node_modules/hono/index.d.ts", "export {};\n")).rejects.toThrow(refused);
+      await expect(store.writeFileBytes("/./node_modules/x.d.ts", new Uint8Array([1]))).rejects.toThrow(refused);
+      await expect(store.mkdir("/node_modules", { recursive: true })).rejects.toThrow(refused);
+      // Resolved as the store resolves it.
+      await expect(store.writeFile("/src/../node_modules/hono/index.d.ts", "export {};\n")).rejects.toThrow(refused);
+      // A folder whose name only starts the same is an ordinary one.
+      await store.writeFile("/node_modules_notes/a.md", "# Notes\n");
+      expect(await store.readFile("/node_modules_notes/a.md")).toBe("# Notes\n");
+    });
+  });
 });

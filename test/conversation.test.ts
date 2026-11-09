@@ -93,6 +93,7 @@ describe("a Turn", () => {
         "list",
         "preview_logs",
         "read",
+        "read_package",
         "request_preview",
         "start_app",
         "steps",
@@ -425,6 +426,25 @@ describe("the Agent's own tools", () => {
     expect(textOf(reply!)).toMatch(/^The tool said: Added @fake\/a \d+\.\d+\.\d+\./);
     const status = await (await call(`/api/workspaces/${workspace.id}/packages`)).json<{ packages: { name: string }[] }>();
     expect(status.packages.map((p) => p.name)).toContain("@fake/a");
+  });
+
+  it("reads a Package's type declarations with read_package, and refuses a write under /node_modules", async () => {
+    const workspace = await create("Package types");
+    const conversation = await connect(workspace.id);
+    await runTurn(workspace.id, conversation, "[script:read-package-types] How does Hono's validator work?");
+    const [, reply] = await history(workspace.id);
+    const said = textOf(reply!);
+    // The listing: the version, then its declarations and package.json, and none of its scripts.
+    expect(said).toContain("hono 4.13.13");
+    expect(said).toContain("\ndist/types/index.d.ts\n");
+    expect(said).toContain("\npackage.json");
+    expect(said).not.toContain("dist/index.js");
+    // The file itself, read from the full path the Agent gave.
+    expect(said).toContain("node_modules/hono/dist/types/index.d.ts, all");
+    expect(said).toContain(`import { HonoRequest } from "./request.js";`);
+    // The writes were refused, bash's too, so nothing appeared among the Workspace's files.
+    expect(said).toContain("Packages aren't in your file system");
+    expect((await fileList(workspace.id)).filter((path) => path.startsWith("node_modules"))).toEqual([]);
   });
 
   it("builds the Workspace with build, which returns the Build's errors", async () => {

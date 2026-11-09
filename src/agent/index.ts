@@ -4,6 +4,7 @@ import { generateText, getToolName, isToolUIPart, tool, type LanguageModel, type
 import { z } from "zod";
 import { isSecretName, secretNameRule } from "../apphost/secrets";
 import { normalisePath } from "../files";
+import type { Packages } from "../packages";
 import { isWarning, type AppLogEntry } from "../shared/app-logs";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
 import type { CheckReport, PackageStatus, Problem } from "../shared/check-report";
@@ -62,6 +63,7 @@ ${listAddons()
 How you work:
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
+- Packages aren't in your file system, so read, list, find, grep and bash can't see /node_modules. Before using a Package's API you're unsure of, read its type declarations with read_package: give it the Package's name to list them, then the path of each you need.
 - The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all, and if the Preview then logs errors or warnings you'll be shown them, which uses one of those times too. If the Check or the Build still has errors after that, the platform puts the files back as they were when the Turn started, so the Developer's app keeps working, and tells you at the start of your next Turn.
 - A Build that says your app has grown too big to build here ran out of memory, which no change to the code fixes. Don't remove Packages yourself: tell the Developer in plain words, suggest one the app could do without, such as one you just added, and change nothing more.
 - Write tests in files named like src/index.test.ts, with vitest's API: describe, it, expect, vi.fn, vi.spyOn and fake timers. vi.mock and snapshots aren't supported, and there's no DOM. Run them with the test tool. Every Turn ends with the tests as well, after the Build; failing tests don't use up your retries, but the Developer sees them.
@@ -286,6 +288,8 @@ export function agentTools(workspace: {
   requestPreview: Workspace["requestPreview"];
   previewLogs: Workspace["previewLogs"];
   secretNames: Workspace["secretNames"];
+  /** The Workspace's Packages, for read_package. */
+  packages: PackageDeclarations;
   /** Whether the app has started from a Template (ADR 0018). */
   appStarted: () => boolean;
 }): ToolSet {
@@ -421,6 +425,17 @@ export function agentTools(workspace: {
         return [`Added ${name} ${result.version}.`, ...describeInstall(result.status)].join("\n");
       },
     }),
+    read_package: tool({
+      description:
+        "Reads an installed Package's type declarations and package.json files, which the file tools can't see. Without path, lists them; with a folder as path, lists those in it; with a file's path, returns it. A long list or file is cut, saying where to go on from.",
+      inputSchema: z.object({
+        name: z.string().describe("The Package's name, such as hono or @types/react."),
+        path: z.string().optional().describe("A file or folder from the Package's own folder, such as dist/types/index.d.ts."),
+        from: z.number().int().min(1).optional().describe("The line of the file, or the entry of the list, to start from. 1 if left out."),
+      }),
+      // readPackage throws when there's nothing to give, so the Conversation shows the call as failed. The model still reads the message.
+      execute: async ({ name, path, from }) => readPackage(workspace.packages, name, path, from),
+    }),
     add_addon: tool({
       description:
         "Adds an add-on to the app by its ID, with the add-ons it needs first: writes its files, installs its Packages, and adds its notes to AGENTS.md. It refuses an add-on the app already has, or one whose files would overwrite different ones, and then changes nothing. Returns its notes, the edits that join it to the app for you to make, the secrets it needs, and its tests to run.",
@@ -503,6 +518,67 @@ export function describeAddons({ added, had, written, tests, status }: Extract<A
 /** An install's failure and warnings, a line each, for the Agent. */
 function describeInstall({ state, error, warnings }: PackageStatus): string[] {
   return [...(state === "failed" ? [`The install failed: ${error}`] : []), ...warnings.map((warning) => `Package warning: ${warning}`)];
+}
+
+/** What read_package reads: the installed Packages, and their type declarations and package.json files. */
+export type PackageDeclarations = Pick<Packages, "status" | "declarationPaths" | "declaration">;
+
+// How much of a Package file read_package returns at once: about 12,000 tokens.
+export const packageReadChars = 48_000;
+// How many paths read_package lists at once.
+export const packageListPaths = 300;
+
+/**
+ * What read_package gives the Agent: `name`'s type declarations and
+ * package.json files under the folder `path`, from the `from`th, or the file
+ * at `path` from line `from`, cut to `packageReadChars`. Throws when there's
+ * nothing to give.
+ */
+export function readPackage(packages: PackageDeclarations, name: string, path = "", from = 1): string {
+  const installed = packages.status().packages;
+  const version = installed.find((p) => p.name === name)?.version;
+  if (!version) {
+    const others = installed.length > 0 ? `The installed ones are ${andList(installed.map((p) => p.name))}.` : "None are installed.";
+    throw new Error(`${name} isn't installed. ${others}`);
+  }
+  // From the Package's own folder, also when given as /node_modules/<name>/...
+  const parts = path.split("/").filter((part) => part !== "" && part !== ".");
+  const prefix = ["node_modules", ...name.split("/")];
+  if (prefix.every((part, i) => parts[i] === part)) parts.splice(0, prefix.length);
+  const relative = parts.join("/");
+  const shown = `/node_modules/${name}/${relative}`;
+
+  const text = relative ? packages.declaration(name, relative) : null;
+  if (text === null) {
+    const listed = packages.declarationPaths(name).filter((file) => !relative || file.startsWith(`${relative}/`));
+    if (listed.length === 0) {
+      throw new Error(`${name} has no type declarations or package.json at ${shown}. Call read_package with only its name to list them.`);
+    }
+    if (from > listed.length) throw new Error(`There are only ${listed.length} to list${relative ? ` in ${relative}` : ""}.`);
+    const end = from - 1 + packageListPaths;
+    const more = listed.length - end;
+    return [
+      `${name} ${version}: its type declarations and package.json files${relative ? ` in ${relative}` : ""}, by their paths from /node_modules/${name}/:`,
+      ...listed.slice(from - 1, end),
+      ...(more > 0 ? [`and ${more} more. List on with from: ${end + 1}${relative ? "" : `, or give a folder as path, such as ${listed[0]!.split("/")[0]}, to list only what's in it`}.`] : []),
+    ].join("\n");
+  }
+
+  const lines = text.split("\n");
+  const first = from - 1;
+  if (first >= lines.length) throw new Error(`${shown} has only ${lines.length} lines.`);
+  let end = first;
+  let size = 0;
+  while (end < lines.length && (end === first || size + lines[end]!.length + 1 <= packageReadChars)) size += lines[end++]!.length + 1;
+  const whole = first === 0 && end === lines.length;
+  const range = whole ? `all ${lines.length} lines` : `lines ${from} to ${end} of ${lines.length}`;
+  const longLine = lines[first]!.length > packageReadChars;
+  const body = lines.slice(first, end).join("\n").slice(0, packageReadChars);
+  const notes = [
+    ...(longLine ? [`(Line ${from} is longer than ${packageReadChars.toLocaleString("en-GB")} characters, so it's cut there.)`] : []),
+    ...(end < lines.length ? [`(Cut at line ${end} to keep it short. Read on with from: ${end + 1}.)`] : []),
+  ];
+  return [`${shown}, ${range}:`, body, ...notes].join("\n");
 }
 
 /** For example "/a.ts, /b.ts and /c.ts". */

@@ -382,6 +382,19 @@ export const agentScripts: Record<string, Script> = {
   "use-test": echoTool("test", {}),
   "use-test-file": echoTool("test", { files: ["/src/sum.test.ts"] }),
 
+  // Lists Hono's type declarations, reads one, and tries to write over it and beside it with bash, in one step, then repeats what the tools said.
+  "read-package-types": (request) =>
+    afterToolResult(request)
+      ? { text: `The tools said: ${lastToolResult(request)}` }
+      : {
+        toolCalls: [
+          { name: "read_package", input: { name: "hono" } },
+          { name: "read_package", input: { name: "hono", path: "/node_modules/hono/dist/types/index.d.ts" } },
+          { name: "write", input: { path: "/node_modules/hono/dist/types/index.d.ts", content: "export {};\n" } },
+          { name: "bash", input: { script: "mkdir -p /node_modules/hono && echo 'export {};' > /node_modules/hono/extra.d.ts" } },
+        ],
+      },
+
   // Adds the storage add-on, then says what add_addon said.
   "add-storage": echoTool("add_addon", { addon: "storage" }),
 

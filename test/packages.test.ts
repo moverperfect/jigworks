@@ -193,9 +193,9 @@ describe("changing package.json by hand", () => {
     });
   });
 
-  it("refuses a path outside the Workspace or kept for the Conversation", async () => {
+  it("refuses a path outside the Workspace, kept for the Conversation, or among the Packages", async () => {
     const workspace = await create("Paths");
-    for (const path of ["..%2Fescape.ts", "attachments/photo.txt"]) {
+    for (const path of ["..%2Fescape.ts", "attachments/photo.txt", "node_modules/hono/index.d.ts"]) {
       const response = await call(`/api/workspaces/${workspace.id}/files/${path}`, { method: "PUT", text: "x" });
       expect(response.status).toBe(400);
       await response.text();

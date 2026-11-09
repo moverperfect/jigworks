@@ -50,6 +50,7 @@ const plainTools: Record<string, string> = {
   delete: "Changing your app",
   bash: "Changing your app",
   add_package: "Adding a ready-made part",
+  read_package: "Looking at a ready-made part",
   add_addon: "Adding to your app",
   check: "Checking for mistakes",
   build: "Building your app",
@@ -203,6 +204,7 @@ const toolVerbs: Record<string, [failed: string, running: string, done: string]>
   check: ["check", "Checking", "Checked"],
   build: ["build", "Building", "Built"],
   add_package: ["add", "Adding", "Added"],
+  read_package: ["read", "Reading", "Read"],
   add_addon: ["add", "Adding", "Added"],
 };
 
@@ -254,6 +256,8 @@ function toolSubject(name: string, input: unknown): string {
       return field("query");
     case "add_package":
       return field("name");
+    case "read_package":
+      return [field("name"), field("path")].filter(Boolean).join(", ");
     case "add_addon":
       return field("addon");
     case "bash": {
