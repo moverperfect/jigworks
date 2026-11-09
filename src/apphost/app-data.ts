@@ -20,6 +20,7 @@ export function appDataWrapper(mainModule: string, durableObjects: Record<string
   // Everything here is declared inside a function, and the classes are exported
   // under the app's names, so no class name can clash with the module's own.
   return `import * as app from ${JSON.stringify(`./${mainModule}`)};
+import { WorkerEntrypoint } from "cloudflare:workers";
 
 const { withBindings, classes } = ((bindings, appData) => {
   // A stable 64-character hex ID for a name, as idFromName gives.
@@ -103,6 +104,15 @@ export default typeof app.default === "function"
       }
     }
   : { fetch: (request, env, ctx) => app.default.fetch(request, withBindings(env), ctx) };
+// PROBE (#107): the app host's alarm runs the app's scheduled handler through this.
+export class JigworksScheduled extends WorkerEntrypoint {
+  async run(cron, scheduledTime) {
+    let retry = false;
+    const controller = { cron, scheduledTime, noRetry() { retry = false; } };
+    await app.default.scheduled(controller, withBindings(this.env), this.ctx);
+    return { ran: true, retry };
+  }
+}
 ${classes.map((name, index) => `const class${index} = classes[${JSON.stringify(name)}];\nexport { class${index} as ${name} };`).join("\n")}
 `;
 }

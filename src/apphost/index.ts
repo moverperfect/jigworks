@@ -594,6 +594,19 @@ export class AppHost extends DurableObject<Env> {
 
   /** Forgets the retired values past their hour, and wakes again for the rest. */
   override async alarm(): Promise<void> {
+    // PROBE (#107): run a schedule the test set, for one slot.
+    const probe = this.ctx.storage.kv.get<{ slot: Slot; cron: string }>("probe:schedule");
+    if (probe) {
+      this.ctx.storage.kv.delete("probe:schedule");
+      const build = this.buildIn(probe.slot)!;
+      try {
+        const result = await this.workerOf(probe.slot, build).getEntrypoint<any>("JigworksScheduled").run(probe.cron, Date.now());
+        this.ctx.storage.kv.put("probe:ran", { at: Date.now(), result });
+      } catch (error) {
+        this.ctx.storage.kv.put("probe:ran", { at: Date.now(), error: String(error) });
+      }
+      return;
+    }
     const sql = this.sql();
     sql.exec("DELETE FROM retired_secrets WHERE retired_at <= ?", Date.now() - retiredSecretsKeptMs);
     const next = sql.exec<{ oldest: number | null }>("SELECT MIN(retired_at) AS oldest FROM retired_secrets").one().oldest;
