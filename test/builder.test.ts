@@ -261,6 +261,26 @@ describe("Builds in a Dynamic Worker (#87)", () => {
     });
   });
 
+  it("tries once more after a Builder goes over its memory limit, which another Workspace's Build can cause, before saying the app is too big", async () => {
+    const failures = [new Error("Worker exceeded memory limit.")];
+    let made = 0;
+    const builder = cachingBuilder(async (_, hash) => {
+      made++;
+      const failure = failures.shift();
+      if (failure) throw failure;
+      return { result: { ok: false, hash, errors: [], warnings: [], missingPackages: [] }, wasmMemoryBytes: {}, receivingMs: null };
+    });
+    expect((await builder.build(filesOf(project("export {};\n")))).result).toMatchObject({ errors: [] });
+    expect(made).toBe(2);
+
+    // Only memory: anything else fails at once.
+    failures.push(new Error("Network connection lost."));
+    expect((await builder.build(filesOf(project("export { a };\n")))).result).toMatchObject({
+      errors: [{ message: "The Build couldn't run: Network connection lost.", file: null, line: null, column: null }],
+    });
+    expect(made).toBe(3);
+  });
+
   it("keeps the Builds it made, and reuses them without esbuild", async () => {
     let made = 0;
     const builder = cachingBuilder(async (_, hash) => {

@@ -54,12 +54,13 @@ const cachedBuilds = 4;
 export const tooBigToBuild = "Your app has grown too big to build here. Try removing a ready-made part.";
 // Cloudflare's words for it, as the Builder's call fails.
 const overMemory = /exceeded (its )?memory limit/i;
+const reasonOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**
  * A Builder that keeps its last few Builds by their inputs' hash, and has
  * `make` make the rest. A `make` that throws, as one whose isolate went over
- * its memory limit does, gives a failed Build that isn't kept, so the next
- * try makes it again.
+ * its memory limit twice does, gives a failed Build that isn't kept, so the
+ * next try makes it again.
  */
 export function cachingBuilder(make: (files: FileSource, hash: string) => Promise<MadeBuild>): Builder {
   const recent = new Map<string, BuildResult>();
@@ -74,9 +75,12 @@ export function cachingBuilder(make: (files: FileSource, hash: string) => Promis
       }
       let made: MadeBuild;
       try {
-        made = await make(files, hash);
+        // Cloudflare starts a new isolate after one goes over its memory limit, which
+        // earlier Builds' memory or another Workspace's Build there may have caused, so
+        // the app is too big only if it fails there too.
+        made = await make(files, hash).catch((error: unknown) => (overMemory.test(reasonOf(error)) ? make(files, hash) : Promise.reject(error)));
       } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
+        const reason = reasonOf(error);
         const message = overMemory.test(reason) ? tooBigToBuild : `The Build couldn't run: ${reason}`;
         const result: BuildFailure = { ok: false, hash, errors: [unplaced(message)], warnings: [], missingPackages: [] };
         return { result, wasmMemoryBytes: {}, receivingMs: null, cached: false };

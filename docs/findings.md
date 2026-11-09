@@ -839,7 +839,7 @@ On 2026-11-09 after #98's deploy (`939735a`), the same ten rounds in two Workspa
 
 ## How large an app can build (#99)
 
-**Verdict, locally: what decides the limit is the Packages an app bundles, not how much code it has, and starting esbuild with `GOGC=25` lowers its peak by a fifth to a quarter. Where the limit sits deployed, before and after, is still to measure (below).** A Build that goes over the Builder's memory limit now fails with "Your app has grown too big to build here. Try removing a ready-made part.", which the page shows as it is. The Agent is told it once, with instructions to tell the Developer in plain words and suggest a ready-made part the app could do without, rather than remove one itself. The Turn then ends and is undone, as any Turn that leaves the app broken is (`test/conversation.test.ts`).
+**Verdict, locally: what decides the limit is the Packages an app bundles, not how much code it has, and starting esbuild with `GOGC=25` lowers its peak by a fifth to a quarter. Where the limit sits deployed, before and after, is still to measure (below).** A Build that goes over the Builder's memory limit twice, the second time in a new isolate, now fails with "Your app has grown too big to build here. Try removing a ready-made part.", which the page shows as it is. The Agent is told it once, with instructions to tell the Developer in plain words and suggest a ready-made part the app could do without, rather than remove one itself. The Turn then ends and is undone, as any Turn that leaves the app broken is (`test/conversation.test.ts`). The second try is because a Builder is shared: another Workspace's Build there, or earlier Builds' memory, can put a Build that fits over the limit (ADR 0010).
 
 ### How it was measured
 

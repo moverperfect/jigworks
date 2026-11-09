@@ -35,8 +35,8 @@ const addedPackages = {
   recharts: "3.10.1",
 };
 
-/** The added Packages but the charting library. */
-const uiKit = Object.fromEntries(Object.entries(addedPackages).filter(([name]) => name !== "recharts"));
+/** The added Packages but the charting library: the UI kit and the date library. */
+const { recharts: _, ...withoutCharts } = addedPackages;
 
 const kinds = ["Chart", "Dates", "Form", "Table", "Stats", "Notice"];
 
@@ -47,8 +47,8 @@ const shapes = {
   // Between the two, to find where Builds stop fitting (#99): the large app halved, the moderate one with the UI kit
   // instead of the charts, and a small app with the UI kit.
   half: { components: 60, pages: 15, routes: 5, packages: addedPackages, kinds, ui: true },
-  ui: { components: 60, pages: 15, routes: 5, packages: uiKit, kinds: kinds.filter((kind) => kind !== "Chart"), ui: true },
-  small: { components: 6, pages: 2, routes: 1, packages: uiKit, kinds: ["Form"], ui: true },
+  ui: { components: 60, pages: 15, routes: 5, packages: withoutCharts, kinds: kinds.filter((kind) => kind !== "Chart"), ui: true },
+  small: { components: 6, pages: 2, routes: 1, packages: withoutCharts, kinds: ["Form"], ui: true },
 };
 let counts = shapes.large;
 /** Every step below makes the app of this shape. */

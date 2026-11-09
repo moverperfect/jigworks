@@ -1169,6 +1169,7 @@ type CheckAndBuild = { check: CheckReport; build: BuildReport };
 
 /** Whether a Turn's last Check and Build leave the app broken. Failing tests don't (ADR 0018). */
 const broken = ({ check, build }: CheckAndBuild) => check.counts.error > 0 || !build.ok;
+/** Whether the Build failed because the app is too big to build (see `tooBigToBuild`). */
 const tooBig = ({ build }: CheckAndBuild) => build.errors.some(({ message }) => message === tooBigToBuild);
 
 /** The files' copy for a Turn (see `startTurn`). */

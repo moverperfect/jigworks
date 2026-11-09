@@ -111,11 +111,10 @@ function declarationsIn(dir) {
 
 /**
  * Starts esbuild's Go runtime with `GOGC=25`, so its heap grows to 1.25
- * times what's live before it collects, not twice. esbuild's linear memory
- * never shrinks, so that's its peak: a small app with a UI kit's Packages
- * went from 111 MB to 82 MB, against an isolate's 128 MB (#99,
- * docs/findings.md). esbuild's browser build gives Go an empty environment,
- * so the bundle is patched; a new esbuild that fails the match fails here.
+ * times what's live before it collects, not twice, which lowers esbuild's
+ * peak against an isolate's 128 MB (#99, docs/findings.md). esbuild's browser
+ * build gives Go an empty environment, so the bundle is patched; a new
+ * esbuild that fails the match fails here.
  */
 function withGoGc(code) {
   const empty = 'this.argv=["js"],this.env={}';
