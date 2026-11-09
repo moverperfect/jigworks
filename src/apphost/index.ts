@@ -791,7 +791,9 @@ function safePath(to: string): string {
   // tabs and newlines and reads a backslash as a slash.
   const base = "https://preview.invalid";
   const url = URL.parse(to, base);
-  return to.startsWith("/") && url?.origin === base ? url.pathname + url.search + url.hash : "/";
+  const path = url ? url.pathname + url.search + url.hash : "";
+  // Checked once resolved too: `/a/..//elsewhere` resolves to `//elsewhere`, another site's address.
+  return to.startsWith("/") && url?.origin === base && !path.startsWith("//") ? path : "/";
 }
 
 /** A cookie made to work in a cross-site frame: partitioned, and sent with cross-site requests. */
