@@ -805,3 +805,55 @@ Locally, ten rounds in the finished app, with a fresh Builder. Each round's new 
 - **esbuild's Go heap can't be capped from outside.** esbuild's browser build makes its Go runtime with an empty environment, so `GOGC` can't be set without patching esbuild at pack time.
 - **The test bundle had the same limits:** `runTests` also held every Package file, and its call to the Test bundler couldn't carry more than 32 MiB. It now gets the same stream.
 - **Local workerd does enforce the RPC limit:** one call with 40 MB of arguments failed with "Serialized RPC arguments or return values are limited to 32MiB". A stream of more went through.
+
+## Add-ons (#88)
+
+### Add-ons together, live (#94)
+
+**Verdict: yes, with a caveat.** On the deployed platform, the Agent added add-ons when a request needed their abilities, and only then. Each was its own step, with a detail, and the Agent asked for each Secret in turn with the add-on's reason. With made-up Secrets, the app kept working, and its logs said plainly why the email wasn't sent and Claude wasn't asked. The three ideas' first builds took 75 to 103 s, against #67's 100 to 119 s, and the one that added two add-ons took 146 s. **The caveat:** those logs are under "See the code", so a Developer who doesn't write code isn't told, and the Agent's reply said an email "should arrive" (#104).
+
+- **Platform:** the deployed platform at `main` (`99e701f`), checked on 2026-11-09 from the Developer's signed-in browser (Chrome, T3's preview tools) in the UK.
+- **Turns:** 8 Turns of Opus 5.5 in four Workspaces made for the check, against a budget of $4. They cost $2.91 at the tail script's prices. The Workspaces were deleted afterwards.
+- **Secrets** all had made-up values, so Resend and Anthropic were expected to refuse.
+- **The three ideas ran at once,** each from the start page in its own tab. The fourth app followed on its own.
+- **Tested as an app** before the check: `test/addons.test.ts`'s "add-ons together" starts a Workspace from the default Template, adds the organiser's area, email and AI in one step, as Opus calls tools, and makes their joining edits. It has a clean Check, Builds, passes every test file, the Template's and each add-on's, and works in the Preview with and without the Secrets.
+
+**First builds, and the add-ons the Agent chose:**
+
+| App, as described | Name | Template | Add-ons added | `POST /api/workspaces` | Turn log | Steps | Retries | Cost |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| "A sign-up sheet for my running club's Sunday runs" | Sunday Runs | Worker + React | none | 1.35 s to the app's page | 74.6 s | 10 | 0 | $0.32 |
+| "A page where neighbours can borrow my lawnmower" | Mower Share | Worker + React | none | 1.10 s | 102.8 s | 14 | 0 | $0.45 |
+| "A rota for who's cleaning the office kitchen" | Kitchen Rota | Worker + React | none | 2.16 s | 103.3 s | 11 | 0 | $0.40 |
+| "A sign-up sheet for my book club's monthly meetings. Only I should be able to see everyone's details and remove people, and I'd like an email each time someone signs up." | Book Club Sign-ups | Worker + React | `organiser`, `email` | 2.10 s | 145.7 s, then asked | 12 | 0 | $0.56 |
+
+- **Storage:** all four apps kept their records in the default Template's store, with `collection` from `./store`, and none wrote a Durable Object of its own.
+- **Against #67:** the same two ideas took 100.4 s and 119.0 s there, and 74.6 s and 102.8 s here. Two runs each are too few to give the cause. #79's and #80's local runs of Sunday Runs, with the Template before storage, already took 76 to 88 s.
+- **#99 didn't happen:** every Build passed.
+
+**The Book Club Turns:**
+
+| Turn | Asked | Add-ons added | Turn log | Steps | Cost |
+| --- | --- | --- | ---: | ---: | ---: |
+| The first build | a Secret (`ORGANISER_PASSCODE`) | `organiser`, `email` | 145.7 s | 12 | $0.56 |
+| After the passcode was saved | a Secret (`RESEND_API_KEY`) | – | 7.7 s | 1 | $0.22 |
+| After the key was saved | – | – | 11.1 s | 3 | $0.04 |
+| "In my organiser's area, sort each sign-up's note into a question for me, a suggestion, or just a comment, so I can see what needs an answer." | a Secret (`ANTHROPIC_API_KEY`) | `ai` | 136.1 s | 22 | $0.58 |
+| After the key was saved | – | – | 8.9 s | 2 | $0.34 |
+
+- **The steps** for the add-ons: "Adding your private organiser area" (detail "Opens with a passcode"), "Adding sign-up emails" ("Sent through Resend to an address you choose") and, in the later Turn, "Adding an AI model to read notes" ("Claude, with your own key").
+- **The Secrets' reasons** on the page were the add-ons' own, word for word.
+- **The address emails go to** wasn't asked for. The Agent made it a setting in the organiser's area, kept in the store, where the email add-on's notes say to ask for it and keep it in `vars`. No ticket: the organiser can change it without a Turn, and it wasn't asked for as a Secret, which is what the notes guard against (#79).
+
+**Trying the app in its Preview,** in the browser:
+- **The organiser's area:** its routes answered 401 before signing in, a wrong passcode got "That passcode isn't right." with a 401, and the made-up passcode signed in. A meeting and the address were then saved.
+- **A sign-up** was kept and counted, and answered `{"ok":true}`. The Preview's logs said "Resend refused the email: API key is invalid".
+- **A sign-up with a note,** once the AI key was saved, was kept too. The logs said "Claude wasn't asked: Anthropic answered 401 (authentication_error): invalid x-api-key", and the organiser's page showed the note as "Not sorted yet", with a "Sort it" button to sort it by hand.
+- **Where the Developer sees it:** the Logs, under "See the code". The Workspace page's own view shows neither refusal, and the Agent's last replies said "an email should arrive" and that each note is sorted as it comes in. Like #67's "the test email went through", the Agent can't know that a key is made up (#104).
+
+### Found along the way
+
+- **Two file tools changing one file in the same step lost a change, in 2 of 8 Turns (#103).** In Mower Share, two `edit`s of `src/server/store.ts` in one step reported 121 lines and then 120, and the Check found the first's method missing. In Book Club, the Agent said "The parallel edits clashed again, so I'll add that test back". Both times it noticed and put it right, with no retries.
+- **Kitchen Rota suggested "Email whoever's on the rota each Monday",** a scheduled reminder, which apps can't have yet (ADR 0015, #88's Out of Scope). The Agent's instructions don't say so. #88 makes scheduled reminders a platform ticket of their own, which doesn't exist yet.
+- **The Book Club check went past #94's "organiser's area and emails",** adding AI in a later Turn, to see an add-on added after others. Those two Turns cost $0.92.
+- **Two Turns after a Secret cost more than their size:** $0.22 for 1 step and $0.34 for 2, where the other such Turn cost $0.04. Not looked into.

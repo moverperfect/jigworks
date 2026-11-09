@@ -17,6 +17,21 @@ const fileList = async (id: string) => (await (await call(`/api/workspaces/${id}
 const fileText = async (id: string, path: string) => (await call(`/api/workspaces/${id}/files/${path}`)).text();
 const storageFiles = ["src/server/fake-store.ts", "src/server/store.test.ts", "src/server/store.ts"];
 const storageHeading = "## Storage (add-on `storage`)";
+/** Each test file the Workspace's tests ran, with the states its tests ended in and its errors. */
+const testStates = async (id: string) =>
+  (await (await call(`/api/workspaces/${id}/tests`)).json<TestReport>()).files.map(({ file, tests, errors }) => [
+    file,
+    [...new Set(tests.map(({ state }) => state))],
+    errors,
+  ]);
+/** Signs in to the organiser's area in the Workspace's Preview, as its sign-in page's form does. */
+const signIn = (preview: ReturnType<typeof env.WORKSPACES.getByName>, passcode: string) =>
+  preview.requestPreview({
+    method: "POST",
+    path: "/organiser/sign-in",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ passcode }).toString(),
+  });
 
 describe("add_addon", () => {
   it("adds storage to a Worker Template app: its files, its notes in AGENTS.md, and the edits, Secrets and tests that follow", async () => {
@@ -48,8 +63,7 @@ describe("add_addon", () => {
     const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:add-storage-and-join] Remember the messages");
     expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
 
-    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
-    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toEqual([
+    expect(await testStates(workspace.id)).toEqual([
       ["src/index.test.ts", ["passed"], []],
       ["src/server/store.test.ts", ["passed"], []],
     ]);
@@ -121,8 +135,7 @@ describe("the organiser's area", () => {
     // Storage came with the Template.
     expect(result).toMatch(/^Added the organiser add-on\. Wrote \/src\/server\/organiser\.test\.ts and \/src\/server\/organiser\.ts\.\nIt needs storage too, which the app already had\./);
     expect(result).toContain("- ORGANISER_PASSCODE: The passcode that opens your app's organiser's area.");
-    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
-    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toContainEqual([
+    expect(await testStates(workspace.id)).toContainEqual([
       "src/server/organiser.test.ts",
       ["passed"],
       [],
@@ -135,15 +148,8 @@ describe("the organiser's area", () => {
     // The Worker answers the sign-in page, not the front end.
     const page = await preview.requestPreview({ method: "GET", path: "/organiser/sign-in", headers: { Accept: "text/html", "Sec-Fetch-Mode": "navigate" } });
     expect(page.body).toContain('<form method="post" action="/organiser/sign-in">');
-    const signIn = (entered: string) =>
-      preview.requestPreview({
-        method: "POST",
-        path: "/organiser/sign-in",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
-        body: new URLSearchParams({ passcode: entered }).toString(),
-      });
-    expect((await signIn("a wrong passcode")).status).toBe(401);
-    const signedIn = await signIn(passcode);
+    expect((await signIn(preview, "a wrong passcode")).status).toBe(401);
+    const signedIn = await signIn(preview, passcode);
     // Not followed, so the Agent sees the cookie too.
     expect(signedIn).toMatchObject({ status: 303, headers: { location: "/organiser" } });
     const cookie = signedIn.headers["set-cookie"]!.split(";", 1)[0]!;
@@ -164,11 +170,10 @@ describe("the organiser's area", () => {
     expect((added!.result as string).split("\n", 1)[0]).toBe(
       "Added the organiser add-on, after storage, which it needs. Wrote /src/server/fake-store.ts, /src/server/store.test.ts, /src/server/store.ts, /src/server/organiser.test.ts and /src/server/organiser.ts.",
     );
-    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
-    expect(tests.files.map(({ file, tests }) => [file, [...new Set(tests.map(({ state }) => state))]])).toEqual([
-      ["src/index.test.ts", ["passed"]],
-      ["src/server/organiser.test.ts", ["passed"]],
-      ["src/server/store.test.ts", ["passed"]],
+    expect(await testStates(workspace.id)).toEqual([
+      ["src/index.test.ts", ["passed"], []],
+      ["src/server/organiser.test.ts", ["passed"], []],
+      ["src/server/store.test.ts", ["passed"], []],
     ]);
 
     const opened = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/organiser", headers: { Accept: "text/html" } });
@@ -188,8 +193,7 @@ describe("sending email", () => {
     expect(result.split("\n", 1)[0]).toBe("Added the email add-on. Wrote /src/server/email.test.ts and /src/server/email.ts.");
     expect(result).toContain("<notes>\n## Sending email (add-on `email`)\n\nThe app sends email through Resend");
     expect(result).toContain("- RESEND_API_KEY: To send emails, your app uses Resend, an email service, and needs a key from it.");
-    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
-    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toContainEqual([
+    expect(await testStates(workspace.id)).toContainEqual([
       "src/server/email.test.ts",
       ["passed"],
       [],
@@ -222,8 +226,7 @@ describe("calling an AI model", () => {
     expect(result.split("\n", 1)[0]).toBe("Added the ai add-on. Wrote /src/server/ai.test.ts and /src/server/ai.ts.");
     expect(result).toContain("<notes>\n## Calling an AI model (add-on `ai`)\n\nThe app asks Claude");
     expect(result).toContain("- ANTHROPIC_API_KEY: Your app asks Claude, an AI model from Anthropic, with a key from your own Anthropic account, so what it uses is charged to you");
-    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
-    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toContainEqual([
+    expect(await testStates(workspace.id)).toContainEqual([
       "src/server/ai.test.ts",
       ["passed"],
       [],
@@ -240,6 +243,63 @@ describe("calling an AI model", () => {
     // The fake Anthropic knows the platform's own key, and answers a request without tools with its summary.
     expect((await giveKey(env.ANTHROPIC_API_KEY)).status).toBe(204);
     expect(await sort()).toEqual({ ok: true, text: summaryReply });
+  });
+});
+
+describe("add-ons together", () => {
+  it("the organiser's area, email and AI, added in one step and joined, have a clean Check, Build, pass every test and work together in the Preview", async () => {
+    const workspace = await create("Sign-ups", undefined, "worker-react");
+    const conversation = await connect(workspace.id);
+    const [line] = await turnLines(() =>
+      runTurn(workspace.id, conversation, "[script:add-organiser-email-ai-and-join] Keep sign-ups, sort their messages, email me, and only I see the list"),
+    );
+    expect(line).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+    expect((line!.addons as string[]).toSorted()).toEqual(["ai", "email", "organiser"]);
+
+    // Each brought its own notes, once, after the default Template's storage.
+    const agentsMd = await fileText(workspace.id, "AGENTS.md");
+    for (const heading of [storageHeading, "## Organiser's area (add-on `organiser`)", "## Sending email (add-on `email`)", "## Calling an AI model (add-on `ai`)"]) {
+      expect(agentsMd.split(heading)).toHaveLength(2);
+    }
+    // Every Secret is asked for.
+    const told = (await toolResults(workspace.id)).map(({ result }) => result as string).join("\n");
+    for (const secret of ["ORGANISER_PASSCODE", "RESEND_API_KEY", "ANTHROPIC_API_KEY"]) expect(told).toContain(`- ${secret}: `);
+
+    expect(await testStates(workspace.id)).toEqual(
+      ["client/App.test.tsx", "server/ai.test.ts", "server/email.test.ts", "server/index.test.ts", "server/organiser.test.ts", "server/store.test.ts"].map(
+        (file) => [`src/${file}`, ["passed"], []],
+      ),
+    );
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const signUp = async (name: string, message: string) =>
+      JSON.parse((await preview.requestPreview({ method: "POST", path: `/api/signups/${name}?message=${encodeURIComponent(message)}` })).body);
+    // Before the Developer gives any Secret, the sign-up is still kept, and the app says plainly what didn't happen.
+    expect(await signUp("Ada", "Lovely idea")).toEqual({
+      answer: { ok: false, error: "Claude wasn't asked: the Secret ANTHROPIC_API_KEY hasn't been set yet." },
+      sent: { ok: false, error: "The email wasn't sent: the Secret RESEND_API_KEY hasn't been set yet." },
+    });
+
+    const give = async (name: string, value: string) =>
+      expect((await call(`/api/workspaces/${workspace.id}/secrets/${name}`, { method: "PUT", body: { value } })).status).toBe(204);
+    await give("ORGANISER_PASSCODE", "a sign-ups passcode");
+    await give("RESEND_API_KEY", resendKey);
+    // The fake Anthropic knows the platform's own key, and answers a request without tools with its summary, whatever it's asked.
+    await give("ANTHROPIC_API_KEY", env.ANTHROPIC_API_KEY);
+    expect(await signUp("Grace", "When does it start?")).toEqual({
+      answer: { ok: true, text: summaryReply },
+      sent: { ok: true, id: `email-to-${resendAccountAddress}` },
+    });
+
+    const signups = (headers: Record<string, string> = {}) => preview.requestPreview({ method: "GET", path: "/organiser/api/signups", headers });
+    expect((await signups()).status).toBe(401);
+    const signedIn = await signIn(preview, "a sign-ups passcode");
+    expect(signedIn.status).toBe(303);
+    const listed = await signups({ Cookie: signedIn.headers["set-cookie"]!.split(";", 1)[0]! });
+    expect(JSON.parse(listed.body)).toEqual([
+      { id: expect.any(String), name: "Ada", message: "Lovely idea", sorted: null },
+      { id: expect.any(String), name: "Grace", message: "When does it start?", sorted: summaryReply },
+    ]);
   });
 });
 
