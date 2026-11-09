@@ -64,6 +64,10 @@ _Avoid_: App domain, user-content domain
 Published code from npm that a Workspace uses, listed in its `package.json` with an exact version. Packages aren't Workspace files: nobody edits them, and they don't appear in the file tree or the zip. A Workspace has only one version of each Package, even when two Packages ask for different ones.
 _Avoid_: Dependency, library, module
 
+**Package cache**:
+The one R2 bucket of npm's tarballs that every Workspace on an Installation shares, behind each Workspace's own copy of its Packages (ADR 0020). It saves a download, and never decides which version a Workspace gets.
+_Avoid_: Registry mirror, package store, CDN
+
 **Secret**:
 A named value, such as an API key, that the Developer gives a Workspace and its app reads from `env`, in the Preview and the Deployment. The Agent sees only its name (ADR 0016).
 _Avoid_: Environment variable, var, credential

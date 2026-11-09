@@ -888,3 +888,48 @@ On 2026-11-09 after #98's deploy (`939735a`), the same ten rounds in two Workspa
 - **Kitchen Rota suggested "Email whoever's on the rota each Monday",** a scheduled reminder, which apps can't have yet (ADR 0015, #88's Out of Scope). The Agent's instructions don't say so. #88 makes scheduled reminders a platform ticket of their own, which doesn't exist yet.
 - **The Book Club check went past #94's "organiser's area and emails",** adding AI in a later Turn, to see an add-on added after others. Those two Turns cost $0.92.
 - **Two Turns after a Secret cost more than their size:** $0.22 for 1 step and $0.34 for 2, where the other such Turn cost $0.04. Not looked into.
+
+## Stage 7: R2 as a shared Package cache (#19)
+
+**Verdict, locally: a small win. The deployed check follows the deploy.** The Package cache is built (ADR 0020): one R2 bucket of npm's tarballs, shared by every Workspace, behind each one's own SQLite copy. Locally, with a warm cache, fetching the Worker + React Template's 7 tarballs took 56–89 ms, against 119–272 ms from npm. That's about a tenth of an install, because resolving against the npm registry takes most of it, and still has to happen every time for the one-day minimum age. Storage per Workspace doesn't change, by design. Deployed, npm's tarballs come from Cloudflare's own CDN, so the gap may be smaller; the deployed check decides whether the cache stays.
+
+- **The minimum age and integrity:** the cache never chooses a version, and every tarball it gives is checked against the registry's integrity value before use (`test/packages-tarball.test.ts`, `test/packages.test.ts`). A cached copy that fails the check is downloaded again from npm and replaced.
+
+### Locally
+
+- **Platform:** `wrangler dev` on a shared development machine on 2026-11-09, with the real npm registry and wrangler's local R2, a folder on disk. Each time is curl's, against the local platform.
+- **Each round:** a Workspace from each Template (`POST /api/workspaces`), then adding date-fns (4.4.0), then a Check.
+- **Without the cache:** this branch with the cache switched off in the code, so every tarball came from npm: three rounds, the third cut short after the Worker + React Workspace was made.
+- **Cold:** the cache on and its bucket empty. Each tarball came from npm and was copied into the bucket; the Worker Template's Workspace came first, so the Worker + React Template's found Hono already there.
+- **Warm:** three more rounds, every tarball cached.
+
+| | Packages from | Create the Workspace | Add date-fns | Check |
+| --- | --- | ---: | ---: | ---: |
+| Worker Template | npm, no cache (3) | 209–413 ms | 549–2,374 ms | 138–356 ms |
+| Worker Template | npm, copied into the cache | 319 ms | 494 ms | 276 ms |
+| Worker Template | the cache (3) | 121–172 ms | 409–489 ms | 128–143 ms |
+| Worker + React Template | npm, no cache (3) | 997–1,952 ms | 1,135–1,514 ms (2) | 353–456 ms (2) |
+| Worker + React Template | npm, copied into the cache, but Hono | 877 ms | 1,001 ms | 410 ms |
+| Worker + React Template | the cache (3) | 752–908 ms | 911–1,019 ms | 317–333 ms |
+
+**The `install` log lines** split each install into resolving and fetching, by the Durable Object's clock:
+
+| Install | Tarballs fetched | Tarball bytes | Resolving: no cache / cold / warm | Fetching: no cache / cold / warm |
+| --- | ---: | ---: | --- | --- |
+| Worker Template | 1 | 245 KB | 70–130 / 98 / 42–65 ms | 54–73 / 76 / 9–30 ms |
+| Worker + React Template | 7 | 1.9 MB | 690–1,530 / 513 / 503–703 ms | 119–272 / 188 / 56–89 ms |
+| Adding date-fns to the Worker Template | 1 | 1.6 MB | 57–71 / 44 / 43–55 ms | 179–1,956 / 154 / 79–88 ms |
+| Adding date-fns to the Worker + React Template | 1 | 1.6 MB | 675–1,013 / 593 / 545–642 ms | 170–195 / 86 / 67–83 ms |
+
+- **Resolving is most of an install:** 0.5–1.5 s of the Worker + React Template's, with or without the cache. It reads each Package's registry document one after another as the walk finds them, and the full document of any changed in the last day, for its publish times.
+- **Fetching** fell by a half to two-thirds with a warm cache, and stopped varying with npm: the one 2-second fetch was from npm. What's left is unpacking each tarball and checking its hash, which the cache can't save.
+- **A Check doesn't touch the cache:** it installs only when `package.json` changed, so its times differ only with the machine.
+- **Storage per Workspace,** the Durable Object's database size after each install: 2.5 MB for the Worker Template, 12.2 MB for the Worker + React Template, and 12.1 MB more with date-fns. The same with or without the cache: each Workspace keeps its own copy.
+
+### Deployed
+
+To measure after the deploy, from the API with the tail running, while the bucket is still empty: the same rounds, cold then warm, read from the `install` lines (`fromCache`, `resolveMs`, `fetchMs`, `databaseBytes`), with the Durable Object's CPU and wall time from each call's trace. A cold install is the path without the cache, plus copying each tarball into R2. The check was planned for before the deploy as well, against the platform without the cache, but Access asked for a sign-in on 2026-11-09.
+
+### Found along the way
+
+- **Resolving one Package at a time** is most of an install, cache or not. Fetching the documents a round needs at the same time would likely save more than the cache does. Not looked into.

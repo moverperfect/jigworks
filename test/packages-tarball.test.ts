@@ -1,5 +1,6 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { downloadPackage } from "../src/packages/tarball";
+import { cacheKey, downloadPackage } from "../src/packages/tarball";
 
 const url = "https://registry.npmjs.org/example/-/example-1.0.0.tgz";
 const encoder = new TextEncoder();
@@ -267,6 +268,56 @@ describe("downloadPackage", () => {
       await expect(downloadPackage(url, {}, fetchOf(await tgz(entries)))).rejects.toThrow(
         `${url} has no integrity value to check it against`,
       );
+    });
+  });
+
+  describe("the Package cache", () => {
+    const cache = env.PACKAGE_CACHE;
+    const entries = [{ path: "package/index.js", content: "ok" }];
+    const offline: typeof fetch = async () => {
+      throw new Error("npm was asked");
+    };
+    const sriOf = async (tarball: ArrayBuffer) => ({ integrity: `sha512-${base64(await hash("SHA-512", tarball))}` });
+
+    it("keeps a tarball from npm, and serves the next download without asking npm", async () => {
+      const tarball = await tgz([{ path: "package/index.js", content: "cached" }]);
+      const integrity = await sriOf(tarball);
+      const first = await downloadPackage(url, integrity, { fetch: serving(tarball), cache });
+      expect(first.source).toBe("npm");
+      expect(new Uint8Array(await (await cache.get(cacheKey(url)))!.arrayBuffer())).toEqual(new Uint8Array(tarball));
+
+      const second = await downloadPackage(url, integrity, { fetch: offline, cache });
+      expect(second).toMatchObject({ source: "cache", tarballBytes: tarball.byteLength });
+      expect(second.files.get("index.js")).toBe("cached");
+    });
+
+    it("never uses a cached tarball that fails the integrity check, and replaces it from npm", async () => {
+      const genuine = await tgz([{ path: "package/index.js", content: "genuine" }]);
+      await cache.put(cacheKey(url), await tgz([{ path: "package/index.js", content: "tampered" }]));
+
+      const download = await downloadPackage(url, await sriOf(genuine), { fetch: serving(genuine), cache });
+      expect(download.source).toBe("npm");
+      expect(download.files.get("index.js")).toBe("genuine");
+      expect(new Uint8Array(await (await cache.get(cacheKey(url)))!.arrayBuffer())).toEqual(new Uint8Array(genuine));
+    });
+
+    it("still refuses npm's tarball when it fails the check, and doesn't cache it", async () => {
+      const other = "https://registry.npmjs.org/other/-/other-1.0.0.tgz";
+      const tarball = await tgz(entries);
+      const npm: typeof fetch = async () => new Response(tarball);
+      await expect(downloadPackage(other, { integrity: `sha512-${base64(new Uint8Array(64))}` }, { fetch: npm, cache })).rejects.toThrow(other);
+      expect(await cache.head(cacheKey(other))).toBeNull();
+    });
+
+    it("downloads from npm when the cache can't be read or written", async () => {
+      const tarball = await tgz(entries);
+      const broken = {
+        get: () => Promise.reject(new Error("R2 is down")),
+        put: () => Promise.reject(new Error("R2 is down")),
+      } as unknown as R2Bucket;
+      const download = await downloadPackage(url, await sriOf(tarball), { fetch: serving(tarball), cache: broken });
+      expect(download).toMatchObject({ source: "npm" });
+      expect(download.files.get("index.js")).toBe("ok");
     });
   });
 

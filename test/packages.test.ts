@@ -2,6 +2,7 @@ import { env } from "cloudflare:workers";
 import { strFromU8, unzipSync } from "fflate";
 import { describe, expect, it } from "vitest";
 import type { PackageStatus } from "../src/packages";
+import { cacheKey } from "../src/packages/tarball";
 import { call, create } from "./helpers/api";
 
 // Installing Packages, through the platform's API. The npm registry is the
@@ -91,6 +92,23 @@ describe("adding a Package", () => {
     const response = await call(`/api/workspaces/${workspace.id}/packages`, { method: "POST", body });
     expect(response.status).toBe(400);
     expect(await response.json()).toEqual({ error });
+  });
+});
+
+describe("the Package cache", () => {
+  const tarball = (name: string, version: string) => `https://registry.npmjs.org/${name}/-/${name.split("/").pop()}-${version}.tgz`;
+
+  it("keeps the tarballs a Workspace installs, for every Workspace", async () => {
+    await create("Fills the cache");
+    expect(await env.PACKAGE_CACHE.head(cacheKey(tarball("hono", "4.13.13")))).not.toBeNull();
+  });
+
+  it("never chooses a version for being in the cache: the minimum age still applies", async () => {
+    // @fake/a 1.1.0 is two hours old.
+    const tooNew = tarball("@fake/a", "1.1.0");
+    await env.PACKAGE_CACHE.put(cacheKey(tooNew), await (await fetch(tooNew)).arrayBuffer());
+    const workspace = await create("Too new, but cached");
+    expect((await add(workspace.id, { name: "@fake/a" })).package.version).toBe("1.0.0");
   });
 });
 

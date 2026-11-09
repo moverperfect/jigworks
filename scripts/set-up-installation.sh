@@ -211,9 +211,10 @@ ENV_FILE=".wrangler/installation.env"
 # The Installation's hostnames come from its configuration.
 PLATFORM_HOST=$(sed -n 's/.*"pattern": "\([^"/]*\)".*/\1/p' wrangler.jsonc | head -n1)
 APPS_DOMAIN=$(sed -n 's/.*"APPS_DOMAIN": "\([^"]*\)".*/\1/p' wrangler.jsonc | head -n1)
+PACKAGE_CACHE=$(sed -n 's/.*"bucket_name": "\([^"]*\)".*/\1/p' wrangler.jsonc | head -n1)
 PLATFORM_ZONE="${PLATFORM_HOST#*.}"
-if [[ -z "$PLATFORM_HOST" || -z "$APPS_DOMAIN" ]]; then
-  printf 'wrangler.jsonc needs the platform route and APPS_DOMAIN set first.\n' >&2
+if [[ -z "$PLATFORM_HOST" || -z "$APPS_DOMAIN" || -z "$PACKAGE_CACHE" ]]; then
+  printf 'wrangler.jsonc needs the platform route, APPS_DOMAIN and the Package cache'"'"'s bucket_name set first.\n' >&2
   exit 1
 fi
 for tool in npx gh curl; do
@@ -224,7 +225,7 @@ gh auth status >/dev/null 2>&1 || { printf 'Sign gh in first: gh auth login\n' >
 # secret_is_set NAME: whether the Worker already has that secret.
 secret_is_set() { npx wrangler secret list 2>/dev/null | grep -q "\"$1\""; }
 
-TOTAL_STAGES=10
+TOTAL_STAGES=11
 
 banner "Jigworks: set up the Installation at $PLATFORM_HOST"
 
@@ -388,6 +389,18 @@ done
 pause
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
+stage "The Package cache"
+say "Workspaces share one R2 bucket of npm's tarballs, $PACKAGE_CACHE, behind each one's own"
+say "copy of its Packages (ADR 0020)."
+note "R2 has a free allowance; past it, storage and reads are billed to the account."
+if npx wrangler r2 bucket info "$PACKAGE_CACHE" >/dev/null 2>&1 || npx wrangler r2 bucket create "$PACKAGE_CACHE"; then
+  printf '  %s✓%s the bucket %s exists\n' "$GREEN" "$RESET" "$PACKAGE_CACHE"
+else
+  warn "Couldn't create the bucket $PACKAGE_CACHE. The first deploy tries again."
+fi
+pause
+
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "The deploy token for GitHub Actions"
 say "Every merge to main deploys the platform from GitHub Actions with this token. It lives"
 say "in a production environment that only main may use, so only the deploy job can read it."
@@ -409,7 +422,7 @@ if gh secret list --env production --json name --jq '.[].name' | grep -qx CLOUDF
   note "Keeping the deploy token it has."
 else
   open_url "https://dash.cloudflare.com/profile/api-tokens"
-  step "Create Token → the \"Edit Cloudflare Workers\" template."
+  step "Create Token → the \"Edit Cloudflare Workers\" template. Keep its Workers R2 Storage permission: deploys bind the Package cache."
   step "Account resources: Include → the Jigworks account."
   step "Zone resources: Include → Specific zone → $PLATFORM_ZONE, and add $APPS_DOMAIN the same way."
   step "Add one more permission: Zone → DNS → Edit, so a deploy can create $PLATFORM_HOST's record."
@@ -428,7 +441,7 @@ printf '%s' "$CLOUDFLARE_ACCOUNT_ID" | gh secret set CLOUDFLARE_ACCOUNT_ID --env
 WRITTEN_SECRET+=("CLOUDFLARE_ACCOUNT_ID (production)")
 pause
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "wrangler.jsonc"
 say "Everything only the Operator can do is done."
 missing=()
