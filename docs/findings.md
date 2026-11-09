@@ -947,6 +947,40 @@ Deployed, a Builder is reused by its ID, and its memory builds up across Builds 
 - **The Book Club check went past #94's "organiser's area and emails",** adding AI in a later Turn, to see an add-on added after others. Those two Turns cost $0.92.
 - **Two Turns after a Secret cost more than their size:** $0.22 for 1 step and $0.34 for 2, where the other such Turn cost $0.04. Not looked into.
 
+### Refusals shown, live (#104)
+
+**Verdict: yes.** On the deployed platform, a made-up Resend key no longer passes for a working one. The Turn the saved key started tried a sign-up with `request_preview`, read the refusal with `preview_logs` in the same step, said plainly that Resend refused the key, and asked for it again. Beside the app, the page showed "Your app couldn't send an email: Resend refused the key." without opening "See the code". "See the details" opened the Logs, "Hide" hid the note, and a later refusal brought it back.
+
+- **Platform:** the deployed platform at `main` (`c618c87`, with #120), checked on 2026-11-09 from the Developer's signed-in browser (Chrome, T3's preview tools) in the UK. Access didn't ask for a sign-in.
+- **Turns:** 3 Turns of Opus 5.5 in one Workspace made for the check, against a budget of $1. They cost $0.64 at the tail script's prices. The Workspace was deleted afterwards.
+- **The app:** a Workspace from the Worker + React Template, made through `POST /api/workspaces` to skip a first build, then "Make it a sign-up sheet for my book club's monthly meetings, and email me each time someone signs up."
+- **The key:** a made-up value in Resend's `re_` form, saved in the field `ask_for_secret` put on the page.
+
+| Turn | Asked | Add-ons added | Turn log | Steps | Cost |
+| --- | --- | --- | ---: | ---: | ---: |
+| The request | a question: where the emails go | – | 17.2 s | 4 | $0.14 |
+| The answer, a made-up address | a Secret (`RESEND_API_KEY`) | `email` | 71.7 s | 7 | $0.30 |
+| After the made-up key was saved | a Secret (`RESEND_API_KEY`), again | – | 13.1 s | 2 | $0.20 |
+
+**The Turn after the key:**
+- **Its step:** "Trying a sign-up email", with the detail "Resend refused the key".
+- **Its tools, in one step:** `request_preview` `POST /api/signups`, answered 201 with the kept sign-up, and `preview_logs`, which read "Resend refused the email: API key is invalid", logged 108 ms after the sign-up. Without #120's wait, a `preview_logs` in the same step read "The Preview has no logs yet." in the scripted test.
+- **Its reply:** "Resend said the key your app was given isn't valid, so no email was sent. Please go to resend.com/api-keys, create a new key (or copy an existing one in full, with nothing missing or extra), and save it here." It then asked for the key again with `ask_for_secret`, which the add-on's notes don't ask for, but suits.
+- **Against #94:** there, no Turn tried the app after a key was saved, and a reply said "an email should arrive".
+
+**The page:**
+- **Before the key,** the note didn't show: no error had been logged.
+- **After the key's Turn,** the note showed beside the app, above the jig: "Your app couldn't send an email: Resend refused the key.", with "See the details" and "Hide". `GET /preview/problems` gave the one line since the key was saved.
+- **See the details** opened the code with the Logs expanded and focused, in view, showing the refusal.
+- **Hide** took the note away and moved focus to "See the code". It stayed hidden across two reads of the problems (11 s).
+- **A sign-up of the Developer's own** in the Preview logged a second refusal, and the note came back within a read.
+
+### Found along the way
+
+- **The Agent's try is a real sign-up.** Its "Test sign-up", with the note "Checking the email works", stayed on the sheet the Developer sees, as "1 person coming". The note to the Agent says to try the app, not to tidy up after. Not ticketed: it's the Preview's data, apart from the Deployment's, and the Agent's reply didn't mention it.
+- **Why Turns after a Secret cost more than their size** (#94's "Not looked into"): the key's Turn wrote 35,912 of its 71,191 input tokens to Anthropic's prompt cache, because the key was saved 8 minutes after the Turn before, past the cache's 5 minutes. #94's $0.22 and $0.34 Turns may be the same, if their Secrets were saved as late; their times weren't kept.
+- **A Workspace made with a Template still ticked "Choosing a starting point" and "Naming your app"** ("Book Club Sign-Up"), though its name stayed "Refusal check 104". The check made the Workspace through the API, as earlier checks did. Not looked into.
+
 ## Stage 7: R2 as a shared Package cache (#19)
 
 **Verdict: yes, the cache stays (ADR 0020).** On the deployed platform, a tarball from the Package cache arrived in 86–138 ms, against 280–465 ms from npm, in six pairs of the same Package added to two Workspaces. That saved 0.14–0.34 s of each Package added, and the browser waited 93–347 ms less. The Durable Object's CPU didn't change: unpacking and checking a tarball cost the same from either. Resolving against the npm registry is still the larger part of a Template's install, and still happens every time, for the one-day minimum age. Storage per Workspace doesn't change, by design. Locally, the cache saved less: npm answered faster from the development machine than from the Durable Object.
