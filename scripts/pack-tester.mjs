@@ -4,10 +4,12 @@
 // The tests' own bundle is passed alongside it.
 //
 // Also bundles the Test bundler's Dynamic Worker (src/tester/bundler.ts),
-// with worker-bundler, into src/generated/test-bundler.txt. esbuild's
-// compiled module is passed alongside it, as `esbuild.wasm`. As for the
-// Checker, the bundle's first line records the module's SHA-256, so the
-// bundle, and the Dynamic Worker ID made from it, change whenever esbuild does.
+// with worker-bundler, into src/generated/test-bundler.txt, and the Builder's
+// (src/builder/worker.ts), with Tailwind too, into
+// src/generated/builder-worker.txt. esbuild's compiled module is passed
+// alongside each, as `esbuild.wasm`. As for the Checker, each bundle's first
+// line records the module's SHA-256, so the bundle, and the Dynamic Worker ID
+// made from it, change whenever esbuild does.
 //
 // Also packs the types the Check gives the tests' `vitest`, as JSON in
 // src/generated/vitest-types.txt: each path under node_modules/, to its text.
@@ -40,23 +42,32 @@ await build({
 });
 console.log(`wrote src/generated/tester-worker.txt (${(statSync(outfile).size / 1e3).toFixed(1)} kB)`);
 
-const bundlerFile = fileURLToPath(new URL("../src/generated/test-bundler.txt", import.meta.url));
+// The Test bundler and the Builder (src/builder/worker.ts) both run esbuild in
+// a Dynamic Worker of their own, and are packed alike.
 const esbuildWasm = readFileSync(join(repo, "node_modules/@cloudflare/worker-bundler/dist/esbuild.wasm"));
-await build({
-  banner: { js: `// esbuild.wasm sha256 ${createHash("sha256").update(esbuildWasm).digest("hex")}` },
-  absWorkingDir: repo,
-  entryPoints: ["src/tester/bundler.ts"],
-  outfile: bundlerFile,
-  bundle: true,
-  format: "esm",
-  platform: "browser",
-  target: "es2024",
-  minify: true,
-  external: ["cloudflare:workers"],
-  plugins: [esbuildWasmFromHost()],
-  logLevel: "warning",
-});
-console.log(`wrote src/generated/test-bundler.txt (${(statSync(bundlerFile).size / 1e3).toFixed(1)} kB)`);
+for (const [entry, name] of [
+  ["src/tester/bundler.ts", "test-bundler.txt"],
+  ["src/builder/worker.ts", "builder-worker.txt"],
+]) {
+  const file = fileURLToPath(new URL(`../src/generated/${name}`, import.meta.url));
+  await build({
+    banner: { js: `// esbuild.wasm sha256 ${createHash("sha256").update(esbuildWasm).digest("hex")}` },
+    absWorkingDir: repo,
+    entryPoints: [entry],
+    outfile: file,
+    bundle: true,
+    format: "esm",
+    platform: "browser",
+    target: "es2024",
+    minify: true,
+    external: ["cloudflare:workers"],
+    // The Builder takes Tailwind's packed stylesheets in (scripts/pack-tailwind.mjs runs first).
+    loader: { ".txt": "text" },
+    plugins: [esbuildWasmFromHost()],
+    logLevel: "warning",
+  });
+  console.log(`wrote src/generated/${name} (${(statSync(file).size / 1e3).toFixed(1)} kB)`);
+}
 
 const typesFile = fileURLToPath(new URL("../src/generated/vitest-types.txt", import.meta.url));
 const types = {

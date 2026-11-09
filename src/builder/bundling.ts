@@ -6,6 +6,72 @@ import type { BuildProblem } from "../shared/build-report";
 /** A Workspace's files and Packages: path relative to the Workspace root, to text. */
 export type Snapshot = ReadonlyMap<string, string>;
 
+/**
+ * A Workspace's files and Packages, read one at a time. A large app's
+ * Packages ran to 46.6 MB of text, and holding them all at once put the
+ * Workspace's Durable Object over its memory limit before esbuild started
+ * (#87, docs/findings.md).
+ */
+export interface FileSource {
+  /** Every path, once each. */
+  paths(): string[];
+  read(path: string): string | undefined;
+}
+
+export const filesOf = (snapshot: Snapshot): FileSource => ({ paths: () => [...snapshot.keys()], read: (path) => snapshot.get(path) });
+
+/** Package files a bundle never takes in: type declarations, source maps and Markdown. */
+export const notBundled = /^node_modules\/.*(\.d\.[cm]?ts|\.map|\.md)$/;
+
+// About a megabyte a chunk, so the sender holds no more than that at once.
+const chunkChars = 1 << 20;
+
+/**
+ * The files a bundle takes in, one `[path, text]` JSON line each, read only
+ * as the stream is. A stream isn't held to an RPC call's 32 MiB.
+ */
+export function bundledStream(files: FileSource): ReadableStream<Uint8Array> {
+  const paths = files.paths().filter((path) => !notBundled.test(path));
+  const encoder = new TextEncoder();
+  let next = 0;
+  return new ReadableStream({
+    pull(controller) {
+      const lines: string[] = [];
+      for (let size = 0; next < paths.length && size < chunkChars; ) {
+        const path = paths[next++]!;
+        const text = files.read(path);
+        if (text === undefined) continue;
+        const line = `${JSON.stringify([path, text])}\n`;
+        lines.push(line);
+        size += line.length;
+      }
+      // A file larger than a chunk still goes in chunks.
+      const bytes = encoder.encode(lines.join(""));
+      for (let at = 0; at < bytes.length; at += chunkChars) controller.enqueue(bytes.slice(at, at + chunkChars));
+      if (next >= paths.length) controller.close();
+    },
+  });
+}
+
+/** The snapshot a `bundledStream` carries. */
+export async function snapshotFrom(stream: ReadableStream<Uint8Array>): Promise<Map<string, string>> {
+  const snapshot = new Map<string, string>();
+  // A file's line can span many chunks, so its pieces wait here until its end.
+  let pieces: string[] = [];
+  for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
+    let start = 0;
+    for (let end = chunk.indexOf("\n"); end !== -1; end = chunk.indexOf("\n", start)) {
+      pieces.push(chunk.slice(start, end));
+      const [path, text] = JSON.parse(pieces.join("")) as [string, string];
+      snapshot.set(path, text);
+      pieces = [];
+      start = end + 1;
+    }
+    if (start < chunk.length) pieces.push(chunk.slice(start));
+  }
+  return snapshot;
+}
+
 /** Changes when the same files bundle differently, so a Build's hash does too. 2: no `node` conditions. */
 export const bundlingVersion = 2;
 

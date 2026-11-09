@@ -9,10 +9,7 @@ import type { Snapshot } from ".";
 // plugins (ADR 0007). Any other stylesheet is plain CSS, which the bundler
 // combines with its @imports.
 
-const tailwind = JSON.parse(packedTailwind) as { version: string; stylesheets: Record<string, string> };
-
-/** The platform's Tailwind version, which goes into every Build's hash. */
-export const tailwindVersion = tailwind.version;
+const tailwind = JSON.parse(packedTailwind) as { stylesheets: Record<string, string> };
 
 /** What the Build makes from `index.html` before the bundler runs, or why it can't. */
 export type FrontEnd =

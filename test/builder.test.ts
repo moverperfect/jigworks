@@ -1,5 +1,9 @@
+import { env } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
-import { build, inProcessBuilder } from "../src/builder";
+import { build, type Snapshot } from "../src/builder";
+import { bundledStream, bundlingVersion, filesOf, snapshotFrom } from "../src/builder/bundling";
+import { hashOf, tailwindVersion } from "../src/builder/hash";
+import { cachingBuilder, isolatedBuilder } from "../src/builder/isolated";
 
 const project = (source: string) =>
   new Map([
@@ -68,12 +72,12 @@ describe("build", () => {
   });
 
   it("reuses a recent Build of the same inputs, going back and forth", async () => {
-    const builder = inProcessBuilder();
-    const first = project('export default { fetch: () => new Response("one") };');
-    const second = project('export default { fetch: () => new Response("two") };');
+    const builder = isolatedBuilder(env.LOADER);
+    const first = filesOf(project('export default { fetch: () => new Response("one") };'));
+    const second = filesOf(project('export default { fetch: () => new Response("two") };'));
     const built = [await builder.build(first), await builder.build(second), await builder.build(first)];
-    expect(built.map((result) => result.cached)).toEqual([false, false, true]);
-    expect(built[2]!.hash).toBe(built[0]!.hash);
+    expect(built.map(({ cached }) => cached)).toEqual([false, false, true]);
+    expect(built[2]!.result.hash).toBe(built[0]!.result.hash);
   });
 
   it("allows the runtime's own modules", async () => {
@@ -175,5 +179,91 @@ describe("build", () => {
   it("reports a syntax error with its location", async () => {
     const result = await build(project("export default { fetch: () => new Response( };"));
     expect(result).toMatchObject({ ok: false, errors: [{ file: "src/index.ts", line: 1, column: 45 }] });
+  });
+});
+
+describe("Builds in a Dynamic Worker (#87)", () => {
+  // The hash as it was made before #87, from every file at once.
+  const hashAtOnce = async (snapshot: Snapshot) => {
+    const parts = [`tailwindcss ${tailwindVersion}`, `bundling ${bundlingVersion}`];
+    for (const path of [...snapshot.keys()].sort()) parts.push(path, snapshot.get(path)!);
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(parts.join("\0")));
+    return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+  };
+
+  it("hashes the files as before, a part at a time", async () => {
+    const files = project('export const café = "naïve ☕";\n');
+    // Past the megabyte at which the hash takes in a part, with text either side of it.
+    files.set("node_modules/big/index.js", `// ${"é".repeat(700_000)}\n`);
+    files.set("node_modules/big/index.d.ts", "export {};\n");
+    files.set("src/z.ts", "export const z = 1;\n");
+    expect(await hashOf(filesOf(files))).toBe(await hashAtOnce(files));
+    expect(await hashOf(filesOf(new Map()))).toBe(await hashAtOnce(new Map()));
+  });
+
+  it("sends the files a bundle takes in, and no type declarations, source maps or Markdown", async () => {
+    const files = project("export {};\n");
+    files.set("src/notes.md", "# Kept\n");
+    files.set("node_modules/a/index.js", 'export const a = "line one\\nline two";\n');
+    files.set("node_modules/a/index.d.ts", "export declare const a: string;\n");
+    files.set("node_modules/a/index.js.map", "{}");
+    files.set("node_modules/a/README.md", "# Left behind\n");
+    const sent = await snapshotFrom(bundledStream(filesOf(files)));
+    expect([...sent.keys()].sort()).toEqual(["node_modules/a/index.js", "package.json", "src/index.ts", "src/notes.md", "wrangler.jsonc"]);
+    expect(sent.get("node_modules/a/index.js")).toBe(files.get("node_modules/a/index.js"));
+  });
+
+  it("makes the same Build as one made in this isolate", async () => {
+    const files = project('import { where } from "split";\nexport default { fetch: () => new Response(where) };');
+    files.set("node_modules/split/package.json", JSON.stringify({ name: "split", exports: { ".": "./index.js" } }));
+    files.set("node_modules/split/index.js", 'export const where = "here";\n');
+    files.set("node_modules/split/index.d.ts", "export declare const where: string;\n");
+    const { result, cached, wasmMemoryBytes, receivingMs } = await isolatedBuilder(env.LOADER).build(filesOf(files));
+    expect(cached).toBe(false);
+    expect(result).toEqual(await build(files));
+    expect(result.hash).toBe(await hashAtOnce(files));
+    expect(wasmMemoryBytes.esbuild).toBeGreaterThan(0);
+    expect(receivingMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("gets more than an RPC call's 32 MiB of files to the Builder", async () => {
+    const files = project('export default { fetch: () => new Response("hi") };');
+    for (let i = 0; i < 40; i++) files.set(`node_modules/big/part${i}.js`, `export const part = "${String(i % 10).repeat(1_000_000)}";\n`);
+    const { result } = await isolatedBuilder(env.LOADER).build(filesOf(files));
+    expect(result).toMatchObject({ ok: true });
+  });
+
+  it("reports a Builder that fails, or never answers, as a failed Build, and tries again next time", async () => {
+    const broken = {
+      get: () => {
+        throw new Error("Worker exceeded memory limit.");
+      },
+    } as unknown as WorkerLoader;
+    const files = filesOf(project("export {};\n"));
+    const builder = isolatedBuilder(broken);
+    expect(await builder.build(files)).toMatchObject({
+      cached: false,
+      result: { ok: false, errors: [{ message: "The Build couldn't run: Worker exceeded memory limit.", file: null, line: null, column: null }] },
+    });
+    expect((await builder.build(files)).cached).toBe(false);
+
+    const silent = { get: () => ({ getEntrypoint: () => ({ build: () => new Promise(() => {}) }) }) } as unknown as WorkerLoader;
+    // Real timers: this isolate runs the platform's Durable Objects too.
+    expect((await isolatedBuilder(silent, 100).build(files)).result).toMatchObject({
+      ok: false,
+      errors: [{ message: "The Build couldn't run: it took more than 0.1 seconds." }],
+    });
+  });
+
+  it("keeps the Builds it made, and reuses them without esbuild", async () => {
+    let made = 0;
+    const builder = cachingBuilder(async (_, hash) => {
+      made++;
+      return { result: { ok: false, hash, errors: [], warnings: [], missingPackages: [] }, wasmMemoryBytes: { esbuild: 1 }, receivingMs: 1 };
+    });
+    const files = filesOf(project("export {};\n"));
+    await builder.build(files);
+    expect(await builder.build(files)).toMatchObject({ cached: true, wasmMemoryBytes: {}, receivingMs: null });
+    expect(made).toBe(1);
   });
 });

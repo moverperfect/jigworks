@@ -2,13 +2,15 @@
 // bundles a Workspace's tests with esbuild in an isolate of its own, so
 // esbuild's memory, which it never gives back, stays out of the Workspace's
 // Durable Object (ADR 0010). The host passes esbuild's compiled module in as
-// `esbuild.wasm`, where worker-bundler imports it from.
+// `esbuild.wasm`, where worker-bundler imports it from, and sends the files
+// as a stream, as for a Build (see `bundledStream`).
 import { WorkerEntrypoint } from "cloudflare:workers";
+import { snapshotFrom } from "../builder/bundling";
 import { bundleTests, type TestBundleResult } from "../builder/tests";
 
 export class TestBundler extends WorkerEntrypoint {
-  bundle(files: Record<string, string>, testFiles: string[], virtualModules: Record<string, string>): Promise<TestBundleResult> {
-    return bundleTests(new Map(Object.entries(files)), testFiles, virtualModules);
+  async bundle(files: ReadableStream<Uint8Array>, testFiles: string[], virtualModules: Record<string, string>): Promise<TestBundleResult> {
+    return bundleTests(await snapshotFrom(files), testFiles, virtualModules);
   }
 }
 
