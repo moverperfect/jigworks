@@ -12,7 +12,7 @@ The experiment asks whether Workers isolates alone can be where an application i
 - **Tests (stage 6):** vitest-style tests run in Dynamic Workers, for the Developer, the Agent and at the end of each Turn: 0.6–1.6 s from the browser once warm, and 2.6–3.6 s for the first run after a deploy.
 
 **The caveats:**
-- **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks, the tests' bundling and Builds run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), the React Template's third test run did (stage 6), and so did every Build of a large app (#87).
+- **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks, the tests' bundling and Builds run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), the React Template's third test run did (stage 6), and so did every Build of a large app (#87). What an app can build is limited by the Packages it bundles: a small app with a UI kit's Packages took esbuild near the limit by itself (#99).
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
 - **Apps get Durable Objects and nothing else** for storage (ADR 0006), and binary assets are served damaged (ADR 0014, #31).
 - **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
@@ -832,10 +832,66 @@ On 2026-11-09 after #98's deploy (`939735a`), the same ten rounds in two Workspa
 ### Found along the way
 
 - **A Build that resets the Durable Object in an alarm runs again every 30 s, without end.** The Build after a save is an Agents SDK schedule; after the first reset, it was tried again every 30 s from 07:32 until the Workspace was deleted at 09:35. With Builds in the Builder, a Build no longer resets the object, but anything else that does in an alarm would loop the same way. Not looked into.
-- **esbuild's Go heap can't be capped from outside.** esbuild's browser build makes its Go runtime with an empty environment, so `GOGC` can't be set without patching esbuild at pack time.
+- **esbuild's Go heap can't be capped from outside.** esbuild's browser build makes its Go runtime with an empty environment, so `GOGC` can't be set without patching esbuild at pack time. #99 does that, with `GOGC=25`.
 - **The test bundle had the same limits:** `runTests` also held every Package file, and its call to the Test bundler couldn't carry more than 32 MiB. It now gets the same stream.
 - **Saves made at the same time leave extra Builds scheduled.** Each save schedules a Build a second later, and cancels only the one whose ID it stored, so saves that overlap, as the script's six at a time do, each leave one. In the large app, 44 Builds that saves scheduled failed in all, and the leftovers ran about one every 6 s for 80 s after the last round. In the moderate app they were reused Builds and cost nothing. The page saves one file at a time. Not looked into.
 - **Local workerd does enforce the RPC limit:** one call with 40 MB of arguments failed with "Serialized RPC arguments or return values are limited to 32MiB". A stream of more went through.
+
+## How large an app can build (#99)
+
+**Verdict, locally: what decides the limit is the Packages an app bundles, not how much code it has, and starting esbuild with `GOGC=25` lowers its peak by a fifth to a quarter. Where the limit sits deployed, before and after, is still to measure (below).** A Build that goes over the Builder's memory limit twice, the second time in a new isolate, now fails with "Your app has grown too big to build here. Try removing a ready-made part.", which the page shows as it is. The Agent is told it once, with instructions to tell the Developer in plain words and suggest a ready-made part the app could do without, rather than remove one itself. The Turn then ends and is undone, as any Turn that leaves the app broken is (`test/conversation.test.ts`). The second try is because a Builder is shared: another Workspace's Build there, or earlier Builds' memory, can put a Build that fits over the limit (ADR 0010).
+
+### How it was measured
+
+- **Platform:** `wrangler dev` on a shared development machine, on 2026-11-09. Local workerd enforces no memory limit, so these figures are esbuild's linear memory in the Builder (#87), not outcomes.
+- **The apps:** `scripts/large-workspace.mjs`, with three new shapes between the moderate and the large:
+
+| Shape | Components, pages, routes | Packages added | Packages after resolution | Files sent to the Builder |
+| --- | --- | --- | ---: | ---: |
+| `moderate` | 60, 15, 5 | date-fns | 8 | 5,904 |
+| `small` | 6, 2, 1 | the UI kit (@mui/material, @emotion/react, @emotion/styled) and date-fns | 85 | 11,109 |
+| `ui` | 60, 15, 5 | the same | 85 | 11,180 |
+| `half` | 60, 15, 5 | the UI kit, date-fns and recharts | 122 | 16,913 |
+| `large` | 120, 30, 10 | the same | 122 | 16,993 |
+
+- **One Build at a time:** for the tables below, a change made only for measuring gave each Build a new Builder, so each figure is that Build's own peak, with nothing kept from earlier Builds. The same change built the front end alone or the Worker alone, and passed esbuild's Go runtime an environment. The rounds in a reused Builder ran on the change as it ships.
+
+### esbuild's peak, by app
+
+Each Build in a new Builder, 2–7 Builds per figure:
+
+| Shape | Before | Front end alone | Worker alone | With `GOGC=25` |
+| --- | ---: | ---: | ---: | ---: |
+| `moderate` | 46–48 MB | 47 MB | 13 MB | 36 MB |
+| `small` | 110–111 MB | | | 82 MB |
+| `ui` | 149–151 MB | 151 MB | 13 MB | 111 MB |
+| `half` | 168–195 MB | | | 154 MB |
+| `large` | 176–209 MB | 180–208 MB | 14 MB | 158 MB |
+
+- **The Packages decide it:** six components with the UI kit took esbuild to 110 MB, against 47 MB for sixty without it, and halving the large app saved little. Importing from `@mui/material` has esbuild read the whole kit, whatever the app uses of it.
+- **Build times changed little with `GOGC=25`,** as the API caller saw them, on a machine shared with other work: `moderate` 4.5–4.9 s either way, `small` 13.3–13.5 s before and 12.1 s after, `ui` 18.2–19.6 s and 17.8–18.3 s, `half` 20.9–22.2 s and 23.3–23.8 s, `large` 23.0 s and 24.6 s.
+
+### What lowers it
+
+- **Building the front end and the Worker in separate calls doesn't help.** worker-bundler's `createApp` already bundles them in two esbuild calls, one after the other. Each alone, in a Builder of its own, the front end peaked where the whole Build did, and the Worker at 13–14 MB. Not kept.
+- **There were no source maps to leave out.** worker-bundler makes them only when asked (`sourcemap`, off by default), and the Builder never asks. Leaving out minifying instead raised `moderate` from 47 MB to 60 MB.
+- **`GOGC=25` helps:** Go collects its heap once it has grown by a quarter since the last collection, not once it has doubled, and esbuild's linear memory only grows, so its peak falls with it. Kept, for the Builder and the Test bundler, by patching esbuild's Go runtime when they're packed (`scripts/pack-tester.mjs`). In `small`, `GOGC=50` gave 103 MB and `GOGC=10` 82 MB, as `GOGC=25` did: that's about what's live. `GOMEMLIMIT=64MiB` gave 84 MB; set below what's live, at 32 or 48 MiB, it collected without end, and the Build hit the 60-second timeout.
+
+### In a reused Builder
+
+Deployed, a Builder is reused by its ID, and its memory builds up across Builds (#87). Ten rounds of the script's save, Check and Build in `small`, each in one Builder:
+
+| | Round 1 | Round 2 | Round 3 | Rounds 4–10 | Build, as the caller waits |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Before | 99 MB | 108 MB | 121 MB | 121 MB | 13.0–13.8 s |
+| With `GOGC=25` | 82 MB | 91 MB | 91 MB | 91–93 MB | 11.9–14.0 s |
+
+### Where the limit sits
+
+- **Deployed, before:** `moderate` builds, with esbuild at 49–59 MB in a reused Builder, and `large` doesn't (#87). A Builder's 128 MB also holds what esbuild doesn't: the files it's sent, held as text, and the JavaScript heap, which workerd doesn't report.
+- **So, locally, before:** apps without the UI kit, like `moderate`, fit; `small`, with esbuild at 99–121 MB, very likely doesn't, and nor does any larger shape.
+- **With `GOGC=25`:** `small` peaks at 82–93 MB, which may fit; `ui` at 111 MB very likely doesn't. Whether a small app with the UI kit now builds deployed is the question the deployed check answers.
+- **To measure deployed,** from the Developer's signed-in browser with the tail running, as for #87: `small`, then `ui`, before the deploy and after it, with the outcome and esbuild's memory of each Build. Access asked for a sign-in on 2026-11-09, so neither has run yet.
 
 ## Add-ons (#88)
 

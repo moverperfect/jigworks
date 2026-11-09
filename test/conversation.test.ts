@@ -2,6 +2,8 @@ import type { ToolCallResultContext } from "@cloudflare/think";
 import { runInDurableObject } from "cloudflare:test";
 import { env } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
+import type { Builder } from "../src/builder";
+import { cachingBuilder, tooBigToBuild } from "../src/builder/isolated";
 import type { PackageStatus } from "../src/packages";
 import { restartedDuringTurn, type ConversationState, type LastTurn } from "../src/shared/conversation";
 import type { CheckReport, Workspace } from "../src/workspace";
@@ -149,6 +151,20 @@ describe("a Turn", () => {
     expect(textOf(fromCheck[0]!)).toContain('imports "left-pad"');
     const report = await (await call(`/api/workspaces/${workspace.id}/build`)).json<{ ok: boolean }>();
     expect(report.ok).toBe(true);
+  });
+
+  it("tells the Agent once when the app is too big to build, which no edit of its own fixes", async () => {
+    const workspace = await create("Too big");
+    await runInDurableObject(env.WORKSPACES.getByName(workspace.id), (instance) => {
+      (instance as unknown as { builder: Builder }).builder = cachingBuilder(async () => {
+        throw new Error("Worker exceeded memory limit.");
+      });
+    });
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:say-hello] Add charts");
+    expect(ended).toMatchObject({ status: "completed", buildErrors: 1, retries: 1, restored: true });
+    const fromCheck = (await history(workspace.id)).filter((message) => message.metadata?.from === "check");
+    expect(fromCheck.map((message) => message.metadata)).toEqual([{ from: "check", errors: 0, buildErrors: 1, retry: 1 }]);
+    expect(textOf(fromCheck[0]!)).toContain(tooBigToBuild);
   });
 
   it("ends with the tests, whose failures don't ask for a retry or undo the Turn, but stay in the problems list", async () => {

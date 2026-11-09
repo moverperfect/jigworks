@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 import { build, type Snapshot } from "../src/builder";
 import { bundledStream, bundlingVersion, filesOf, snapshotFrom } from "../src/builder/bundling";
 import { hashOf, tailwindVersion } from "../src/builder/hash";
-import { cachingBuilder, isolatedBuilder } from "../src/builder/isolated";
+import { cachingBuilder, isolatedBuilder, tooBigToBuild } from "../src/builder/isolated";
+import builderWorker from "../src/generated/builder-worker.txt";
+import testBundler from "../src/generated/test-bundler.txt";
 
 const project = (source: string) =>
   new Map([
@@ -213,6 +215,10 @@ describe("Builds in a Dynamic Worker (#87)", () => {
     expect(sent.get("node_modules/a/index.js")).toBe(files.get("node_modules/a/index.js"));
   });
 
+  it("starts esbuild's Go runtime with GOGC=25 in the Builder and the Test bundler, to lower its peak memory", () => {
+    for (const packed of [builderWorker, testBundler]) expect(packed.split('this.env={GOGC:"25"}')).toHaveLength(2);
+  });
+
   it("makes the same Build as one made in this isolate", async () => {
     const files = project('import { where } from "split";\nexport default { fetch: () => new Response(where) };');
     files.set("node_modules/split/package.json", JSON.stringify({ name: "split", exports: { ".": "./index.js" } }));
@@ -243,7 +249,7 @@ describe("Builds in a Dynamic Worker (#87)", () => {
     const builder = isolatedBuilder(broken);
     expect(await builder.build(files)).toMatchObject({
       cached: false,
-      result: { ok: false, errors: [{ message: "The Build couldn't run: Worker exceeded memory limit.", file: null, line: null, column: null }] },
+      result: { ok: false, errors: [{ message: tooBigToBuild, file: null, line: null, column: null }] },
     });
     expect((await builder.build(files)).cached).toBe(false);
 
@@ -253,6 +259,26 @@ describe("Builds in a Dynamic Worker (#87)", () => {
       ok: false,
       errors: [{ message: "The Build couldn't run: it took more than 0.1 seconds." }],
     });
+  });
+
+  it("tries once more after a Builder goes over its memory limit, which another Workspace's Build can cause, before saying the app is too big", async () => {
+    const failures = [new Error("Worker exceeded memory limit.")];
+    let made = 0;
+    const builder = cachingBuilder(async (_, hash) => {
+      made++;
+      const failure = failures.shift();
+      if (failure) throw failure;
+      return { result: { ok: false, hash, errors: [], warnings: [], missingPackages: [] }, wasmMemoryBytes: {}, receivingMs: null };
+    });
+    expect((await builder.build(filesOf(project("export {};\n")))).result).toMatchObject({ errors: [] });
+    expect(made).toBe(2);
+
+    // Only memory: anything else fails at once.
+    failures.push(new Error("Network connection lost."));
+    expect((await builder.build(filesOf(project("export { a };\n")))).result).toMatchObject({
+      errors: [{ message: "The Build couldn't run: Network connection lost.", file: null, line: null, column: null }],
+    });
+    expect(made).toBe(3);
   });
 
   it("keeps the Builds it made, and reuses them without esbuild", async () => {

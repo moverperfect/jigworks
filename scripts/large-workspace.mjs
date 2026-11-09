@@ -3,14 +3,14 @@
 // (#87). The large app is the Worker + React Template with 120 components, 30
 // pages and 10 server routes, using a charting library, a date library and a
 // UI kit. The moderate one has 60 components, 15 pages and 5 routes, with the
-// date library alone. Nothing here calls the Agent, so no Turns on the real
-// model run.
+// date library alone. Three more sit between them (#99): see `shapes`.
+// Nothing here calls the Agent, so no Turns on the real model run.
 //
 // It has no imports, so a browser can run it too. Locally, against
 // `pnpm platform:dev` (`.dev.vars` as in docs/development.md):
 //
-//   node scripts/large-workspace.mjs http://127.0.0.1:8787 make [large|moderate]
-//   node scripts/large-workspace.mjs http://127.0.0.1:8787 builds <workspace id> [large|moderate]
+//   node scripts/large-workspace.mjs http://127.0.0.1:8787 make [large|half|ui|small|moderate]
+//   node scripts/large-workspace.mjs http://127.0.0.1:8787 builds <workspace id> [large|half|ui|small|moderate]
 //   node scripts/large-workspace.mjs http://127.0.0.1:8787 turn <workspace id>
 //   node scripts/large-workspace.mjs http://127.0.0.1:8787 delete <workspace id>
 //
@@ -35,17 +35,25 @@ const addedPackages = {
   recharts: "3.10.1",
 };
 
+/** The added Packages but the charting library: the UI kit and the date library. */
+const { recharts: _, ...withoutCharts } = addedPackages;
+
 const kinds = ["Chart", "Dates", "Form", "Table", "Stats", "Notice"];
 
-/** The two apps: their size, the Packages they add, their components' kinds, and whether they use the UI kit. */
+/** The apps: their size, the Packages they add, their components' kinds, and whether they use the UI kit. */
 const shapes = {
   large: { components: 120, pages: 30, routes: 10, packages: addedPackages, kinds, ui: true },
   moderate: { components: 60, pages: 15, routes: 5, packages: { "date-fns": addedPackages["date-fns"] }, kinds: ["Stats"], ui: false },
+  // Between the two, to find where Builds stop fitting (#99): the large app halved, the moderate one with the UI kit
+  // instead of the charts, and a small app with the UI kit.
+  half: { components: 60, pages: 15, routes: 5, packages: addedPackages, kinds, ui: true },
+  ui: { components: 60, pages: 15, routes: 5, packages: withoutCharts, kinds: kinds.filter((kind) => kind !== "Chart"), ui: true },
+  small: { components: 6, pages: 2, routes: 1, packages: withoutCharts, kinds: ["Form"], ui: true },
 };
 let counts = shapes.large;
 /** Every step below makes the app of this shape. */
 const use = (shape) => {
-  if (!shapes[shape]) throw new Error(`No app shape "${shape}": use large or moderate.`);
+  if (!shapes[shape]) throw new Error(`No app shape "${shape}": use ${Object.keys(shapes).join(", ")}.`);
   counts = shapes[shape];
 };
 

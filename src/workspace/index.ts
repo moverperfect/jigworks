@@ -38,7 +38,7 @@ import {
   type SignInDestination,
 } from "../apphost";
 import type { Build, Builder, FileSource } from "../builder";
-import { isolatedBuilder } from "../builder/isolated";
+import { isolatedBuilder, tooBigToBuild } from "../builder/isolated";
 import { checkInDynamicWorker } from "../checker/isolated";
 import { isHidden, normalisePath, storeFiles, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
@@ -982,7 +982,8 @@ export class Workspace extends Think<Env, ConversationState> {
    * One Turn: the Developer's message, then a Check and a Build, then up to
    * three more tries while either has errors, or the new Preview logged
    * errors or warnings when the platform tried it, and the Turn has steps
-   * left. Each try is a Think turn of its own.
+   * left, but only one for a Build too big to make. Each try is a Think turn
+   * of its own.
    */
   private async runDeveloperTurn(request: TurnRequest, startedAt: string): Promise<void> {
     const started = Date.now();
@@ -1004,7 +1005,10 @@ export class Workspace extends Think<Env, ConversationState> {
       const tryPreview = (checked: CheckAndBuild | null) => (checked && canRetry() ? this.tryNewPreview(checked.build) : null);
       ended = await this.endOfTurn();
       let previewTry = await tryPreview(ended);
-      while (ended && canRetry() && (broken(ended) || previewTry?.problems.length)) {
+      // Told once that the app is too big to build, the Agent can't fix it without the Developer: the same app only fails again.
+      let toldTooBig = false;
+      while (ended && canRetry() && (broken(ended) || previewTry?.problems.length) && !(toldTooBig && tooBig(ended))) {
+        toldTooBig ||= tooBig(ended);
         lastTurn.retries += 1;
         // Those the Preview's problems led to on their own.
         if (!broken(ended)) preview.previewRetries += 1;
@@ -1165,6 +1169,8 @@ type CheckAndBuild = { check: CheckReport; build: BuildReport };
 
 /** Whether a Turn's last Check and Build leave the app broken. Failing tests don't (ADR 0018). */
 const broken = ({ check, build }: CheckAndBuild) => check.counts.error > 0 || !build.ok;
+/** Whether the Build failed because the app is too big to build (see `tooBigToBuild`). */
+const tooBig = ({ build }: CheckAndBuild) => build.errors.some(({ message }) => message === tooBigToBuild);
 
 /** The files' copy for a Turn (see `startTurn`). */
 interface TurnCopy {
