@@ -13,3 +13,6 @@ export interface AppLogEntry {
   level: string;
   message: string;
 }
+
+/** Whether a log line is a warning, rather than an error, among the Preview's problems (see `AppHost.problemsSince`). */
+export const isWarning = (entry: AppLogEntry) => entry.level === "warn";

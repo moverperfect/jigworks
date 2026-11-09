@@ -20,6 +20,7 @@ import {
   fixMessage,
   developerMessage,
   instructions,
+  type PreviewTry,
   stopAfterQuestion,
   type TurnRequest,
   summarise,
@@ -42,6 +43,7 @@ import { checkInDynamicWorker } from "../checker/isolated";
 import { isHidden, normalisePath, storeFiles, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
+import { isWarning } from "../shared/app-logs";
 import type { BuildReport } from "../shared/build-report";
 import type { Deployment } from "../shared/deployment";
 import type { Secret } from "../shared/secret";
@@ -95,11 +97,15 @@ const developerKey = "developer";
 const appStartedKey = "app:started";
 // Which Turn the files were last copied for, and whether the app had started then, so the Turn can be undone (ADR 0018).
 const copyKey = "turn:copy";
+// The hash of the last Build whose Preview the platform tried for the Agent, so it's tried once.
+const previewTriedKey = "preview:tried";
+// How long trying a new Preview waits for its answer to GET /.
+const previewTrySeconds = 5;
 // The add-ons the latest Turn to add any added, for its log line, so a restart doesn't lose them.
 const turnAddonsKey = "turn:addons";
 // What the Workspace keeps about its app, which undoing the Turn that started the app forgets.
 // A new key about the app belongs here too.
-const appKeys = [appStartedKey, appLabelKey, appSentKey, checkKey, buildKey, testKey];
+const appKeys = [appStartedKey, appLabelKey, appSentKey, checkKey, buildKey, testKey, previewTriedKey];
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
 const reportBudgetBytes = 1_000_000;
@@ -158,6 +164,8 @@ export class Workspace extends Think<Env, ConversationState> {
   private packageWork: Promise<unknown> = Promise.resolve();
   // Token use across the running Turn's model calls, for its log line.
   private turnUsage: TurnUsage | null = null;
+  // The running Turn's tries of the Preview, for its log line.
+  private turnPreview: TurnPreview | null = null;
   private builder: Builder | null = null;
   // The model's tool calls that are running, other than check and build, and
   // what's waiting for them to finish (see `otherToolsFinished`).
@@ -249,7 +257,8 @@ export class Workspace extends Think<Env, ConversationState> {
       },
       build: async () => {
         await this.otherToolsFinished();
-        return this.buildInItsOwnCall("agent");
+        const report = await this.buildInItsOwnCall("agent");
+        return { report, previewTry: await this.tryNewPreview(report) };
       },
       test: async (files) => {
         await this.otherToolsFinished();
@@ -675,6 +684,34 @@ export class Workspace extends Think<Env, ConversationState> {
     if (label) await this.env.APP_HOSTS.getByName(label).remove(this.name);
   }
 
+  /** The Preview's errors and warnings since it took Build `hash`, or null if it runs another (see `AppHost.problemsSince`). */
+  async previewProblems(hash: string): Promise<AppLogEntry[] | null> {
+    return this.appHost().problemsSince(hash);
+  }
+
+  /**
+   * After a Build for the Agent or a Turn: if it changed the Preview, which
+   * the Agent hasn't seen tried, sends the Preview `GET /` so it logs
+   * something, waits a few seconds for those logs and for front-end errors
+   * from an open Preview pane, and returns what it answered and its errors
+   * and warnings since that Build. Otherwise null, as for a failed Build.
+   */
+  private async tryNewPreview(build: BuildReport): Promise<PreviewTry | null> {
+    if (!build.ok || this.ctx.storage.kv.get<string>(previewTriedKey) === build.hash) return null;
+    this.ctx.storage.kv.put(previewTriedKey, build.hash);
+    const answer = await this.appHost().requestPreview({ method: "GET", path: "/" }, previewTrySeconds);
+    await scheduler.wait(this.env.PREVIEW_LOGS_WAIT_MS);
+    const problems = await this.previewProblems(build.hash);
+    if (!problems) return null;
+    if (this.turnPreview) {
+      const warnings = problems.filter(isWarning).length;
+      this.turnPreview.previewTries += 1;
+      this.turnPreview.previewWarnings += warnings;
+      this.turnPreview.previewErrors += problems.length - warnings;
+    }
+    return { status: answer.unanswered ? null : answer.status, waitSeconds: previewTrySeconds, problems };
+  }
+
   /** The Preview's newest server logs and front-end errors, for the Agent's `preview_logs` tool. */
   async previewLogs(limit?: number): Promise<AppLogEntry[]> {
     return this.appHost().logs("preview", limit);
@@ -908,13 +945,15 @@ export class Workspace extends Think<Env, ConversationState> {
   }
 
   /**
-   * One Turn: the Developer's message, then a Check, then up to three more
-   * tries while the Check has errors and the Turn has steps left. Each try is
-   * a Think turn of its own.
+   * One Turn: the Developer's message, then a Check and a Build, then up to
+   * three more tries while either has errors, or the new Preview logged
+   * errors or warnings when the platform tried it, and the Turn has steps
+   * left. Each try is a Think turn of its own.
    */
   private async runDeveloperTurn(request: TurnRequest, startedAt: string): Promise<void> {
     const started = Date.now();
     const usage: TurnUsage = (this.turnUsage = { steps: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    const preview: TurnPreview = (this.turnPreview = { previewTries: 0, previewErrors: 0, previewWarnings: 0, previewRetries: 0 });
     const lastTurn = newLastTurn();
     let ended: CheckAndBuild | null = null;
     try {
@@ -923,20 +962,22 @@ export class Workspace extends Think<Env, ConversationState> {
       // The last Turn's files may have been put back, which the Agent can't otherwise know.
       const undone = this.state.lastTurn?.restored === true;
       let result = await this.saveMessages([developerMessage(request, changed, startedAt, undone)]);
-      ended = await this.endOfTurn();
-      while (
-        ended &&
+      // Whether the Agent can have another try, if this one's Check, Build or Preview calls for it.
+      const canRetry = () =>
         // A Turn that ends with a question gets its Check and Build, but no retries (ADR 0018).
-        !askedIn(this.messages.at(-1)) &&
-        result.status === "completed" &&
-        broken(ended) &&
-        lastTurn.retries < maxRetries &&
-        usage.steps < turnSteps
-      ) {
+        !askedIn(this.messages.at(-1)) && result.status === "completed" && lastTurn.retries < maxRetries && usage.steps < turnSteps;
+      // Only when the Agent could act on it: a Build left untried is tried after the next Turn.
+      const tryPreview = (checked: CheckAndBuild | null) => (checked && canRetry() ? this.tryNewPreview(checked.build) : null);
+      ended = await this.endOfTurn();
+      let previewTry = await tryPreview(ended);
+      while (ended && canRetry() && (broken(ended) || previewTry?.problems.length)) {
         lastTurn.retries += 1;
+        // Those the Preview's problems led to on their own.
+        if (!broken(ended)) preview.previewRetries += 1;
         this.setStage("working");
-        result = await this.saveMessages([fixMessage(ended.check, ended.build, lastTurn.retries)]);
+        result = await this.saveMessages([fixMessage(ended.check, ended.build, lastTurn.retries, previewTry)]);
         ended = await this.endOfTurn();
+        previewTry = await tryPreview(ended);
       }
       lastTurn.status = result.status;
       lastTurn.error = result.error ?? null;
@@ -948,7 +989,8 @@ export class Workspace extends Think<Env, ConversationState> {
       ended = await this.endOfTurn().catch(() => null);
     } finally {
       this.turnUsage = null;
-      await this.endTurn(startedAt, lastTurn, ended, { durationMs: Date.now() - started, ...usage });
+      this.turnPreview = null;
+      await this.endTurn(startedAt, lastTurn, ended, { durationMs: Date.now() - started, ...usage, ...preview });
     }
   }
 
@@ -1100,7 +1142,19 @@ interface TurnCopy {
 }
 
 /** What a Turn's log line adds to its outcome. */
-type TurnLog = Partial<TurnUsage> & { durationMs?: number };
+type TurnLog = Partial<TurnUsage> & Partial<TurnPreview> & { durationMs?: number };
+
+/**
+ * A Turn's tries of a new Preview, for its log line: how many, the errors
+ * and warnings they found, and how many of the Turn's retries they led to on
+ * their own. Named for the log line, which spreads them beside `TurnUsage`.
+ */
+interface TurnPreview {
+  previewTries: number;
+  previewErrors: number;
+  previewWarnings: number;
+  previewRetries: number;
+}
 
 /** The add-ons the Turn that started at `startedAt` added (see `turnAddonsKey`). */
 interface TurnAddons {

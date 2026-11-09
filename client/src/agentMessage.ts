@@ -271,9 +271,13 @@ export function stepsDone(steps: Step[]): string {
   return `${steps.filter((step) => step.done).length} of ${plural(steps.length, "step")} done`;
 }
 
-/** The platform's message asking the Agent to fix what a Turn's Check and Build found, as normal work. */
-export function describeRetry(retry: number): string {
-  return `Found a problem, fixing it (try ${retry} of ${maxRetries})`;
+/**
+ * The platform's message asking the Agent to fix what a Turn's Check and
+ * Build found, as normal work. `onlyTried` says it's only about what the app
+ * logged when the platform tried it, which may need no fixing.
+ */
+export function describeRetry(retry: number, onlyTried = false): string {
+  return onlyTried ? `Tried your app and found a problem, looking into it (try ${retry} of ${maxRetries})` : `Found a problem, fixing it (try ${retry} of ${maxRetries})`;
 }
 
 /** How far the running Turn has got, for the app area. */

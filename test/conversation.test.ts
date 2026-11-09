@@ -414,7 +414,10 @@ describe("the Agent's own tools", () => {
     const conversation = await connect(workspace.id);
     await runTurn(workspace.id, conversation, "[script:use-build] Build");
     const [, reply] = await history(workspace.id);
-    expect(textOf(reply!)).toBe("The tool said: The Build succeeded.");
+    // The Template's Build is new to the Agent, so the platform tried it.
+    expect(textOf(reply!)).toBe(
+      "The tool said: The Build succeeded.\nThe platform tried the Preview with GET /, which answered 200. It has logged no errors or warnings since this Build.",
+    );
 
     const save = await call(`/api/workspaces/${workspace.id}/files/src/index.ts`, { method: "PUT", text: "export default { fetch: ( };\n" });
     expect(save.status).toBe(204);

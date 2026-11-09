@@ -67,8 +67,9 @@ export const askingTools = new Map<string, NonNullable<LastTurn["asked"]>>([
 
 /**
  * Who wrote a user message: the Developer, or the platform after a Turn's
- * Check or Build had errors. `errors` counts the Check's; `buildErrors`, the
- * Build's, which messages from before Builds don't have.
+ * Check or Build had errors, or its Preview logged some. `errors` counts the
+ * Check's; `buildErrors`, the Build's, which messages from before Builds
+ * don't have.
  */
 export type MessageMetadata =
   | {
@@ -79,7 +80,12 @@ export type MessageMetadata =
       /** The Secret the Developer added when the Agent asked for it, which started the Turn: the message is then the platform's note of it. */
       addedSecret?: string;
     }
-  | { from: "check"; errors: number; buildErrors?: number; retry: number };
+  | {
+      from: "check";
+      errors: number;
+      buildErrors?: number;
+      retry: number;
+    };
 
 export const idleState: ConversationState = { turn: null, startingFresh: false, lastTurn: null };
 
