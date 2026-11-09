@@ -4,6 +4,8 @@ import { build, type Snapshot } from "../src/builder";
 import { bundledStream, bundlingVersion, filesOf, snapshotFrom } from "../src/builder/bundling";
 import { hashOf, tailwindVersion } from "../src/builder/hash";
 import { cachingBuilder, isolatedBuilder, tooBigToBuild } from "../src/builder/isolated";
+import builderWorker from "../src/generated/builder-worker.txt";
+import testBundler from "../src/generated/test-bundler.txt";
 
 const project = (source: string) =>
   new Map([
@@ -211,6 +213,10 @@ describe("Builds in a Dynamic Worker (#87)", () => {
     const sent = await snapshotFrom(bundledStream(filesOf(files)));
     expect([...sent.keys()].sort()).toEqual(["node_modules/a/index.js", "package.json", "src/index.ts", "src/notes.md", "wrangler.jsonc"]);
     expect(sent.get("node_modules/a/index.js")).toBe(files.get("node_modules/a/index.js"));
+  });
+
+  it("starts esbuild's Go runtime with GOGC=25 in the Builder and the Test bundler, to lower its peak memory", () => {
+    for (const packed of [builderWorker, testBundler]) expect(packed.split('this.env={GOGC:"25"}')).toHaveLength(2);
   });
 
   it("makes the same Build as one made in this isolate", async () => {

@@ -66,6 +66,7 @@ for (const [entry, name] of [
     plugins: [esbuildWasmFromHost()],
     logLevel: "warning",
   });
+  writeFileSync(file, withGoGc(readFileSync(file, "utf8")));
   console.log(`wrote src/generated/${name} (${(statSync(file).size / 1e3).toFixed(1)} kB)`);
 }
 
@@ -106,6 +107,20 @@ function declarationsIn(dir) {
   return readdirSync(dir, { recursive: true })
     .filter((path) => /\.d\.[cm]?ts$/.test(path) && !path.split("/").includes("node_modules"))
     .map((path) => join(dir, path));
+}
+
+/**
+ * Starts esbuild's Go runtime with `GOGC=25`, so its heap grows to 1.25
+ * times what's live before it collects, not twice. esbuild's linear memory
+ * never shrinks, so that's its peak: a small app with a UI kit's Packages
+ * went from 111 MB to 82 MB, against an isolate's 128 MB (#99,
+ * docs/findings.md). esbuild's browser build gives Go an empty environment,
+ * so the bundle is patched; a new esbuild that fails the match fails here.
+ */
+function withGoGc(code) {
+  const empty = 'this.argv=["js"],this.env={}';
+  if (code.split(empty).length !== 2) throw new Error(`Expected esbuild's Go runtime to set its environment once, as ${empty}`);
+  return code.replace(empty, 'this.argv=["js"],this.env={GOGC:"25"}');
 }
 
 /** worker-bundler imports esbuild's compiled module, which the host passes in as a module of the same name. */
