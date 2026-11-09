@@ -437,7 +437,7 @@ export class AppHost extends DurableObject<Env> {
   }
 
   private sessionOf(request: Request): { destination: SignInDestination } | null {
-    const id = cookieValue(request.headers.get("Cookie"), sessionCookie);
+    const id = sessionCookieOf(request);
     if (!id) return null;
     const session = this.sql()
       .exec<{ destination: SignInDestination }>("SELECT destination FROM sessions WHERE id = ? AND expires_at > ?", id, Date.now())
@@ -852,6 +852,11 @@ function safePath(to: string): string {
 function partitioned(cookie: string): string {
   const attributes = cookie.split(";").filter((part) => !/^\s*(samesite|partitioned)\b/i.test(part));
   return [...attributes, " SameSite=None", " Partitioned"].join(";");
+}
+
+/** The Preview's session cookie a request carries, if any, unchecked. */
+export function sessionCookieOf(request: Request): string | null {
+  return cookieValue(request.headers.get("Cookie"), sessionCookie);
 }
 
 function cookieValue(header: string | null, name: string): string | null {
