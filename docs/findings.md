@@ -16,6 +16,7 @@ The experiment asks whether Workers isolates alone can be where an application i
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
 - **Apps get Durable Objects and nothing else** for storage (ADR 0006).
 - **Apps can't run on a schedule yet.** Their Durable Objects are facets, whose alarms never ring, deployed or locally. Locally, the app host could keep their alarms for them (#107).
+- **Apps can't have live updates over WebSockets yet.** An upgrade reaches an app's Durable Object, but the platform's RPC hop can't carry the socket back, locally and deployed. Locally, sending upgrades over `fetch` instead works, with hibernation (#109).
 - **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
 
 ## Stage 0: ts-rust's WebAssembly module
@@ -1102,3 +1103,121 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 ### Found along the way
 
 - **Nothing tells the Agent that `setAlarm` fails.** The Templates' notes list KV, D1, R2, queues and cron triggers as unavailable, but not alarms. An Agent that sets one writes an app whose first call fails with workerd's message. Deployed, later calls then seem to set it, and it never rings. Left for the spec, which changes those notes anyway.
+
+## Live updates over WebSockets (#109)
+
+**Verdict: an app's page can't hold a WebSocket into one of its Durable Objects today, locally or deployed, but locally a small platform change makes it work, with hibernation.** The instance takes the upgrade, but the stand-in sends `fetch` to the app host by RPC, and RPC can't carry a WebSocket, so the app gets `DataCloneError`. In a probe, the stand-in sent upgrades over `fetch` instead. Then sockets worked in the Preview and the Deployment, apart from each other. A message reached every open socket at once, an idle instance hibernated and woke on the next message, and a new Build or publish dropped that slot's sockets, once the app host aborted every instance in its `facets` table. The deployed platform refuses in the same way. Whether facets hibernate on Cloudflare, rather than in workerd, is undocumented, and is for the spec.
+
+### How it was measured
+
+- **Locally:** the platform's vitest pool, workerd 1.20261006.1 (wrangler 4.149.0), on 2026-11-09, on a shared development machine.
+- **The app:** one binding, `ROOM`, to a `Room` class. Its `fetch` accepts an upgrade either with hibernation (`ctx.acceptWebSocket`) or with `accept()`, and greets the socket. `webSocketMessage` sends what it heard to every socket in the instance, and an RPC method `broadcast` does the same from an ordinary request. The constructor counts its starts, with their times, in the instance's storage, and sets an auto-response, `ping` to `pong`. The app's Worker forwards `/socket` to `env.ROOM.getByName(room).fetch(request)`. It's `test/websocket-probe.test.ts` on the branch `109-websockets-probe` (`0e941bb`), which isn't for `main`.
+- **Upgrades over `fetch`:** on the same branch, the wrapper's stand-in (`src/apphost/app-data.ts`) sends a `fetch` with `Upgrade: websocket` to `AppData`'s `fetch` handler, with the binding, the ID and the original URL in a header. `AppData` adds the slot and passes it to the app host's `fetch`, on a hostname outside the apps domain, which the platform Worker never sends to an app host (`src/platform/worker.ts`). The app host calls the facet's `fetch` and returns its `101` as it is. Other calls still go by RPC.
+- **The browser's side:** each test opened sockets as a browser would, through the platform Worker, with the Preview's session cookie or an Access token for the Deployment, and `Origin` set to the app's own.
+- **Source and docs,** read on 2026-11-09: workerd at `v1.20261006.1` (`107ea005`) and at `main` (`95fcc068`), Cloudflare's docs at `85a909ff` of `cloudflare/cloudflare-docs`, and the Agents SDK's `design/sub-agent-routing.md` at `c2a7bc54` of `cloudflare/agents`.
+
+### Today: an upgrade forwarded to an instance
+
+| Case | What the browser got | The instance |
+| --- | --- | --- |
+| Hibernation (`acceptWebSocket`) or `accept()`, in the Preview | `500`, from the probe app's catch: `DataCloneError: Could not serialize object of type "WebSocket". This type does not support serialization.` | started once, and its code accepted the socket |
+
+- **Why:** the facet's own `fetch` returns the `101`, but the app host returns it to `AppData`, and `AppData` to the app, by RPC. `Response`'s serialiser includes its `webSocket`, and `WebSocket` isn't serialisable (`src/workerd/api/http.c++`, whose comment says "we could add support for sending it over RPC in the future"; `src/workerd/jsg/ser.c++`). The Agents SDK says the same: "WebSocket handles cannot be serialized over RPC". The instance is left holding a socket nobody can reach.
+- **Only the Preview was measured;** the Deployment's stand-in is the same code.
+- **An app's Worker can hold a socket of its own,** with `new WebSocketPair()`, and the app host passes it through (`test/preview.test.ts`). But it can't reach other pages' sockets: they're held by other requests, in isolates that may be on other machines. So it isn't a way to live updates.
+- **`test/app-data.test.ts` pins this,** and the stranded socket: if a workerd upgrade lets RPC carry a WebSocket, it fails.
+
+### Upgrades over `fetch` (probe)
+
+| Case | Result |
+| --- | --- |
+| Two sockets with hibernation, one sends `x` | both got `heard x` |
+| A `broadcast` from an ordinary request | answered `2`; both sockets got it |
+| The same with `accept()` | the same |
+| The Deployment, published, one socket in the same room | the Preview's `broadcast` reached 2 sockets, the Deployment's 1 |
+| 200 sockets in one instance, then a `broadcast` | answered `200`; all 200 got it |
+| Messages of 1, 4, 16 and 33 MiB from the browser's side | each reached `webSocketMessage` whole |
+
+- **The app's code is Cloudflare's own:** `stub.fetch(request)` from the Worker, and `ctx.acceptWebSocket`, `getWebSockets()`, `webSocketMessage` and `setWebSocketAutoResponse` in the instance.
+- **The app host only passes the socket on.** It returns the facet's `101` without accepting it, which workerd pumps after the app host's request has finished (`src/workerd/api/web-socket.c++`, "allow the IoContext to go away"). Whether Cloudflare bills the app host's duration while it passes a socket on is undocumented.
+- **33 MiB went through locally,** past Cloudflare's documented 32 MiB for a received message. The limit wasn't hit on this path in workerd.
+
+### New code, and the Preview apart from the Deployment
+
+| Case | The Preview's sockets | The Deployment's sockets |
+| --- | --- | --- |
+| A new Build, the instance awake | closed, `1006` "WebSocket disconnected without sending Close frame.", within 228 ms of starting the save and the Build | stayed open; its `broadcast` still reached it |
+| A publish | – | closed, `1006` |
+| After that Build, a `broadcast` in the new code | reached `0`: no socket, by hibernation or `accept()`, outlived the abort | – |
+| A new Build after 15 s idle, the instance hibernated | **stayed open**, and the instance ran the old code: for its next message, and for a `broadcast` from the new Build's Worker | – |
+| The same, with the app host aborting every facet in its `facets` table | closed, `1006`; the new code's `broadcast` reached `0` | – |
+
+- **Why:** the app host aborts a slot's facets for new code (ADR 0015), and an abort drops the facet's hibernation manager with it (`server.c++`, `legacy-hibernation-manager.c++`). New Secrets abort both slots' facets the same way, so they'd drop both slots' sockets (from the code, not measured).
+- **A hibernated instance escapes new code today.** The app host aborts only the facets in `running`, which it keeps in memory (`abortFacets`, `src/apphost/index.ts`). After 15 s idle the app host had also been evicted (inferred), so `running` lacked the facet's name, and the instance, woken by its socket from the class workerd had cached, went on running the old code. Without sockets that can't happen, since a facet's alarms never ring (#107): an instance is only ever woken by the app host, which starts it with the slot's current code.
+- **A platform deploy** restarts the app host, and Cloudflare closes a Durable Object's sockets when it shuts down (inferred: its docs say hibernated sockets survive a code update only when the object is hibernated, and every socket here passes through the app host).
+- **So a page must reconnect,** and ask again for what it shows, as any socket does after a network change.
+
+### Idle sockets
+
+| Case | Constructor starts | What came back |
+| --- | --- | --- |
+| Hibernation, idle 75 s, then a message | 2: it restarted to take the message | `heard wake` |
+| `accept()`, idle 75 s, then a message | 1: it stayed in memory | `plain wake` |
+| Hibernation, idle 15 s, then `ping`, 3 s later a message | 2, the second at the message, not at `ping` | `pong`, then `heard q` |
+
+- **The facet hibernated:** it had restarted by the first message, 18 s after the socket opened, and workerd's code shuts an idle facet down after 10 s. The hibernation manager handed its sockets to the restarted instance. The auto-response answered without waking it.
+- **The restarted instance kept its ID,** name and all (`ctx.id.name` read `h` before and after), although workerd restarts it from the class it cached, without the app host's callback (`server.c++`).
+- **On Cloudflare, nothing says facets hibernate.** The facets page and the Agents SDK's sub-agents page say nothing about WebSockets in a facet. workerd's comments say "embedders running facets are expected to supply a token" for it (`src/workerd/io/worker.c++`). The Agents SDK doesn't rely on it: its root object keeps the socket and forwards each frame to the sub-agent by RPC, so every frame wakes the root.
+
+### Limits
+
+- **Sockets:** 32,768 per instance with hibernation, Cloudflare's. 200 in one instance worked locally. An app's instances are all facets of its app host, each with a hibernation manager of its own; whether Cloudflare counts their sockets together is undocumented.
+- **Idle time:** sockets stayed open through 75 s idle locally, the longest measured. Cloudflare's Durable Object docs give no idle timeout for a socket, and an auto-response keeps one busy without waking the instance. An instance with only hibernated sockets hibernates after 10 s; one that `accept()`ed stays in memory, billed for duration, while any socket is open.
+- **What an app can send:** a received message up to 32 MiB, 30 s of CPU per message, an attachment of 16 KiB per socket, 10 tags of 256 characters, and an auto-response of 2,048 characters each way (Cloudflare's limits and state pages, and workerd). Messages from the instance to the browser aren't billed; messages to the instance are billed as requests, 20 to 1.
+- **Past the platform Worker:** once upgraded, messages go straight to the instance. The platform Worker sees only the upgrade, so the Preview's rate limits (#113) count the upgrade but never a socket's messages.
+- **Polling, for comparison:** the `live` add-on asks every 5 s, and every 30 s while nothing changes. That's 120 to 720 asks an hour for each open page, each through the platform Worker, the app host, the app's Dynamic Worker and, for data, `AppData` and the instance. A socket costs one upgrade per page, then one message per change, and nothing while idle if the instance hibernates.
+
+### Deployed
+
+**The deployed platform refuses the same way.** Checked on 2026-11-09 from the Developer's signed-in browser, in a T3 preview tab, with the tail running. The Workspace was made for the check through the API, from the Worker Template with the test app's two files: one binding, `ROOM`, to a `Room` class that accepts an upgrade with hibernation or `accept()`. It was built, published, and deleted afterwards.
+
+| Case | Preview | Deployment |
+| --- | --- | --- |
+| The app's Worker calls `room.fetch` with `Upgrade: websocket` and catches | `refused: DataCloneError: Could not serialize object of type "WebSocket". This type does not support serialization.`, in both modes | the same |
+| The browser's `new WebSocket` to a route that forwards to `room.fetch` | `error`, then close `1006`, in both modes; the platform Worker answered `500` (tail, 56–59 ms wall) | the same (`500`, 117–139 ms wall) |
+| The instance afterwards | `getWebSockets().length` read 1: the stranded socket | 1 |
+| The app's Worker's own `WebSocketPair`, echoing | open in 1,399 ms (the first), echo 16 ms later, clean close | open in 782–821 ms, echo 10–17 ms later, clean close |
+
+- **The Preview's logs** showed each refusal as `server exception DataCloneError: ...`, so the Agent and the Developer see why.
+- **Upgrades pass both apps-domain Access applications:** the Preview's own session, and the Deployment's Access cookie.
+- **Upgrades over `fetch`, and so hibernation in a facet, weren't checked deployed.** They need the probe branch's app host, and a Preview runs only an app's code, so checking them would mean deploying the platform. That's for the spec (below).
+
+### Recommendation
+
+**A platform change first, then live updates in the `live` add-on.** Polling (#108) works (Limits, above). Sockets would show changes at once and cost nothing while idle, but only once the platform passes upgrades through, and only if facets hibernate on Cloudflare.
+
+1. **Check facet hibernation on Cloudflare first,** since the design depends on it. A small probe Worker, outside the platform, can show it in an hour: a Durable Object running a Dynamic Worker's class as a facet that accepts a socket with hibernation, idle past 10 s, then a message. The trace shows whether the facet restarted to take it, and whether the parent stayed active meanwhile. That's a new Worker on Jack's account, so it's Jack's to approve (below). The alternative is to check it in the spec's first slice, on the deployed platform.
+2. **The platform change:** the stand-in sends an upgrade over `fetch`, on a hostname outside the apps domain, as the probe did, and new code aborts every one of the slot's facets in the `facets` table, as `remove` deletes them, not only those in `running`. That's about 35 lines. RPC stays for everything else. A test pins that a browser request can't reach that path: the platform Worker sends an app host only hostnames on the apps domain. ADR 0015 gets a new decision, since it lists WebSockets into an instance as not supported, and the Templates' notes say sockets work through `stub.fetch`.
+   - **If facets don't hibernate on Cloudflare,** the app host keeps the sockets instead, with hibernation, tagged with the slot, binding and ID, and passes each message to the instance by RPC, as the Agents SDK does. The instance sends through the wrapper. That's more code, and every message wakes the app host, so the add-on would still send messages only one way.
+3. **The add-on:** `live` keeps its routes and ETags, and its notes' pattern. The store's instance tells its sockets which collection changed, and the page asks that collection's route again. The page sends nothing over the socket: changes stay ordinary requests, so they keep the platform's `Origin` checks and the Preview's rate limits (#113). While the socket is down, the page reconnects with backoff, asks again once connected, and polls slowly meanwhile. That covers each Build, publish, Secrets change and platform deploy, which drop the sockets.
+4. **Limits:** a cap on sockets per instance, such as 1,000, in the wrapper's `acceptWebSocket`, with a message saying why. Cloudflare's own limits cover the rest. Deployments open to everyone (`DEPLOYMENTS_OPEN_TO_EVERYONE`) could otherwise have one page open sockets without end.
+5. **Tests** pin each behaviour the design relies on: an upgrade reaching an instance in each slot, the slots apart, a new Build or publish dropping only its own slot's sockets, hibernated or not, and hibernation where the vitest pool can show it.
+
+**Not recommended:**
+- **A live-updates add-on now.** Nothing an add-on can write reaches an instance with a socket today.
+- **Sockets in the app's Worker,** with no Durable Object. They can't reach each other's pages (above).
+- **Leaving it at polling,** unless the deployed check finds facets don't hibernate and the app host's way costs too much. Polling stays the fallback in the add-on either way.
+
+**For Jack, in the spec:**
+
+| Decision | Recommendation | Why |
+| --- | --- | --- |
+| Check facet hibernation before the spec | Yes, with a small probe Worker on Jack's account, deleted after | The design depends on it, and it's undocumented; an hour's work |
+| Platform change first, or an add-on now | Platform change first: upgrades over `fetch`, and aborting every facet | Today no socket reaches the app; the probe's change is about 35 lines |
+| What a socket carries | Only which collection changed; the page asks its route | Changes keep the platform's checks and rate limit; reuses `live`'s routes |
+| Polling | Kept, slowly, while the socket is down | Sockets drop on each Build, publish, Secrets change and deploy |
+| Sockets per instance | Capped at 1,000 | Well above a small app's use; stops one page opening them without end |
+
+### Found along the way
+
+- **Nothing tells the Agent that sockets fail.** The Templates' notes don't mention WebSockets. An Agent that forwards an upgrade to a Durable Object writes an app whose `fetch` fails with `DataCloneError`. Left for the spec, which changes those notes anyway.

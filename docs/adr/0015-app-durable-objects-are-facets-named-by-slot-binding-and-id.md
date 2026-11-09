@@ -18,5 +18,5 @@ ADR 0006 gives apps Durable Objects and nothing else, run as facets inside the W
 - **The app host keeps the name of every facet it starts,** so it can delete them with the Workspace: `deleteAll()` doesn't reach a facet's database, as the deletion test shows. For new code it aborts only the facets running at the time, which it remembers in memory.
 - **Not supported:**
   - jurisdictions and location hints;
-  - WebSockets into an instance;
+  - WebSockets into an instance: the instance accepts one, but the stand-in's `fetch` goes by RPC, which can't carry the socket back, so the app gets `DataCloneError` (#109, `docs/findings.md`);
   - alarms in an instance: workerd refuses `setAlarm` in a facet, failing the call, and `alarm()` never runs (#107, `docs/findings.md`).

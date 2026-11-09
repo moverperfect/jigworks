@@ -247,6 +247,45 @@ export default {
     expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rows: 0, alarm: null });
   });
 
+  // The stand-in sends fetch over RPC, which can't carry a WebSocket (#109,
+  // docs/findings.md). If this starts failing, an upgrade may reach the app:
+  // recheck hibernation and new Builds, and revisit ADR 0015.
+  it("can't pass a WebSocket from an instance back to the app", async () => {
+    const workspace = await create("Data Sockets");
+    await save(workspace.id, "wrangler.jsonc", wrangler({ durable_objects: { bindings: [{ name: "ROOM", class_name: "Room" }] } }));
+    await save(
+      workspace.id,
+      "src/index.ts",
+      `import { DurableObject } from "cloudflare:workers";
+export class Room extends DurableObject {
+  sockets() {
+    return this.ctx.getWebSockets().length;
+  }
+  override async fetch() {
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+}
+export default {
+  async fetch(request: Request, env: { ROOM: DurableObjectNamespace<Room> }) {
+    const room = env.ROOM.getByName("a");
+    return request.headers.has("Upgrade") ? room.fetch(request) : new Response(String(await room.sockets()));
+  },
+};
+`,
+    );
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    // requestPreview rather than inPreview, for the status and the Upgrade header.
+    const answer = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/", headers: { Upgrade: "websocket" } });
+    expect(answer).toMatchObject({
+      status: 500,
+      body: expect.stringContaining('DataCloneError: Could not serialize object of type "WebSocket"'),
+    });
+    // The instance still holds the socket it accepted, which nobody can reach.
+    expect(await inPreview(workspace.id, "/")).toBe("1");
+  });
+
   it("goes with its Workspace", async () => {
     const workspace = await counterWorkspace("Data Deleted");
     expect(await inPreview(workspace.id, "/increment")).toBe("1");
