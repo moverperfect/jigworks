@@ -5,6 +5,7 @@ import type { TestReport } from "../src/shared/test-report";
 import type { Addon } from "../src/templates";
 import { describeAddons } from "../src/agent";
 import type { Workspace } from "../src/workspace";
+import { resendAccountAddress, resendKey } from "./fixtures/fake-resend";
 import { call, create } from "./helpers/api";
 import { connect, history, runTurn, toolResults, turnLines } from "./helpers/conversation";
 
@@ -171,6 +172,40 @@ describe("the organiser's area", () => {
 
     const opened = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/organiser", headers: { Accept: "text/html" } });
     expect(opened).toMatchObject({ status: 303, headers: { location: "/organiser/sign-in?next=%2Forganiser" } });
+  });
+});
+
+describe("sending email", () => {
+  it("joined to the default Template's app with its edits, passes its tests, asks for Resend's key, and sends from the Preview", async () => {
+    const workspace = await create("Sign-ups", undefined, "worker-react");
+    const conversation = await connect(workspace.id);
+    const [line] = await turnLines(() => runTurn(workspace.id, conversation, "[script:add-email-and-join] Email me when someone signs up"));
+    expect(line).toMatchObject({ addons: ["email"], status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+
+    const [added] = await toolResults(workspace.id);
+    const result = added!.result as string;
+    expect(result.split("\n", 1)[0]).toBe("Added the email add-on. Wrote /src/server/email.test.ts and /src/server/email.ts.");
+    expect(result).toContain("<notes>\n## Sending email (add-on `email`)\n\nThe app sends email through Resend");
+    expect(result).toContain("- RESEND_API_KEY: To send emails, your app uses Resend, an email service, and needs a key from it.");
+    const tests = await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>();
+    expect(tests.files.map(({ file, tests, errors }) => [file, [...new Set(tests.map(({ state }) => state))], errors])).toContainEqual([
+      "src/server/email.test.ts",
+      ["passed"],
+      [],
+    ]);
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const signUp = async (query = "") => JSON.parse((await preview.requestPreview({ method: "POST", path: `/api/signups/Ada${query}` })).body);
+    // Before the Developer gives the key, nothing is sent, and the app says why.
+    expect(await signUp()).toEqual({ ok: false, error: "The email wasn't sent: the Secret RESEND_API_KEY hasn't been set yet." });
+
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/RESEND_API_KEY`, { method: "PUT", body: { value: resendKey } })).status).toBe(204);
+    expect(await signUp()).toEqual({ ok: true, id: `email-to-${resendAccountAddress}` });
+    // Resend's test sender reaches only the account's own address, and the app hears why.
+    expect(await signUp("?to=ada%40example.com")).toEqual({
+      ok: false,
+      error: expect.stringMatching(/^Resend refused the email: You can only send testing emails to your own email address/),
+    });
   });
 });
 
