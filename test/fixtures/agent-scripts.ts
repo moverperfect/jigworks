@@ -12,6 +12,11 @@ const buildFailed = "the Build failed";
 export const unbuildableIndex =
   'import { Hono } from "hono";\ndeclare function require(name: string): unknown;\nrequire("left-pad");\nexport default new Hono();\n';
 export const buildableIndex = 'import { Hono } from "hono";\nexport default new Hono().get("/", (c) => c.text("hi"));\n';
+// Hono apps whose GET / logs an error, as Hono does for a route that throws, or a warning.
+export const throwingIndex = 'import { Hono } from "hono";\nexport default new Hono().get("/", () => {\n  throw new Error("The list is missing");\n});\n';
+export const warningIndex =
+  'import { Hono } from "hono";\nexport default new Hono().get("/", (c) => {\n  console.warn("No greeting set, so saying hi");\n  return c.text("hi");\n});\n';
+const previewLogged = "the Preview logged";
 // A test that fails, beside the Template's, which passes.
 export const failingTest = 'import { expect, it } from "vitest";\n\nit("adds", () => {\n  expect(1 + 1).toBe(3);\n});\n';
 /** The Worker Template's Worker with the storage add-on joined to it, and routes that keep and list messages in it. */
@@ -167,6 +172,14 @@ export { Store } from "./store";
 /** The value the Developer gives for the Secret that `ask-for-secret` asks for, which must never reach the model. */
 export const askedSecretValue = "key-from-the-email-service";
 
+/** Writes `/src/index.ts` and builds it in the same step, then repeats what the tools said. */
+function writeAndBuild(content: string): Script {
+  return (request) =>
+    afterToolResult(request)
+      ? { text: `The tools said: ${lastToolResult(request)}` }
+      : { toolCalls: [{ name: "write", input: { path: "/src/index.ts", content } }, { name: "build", input: {} }] };
+}
+
 /** Adds the add-on `addons`, or each of several in the same step, then makes the joining `edits`, then gives `reply`. */
 function addAndJoin(addons: string | string[], edits: { name: string; input: Record<string, string> }[], reply: string): Script {
   return (request) => {
@@ -229,6 +242,50 @@ export const agentScripts: Record<string, Script> = {
             { name: "delete", input: { path: "/src/index.test.ts" } },
           ],
         },
+
+  // Writes an entry point and builds it in the same step, then repeats what the tools said.
+  "build-throwing": writeAndBuild(throwingIndex),
+  "build-warning": writeAndBuild(warningIndex),
+  "build-clean": writeAndBuild(buildableIndex),
+
+  // Writes an entry point that throws on GET /, without building, then fixes it when told what the Preview logged.
+  "throw-then-fix": (request) => {
+    const fixing = latestInstruction(request).includes(previewLogged);
+    if (afterToolResult(request)) return { text: fixing ? "Fixed it." : "Wrote src/index.ts." };
+    return { toolCalls: [{ name: "write", input: { path: "/src/index.ts", content: fixing ? buildableIndex : throwingIndex } }] };
+  },
+
+  // Writes an entry point that logs a warning on GET /, without building, and leaves it when told.
+  "warn-and-leave": (request) => {
+    if (latestInstruction(request).includes(previewLogged)) return { text: "The warning is harmless." };
+    if (afterToolResult(request)) return { text: "Wrote src/index.ts." };
+    return { toolCalls: [{ name: "write", input: { path: "/src/index.ts", content: warningIndex } }] };
+  },
+
+  // Writes a type error and an entry point that throws on GET /, then fixes both when told.
+  "break-and-throw-then-fix": (request) => {
+    const fixing = latestInstruction(request).includes(checkFound);
+    if (afterToolResult(request)) return { text: fixing ? "Fixed both." : "Wrote them." };
+    return {
+      toolCalls: [
+        { name: "write", input: { path: "/src/count.ts", content: fixing ? fixedCount : brokenCount } },
+        { name: "write", input: { path: "/src/index.ts", content: fixing ? buildableIndex : throwingIndex } },
+      ],
+    };
+  },
+
+  // Writes an entry point that logs a warning on GET /, and asks a question in the same step, which ends the Turn.
+  // It thanks the Developer for the answer, and leaves the warning when told.
+  "warn-and-ask": (request) => {
+    if (latestInstruction(request).includes(previewLogged)) return { text: "The warning is harmless." };
+    if (laterMessage(request)) return { text: "Thanks." };
+    return {
+      toolCalls: [
+        { name: "write", input: { path: "/src/index.ts", content: warningIndex } },
+        { name: "ask", input: { question: "Which greeting?", choices: ["Hi", "Hello"] } },
+      ],
+    };
+  },
 
   // Pauses mid-reply, so a test can act while the Turn streams.
   slow: () => ({ text: "Done, slowly.", delayMs: 2_000 }),

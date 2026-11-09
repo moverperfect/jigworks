@@ -241,7 +241,7 @@ function MessageItem({ message, running, answers }: { message: ConversationMessa
   if (message.role === "user" && metadata?.from === "check") {
     return (
       <li className="conversation-notice">
-        <p>{describeRetry(metadata.retry)}</p>
+        <p>{describeRetry(metadata.retry, metadata.errors + (metadata.buildErrors ?? 0) === 0)}</p>
         <details>
           <summary>What the Agent was told</summary>
           <pre className="conversation-pre">{texts.map((part) => part.text).join("\n\n")}</pre>

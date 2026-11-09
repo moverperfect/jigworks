@@ -4,6 +4,7 @@ import { generateText, getToolName, isToolUIPart, tool, type LanguageModel, type
 import { z } from "zod";
 import { isSecretName, secretNameRule } from "../apphost/secrets";
 import { normalisePath } from "../files";
+import { isWarning, type AppLogEntry } from "../shared/app-logs";
 import type { BuildProblem, BuildReport } from "../shared/build-report";
 import type { CheckReport, PackageStatus, Problem } from "../shared/check-report";
 import { askingTools, maxRetries, type LastTurn, type MessageMetadata } from "../shared/conversation";
@@ -61,9 +62,10 @@ ${listAddons()
 How you work:
 - Change files with the file tools or bash. Bash works on the Workspace's files only: there's no network, no npm and no Node.js.
 - Add an npm Package with add_package, which picks a version that's at least a day old. Don't add one by editing package.json.
-- The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all. If they still have errors after that, the platform puts the files back as they were when the Turn started, so the Developer's app keeps working, and tells you at the start of your next Turn.
+- The check tool type-checks the Workspace and returns its errors. The build tool builds it the way the platform runs it and returns any Build errors. Every Turn ends with a Check and then a Build. If either has errors you'll be asked to fix them, up to ${maxRetries} times in all, and if the Preview then logs errors or warnings you'll be shown them, which uses one of those times too. If the Check or the Build still has errors after that, the platform puts the files back as they were when the Turn started, so the Developer's app keeps working, and tells you at the start of your next Turn.
 - Write tests in files named like src/index.test.ts, with vitest's API: describe, it, expect, vi.fn, vi.spyOn and fake timers. vi.mock and snapshots aren't supported, and there's no DOM. Run them with the test tool. Every Turn ends with the tests as well, after the Build; failing tests don't use up your retries, but the Developer sees them.
-- Each successful Build becomes the Preview, which the Developer sees beside the Conversation as their app. Try it with request_preview, and read its server logs and front-end errors with preview_logs.
+- Each successful Build becomes the Preview, which the Developer sees beside the Conversation as their app. After a Build that changes it, the platform tries it with GET /, waits a few seconds, and gives you what it answered and the errors and warnings it logged since that Build, front-end errors from an open Preview pane included: in the build tool's result, or after your Turn. Judge which need fixing: some warnings are harmless.
+- After building, try what you changed against the Preview with request_preview, beyond GET /: the routes, forms and actions you added or changed, as a browser would send them. Then read its server logs and front-end errors with preview_logs.
 - The Developer gives the Workspace secrets, which reach the app's env by name. list_secrets gives their names; nobody shows you their values, and a value in what the Preview answers or logs shows as [secret NAME].
 - When the app needs a secret the Developer hasn't given, such as an email service's key, ask for it with ask_for_secret, saying why and where they'll find it, and stop there. As with a question, ask before you change any files, or your changes are put back if the app doesn't work then. Don't ask them to type or paste it to you, or to add it themselves from a menu. ask_for_secret is only for values that must stay secret, such as keys and passwords. Anything else the app needs, such as the address emails go to, ask for with ask, or choose something sensible.
 - The Developer can't change files while your Turn runs. If they changed files since your last Turn, their message says which. Read those files before you change them.`;
@@ -116,17 +118,64 @@ export function developerMessage(request: TurnRequest, changedFiles: string[], t
   return { id: crypto.randomUUID(), role: "user", parts, metadata: { from: "developer", changedFiles, turnStartedAt, addedSecret } };
 }
 
-/** The platform's message asking the Agent to fix the errors a Turn's Check and Build found. */
-export function fixMessage(check: CheckReport, build: BuildReport, retry: number): UIMessage<MessageMetadata> {
+/**
+ * What came of the platform trying a new Preview: the status `GET /` answered
+ * with, or null if it didn't answer within `waitSeconds`, and the errors and
+ * warnings logged since its Build.
+ */
+export interface PreviewTry {
+  status: number | null;
+  waitSeconds: number;
+  problems: AppLogEntry[];
+}
+
+/**
+ * The platform's message after a Turn's Check and Build, asking the Agent to
+ * fix the errors they found, and to judge the errors and warnings the
+ * Preview logged when the platform tried it (`previewTry`), if any.
+ */
+export function fixMessage(check: CheckReport, build: BuildReport, retry: number, previewTry: PreviewTry | null): UIMessage<MessageMetadata> {
   const errors = check.counts.error;
   const buildErrors = build.errors.length;
+  const previewProblems = previewTry?.problems.length ?? 0;
   const found: [summary: string, details: string][] = [];
   if (errors > 0) found.push([`the Check found ${plural(errors, "error")}`, describeCheck(check)]);
   if (buildErrors > 0) found.push([`the Build failed with ${plural(buildErrors, "error")}`, describeBuild(build)]);
+  if (previewTry && previewProblems > 0) found.push([`the Preview logged ${countProblems(previewTry.problems)} when the platform tried it`, describePreviewTry(previewTry)]);
   const summary = found.map(([text]) => text).join(" and ");
   const details = found.map(([, text]) => text).join("\n\n");
-  const text = `After your Turn, ${summary}. Fix them. This is retry ${retry} of ${maxRetries}.\n\n${details}`;
-  return { id: crypto.randomUUID(), role: "user", parts: [{ type: "text", text }], metadata: { from: "check", errors, buildErrors, retry } };
+  const ask =
+    errors + buildErrors === 0
+      ? "Fix any that need it. If none do, change nothing and end your Turn."
+      : previewProblems > 0
+        ? "Fix the errors, and any of the Preview's that need it."
+        : "Fix them.";
+  const text = `After your Turn, ${summary}. ${ask} This is retry ${retry} of ${maxRetries}.\n\n${details}`;
+  return {
+    id: crypto.randomUUID(),
+    role: "user",
+    parts: [{ type: "text", text }],
+    metadata: { from: "check", errors, buildErrors, retry },
+  };
+}
+
+const previewProblemsShown = 50;
+
+/** A try of the Preview as text for the Agent. */
+export function describePreviewTry({ status, waitSeconds, problems }: PreviewTry): string {
+  const answered = `The platform tried the Preview with GET /, which ${status === null ? `didn't answer within ${waitSeconds} seconds` : `answered ${status}`}.`;
+  if (problems.length === 0) return `${answered} It has logged no errors or warnings since this Build.`;
+  const lines = [`${answered} Since this Build, it has logged ${countProblems(problems)}:`];
+  for (const entry of problems.slice(0, previewProblemsShown)) lines.push(`${entry.at} ${entry.source} ${entry.level}: ${entry.message}`);
+  if (problems.length > previewProblemsShown) lines.push(`…and ${problems.length - previewProblemsShown} more.`);
+  return lines.join("\n");
+}
+
+/** For example "1 error and 2 warnings". */
+export function countProblems(problems: AppLogEntry[]): string {
+  const warnings = problems.filter(isWarning).length;
+  const errors = problems.length - warnings;
+  return [errors > 0 && plural(errors, "error"), warnings > 0 && plural(warnings, "warning")].filter(Boolean).join(" and ");
 }
 
 /** A Build report as text for the Agent. */
@@ -219,8 +268,8 @@ export function agentTools(workspace: {
   startApp: Workspace["startApp"];
   /** A Check, after the step's other tools have finished. */
   check: () => Promise<CheckReport>;
-  /** A Build, after the step's other tools have finished. */
-  build: () => Promise<BuildReport>;
+  /** A Build, after the step's other tools have finished, and the try of the Preview if it changed it. */
+  build: () => Promise<{ report: BuildReport; previewTry: PreviewTry | null }>;
   /** A test run, of every test file or only `files`, after the step's other tools have finished. */
   test: (files?: string[]) => Promise<TestReport>;
   addPackageForAgent: Workspace["addPackageForAgent"];
@@ -324,10 +373,11 @@ export function agentTools(workspace: {
     }),
     build: tool({
       description:
-        "Builds the Workspace with esbuild the way the platform runs it, using wrangler.jsonc, and returns any Build errors and warnings. Type errors don't stop a Build. Installs Packages first if package.json changed. It sees the changes made by tools called in the same step.",
+        "Builds the Workspace with esbuild the way the platform runs it, using wrangler.jsonc, and returns any Build errors and warnings. Type errors don't stop a Build. A successful Build becomes the Preview: when that changes it, the platform tries it with GET / and adds what it answered and the errors and warnings it logged. Installs Packages first if package.json changed. It sees the changes made by tools called in the same step.",
       inputSchema: z.object({}),
       execute: async () => {
-        return describeBuild(await workspace.build());
+        const { report, previewTry } = await workspace.build();
+        return previewTry ? `${describeBuild(report)}\n${describePreviewTry(previewTry)}` : describeBuild(report);
       },
     }),
     test: tool({

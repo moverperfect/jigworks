@@ -26,6 +26,8 @@ export interface PreviewExchange {
   body: string;
   /** Whether the body was cut short. */
   truncated: boolean;
+  /** Set when the Preview didn't answer, so the status is the app host's own. */
+  unanswered?: true;
 }
 
 const runnableFields = [
@@ -51,6 +53,12 @@ export function runnable(build: Build): RunnableBuild {
 
 /** A Build as the app host keeps it. Builds kept before ticket 09 have no assets, and before ticket 11 no Durable Object bindings. */
 type KeptBuild = Omit<RunnableBuild, keyof AppAssets | "durableObjects"> & Partial<Pick<RunnableBuild, keyof AppAssets | "durableObjects">>;
+
+/** The Build the Preview took last, and the id of the last log line before it. */
+interface PreviewLogsFrom {
+  hash: string;
+  afterLine: number;
+}
 
 /** The Deployment: the hash of the Build it runs, and when the Developer published it. */
 interface PublishedBuild {
@@ -128,6 +136,10 @@ export class AppHost extends DurableObject<Env> {
         this.sql().exec("INSERT OR REPLACE INTO build_chunks (hash, part, body) VALUES (?, ?, ?)", build.hash, part, body);
       }
       kv.put("preview", build.hash);
+      // Where the new Build's logs start (see `problemsSince`).
+      // deferred: a log line from the old Build that arrives after this counts as the new Build's; tag lines with their Build if that misleads the Agent.
+      const lastLine = this.sql().exec<{ id: number | null }>("SELECT MAX(id) AS id FROM logs").one().id ?? 0;
+      kv.put<PreviewLogsFrom>("preview:logs-from", { hash: build.hash, afterLine: lastLine });
       // So the Preview's instances pick up the new code, their data kept.
       this.abortFacets("preview");
     });
@@ -264,12 +276,13 @@ export class AppHost extends DurableObject<Env> {
   /**
    * Sends the Preview a request for the Agent, as a browser would, and
    * returns what came back: the start of the body only, read no further.
+   * It waits `waitSeconds` for the whole answer.
    */
-  async requestPreview(init: PreviewRequest): Promise<PreviewExchange> {
+  async requestPreview(init: PreviewRequest, waitSeconds = previewWaitSeconds): Promise<PreviewExchange> {
     const label = this.ctx.storage.kv.get<string>("label");
-    if (!label) return { status: 503, headers: {}, body: notReady, truncated: false };
+    if (!label) return { status: 503, headers: {}, body: notReady, truncated: false, unanswered: true };
     const path = init.path.startsWith("/") ? init.path : `/${init.path}`;
-    const deadline = Date.now() + previewWaitSeconds * 1000;
+    const deadline = Date.now() + waitSeconds * 1000;
     const response = await beforeDeadline(this.serve(
       new Request(`https://${previewHost(label, this.env.APPS_DOMAIN)}${path}`, {
         method: init.method,
@@ -281,7 +294,9 @@ export class AppHost extends DurableObject<Env> {
       "preview",
       false,
     ), deadline);
-    if (!response) return { status: 504, headers: {}, body: `The Preview didn't answer within ${previewWaitSeconds} seconds.`, truncated: false };
+    if (!response) {
+      return { status: 504, headers: {}, body: `The Preview didn't answer within ${waitSeconds} seconds.`, truncated: false, unanswered: true };
+    }
     // The Agent never reads a secret's value (ADR 0016). The body is read
     // past where it's cut by the longest value, so a value across the cut is
     // hidden whole.
@@ -324,6 +339,23 @@ export class AppHost extends DurableObject<Env> {
         "SELECT at, slot, source, level, message FROM (SELECT * FROM logs WHERE slot = ? ORDER BY id DESC LIMIT ?) ORDER BY id",
         slot,
         Math.min(Math.max(limit, 1), logsKept),
+      )
+      .toArray();
+  }
+
+  /**
+   * The Preview's errors and warnings since it took Build `hash`, oldest
+   * first: every log line but plain `log`, `info` and `debug` ones. Null when
+   * the Preview runs another Build, or took this one before it kept where
+   * its logs start.
+   */
+  problemsSince(hash: string): AppLogEntry[] | null {
+    const from = this.ctx.storage.kv.get<PreviewLogsFrom>("preview:logs-from");
+    if (this.workspaceId() === null || from?.hash !== hash) return null;
+    return this.sql()
+      .exec<{ at: string; slot: Slot; source: AppLogEntry["source"]; level: string; message: string }>(
+        "SELECT at, slot, source, level, message FROM logs WHERE slot = 'preview' AND id > ? AND level NOT IN ('log', 'info', 'debug') ORDER BY id",
+        from.afterLine,
       )
       .toArray();
   }

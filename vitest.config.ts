@@ -43,6 +43,8 @@ export default defineConfig({
                 AGENT_BASE_URL: "",
                 ANTHROPIC_API_KEY: anthropicKey,
                 TEST_ACCESS_SIGNING_KEY: privateJwk,
+                // Long enough for a Dynamic Worker's tail to reach the app host.
+                PREVIEW_LOGS_WAIT_MS: 500,
               },
               // Outbound requests reach only the fake Access keys, the fake npm
               // registry, the scripted model and, for apps, the fake Resend.
