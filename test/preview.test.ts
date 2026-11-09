@@ -384,6 +384,47 @@ describe("a Preview with a front end", () => {
     expect(await (await visit(workspace.id, "/api/hello/Tab", navigate)).json()).toEqual({ message: "Hello, Tab" });
     expect((await visit(workspace.id, "/missing.js")).status).toBe(404);
   });
+
+  it("serves images and fonts in public/ byte for byte, in the Preview and the Deployment (#110)", async () => {
+    const workspace = await create("Binary Assets", undefined, "worker-react");
+    const stub = env.WORKSPACES.getByName(workspace.id);
+    // Bytes that aren't UTF-8, written back as Think's bash writes them.
+    const write = (path: string, bytes: Uint8Array) => runInDurableObject(stub, (instance) => instance.workspace.writeFileBytes(`/${path}`, bytes));
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0xff, 0x80, 0xc3, 0xef, 0xbb, 0xbf]);
+    const woff2 = new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0x00, 0x01, 0xd8, 0xff, 0xfe]);
+    await write("public/logo.png", png);
+    await write("public/fonts/body.woff2", woff2);
+    const first = await build(workspace.id);
+    expect(first).toMatchObject({ ok: true });
+
+    const served = async (response: Response) => ({ type: response.headers.get("Content-Type"), bytes: new Uint8Array(await response.arrayBuffer()) });
+    const expected = [
+      { type: "image/png", bytes: png },
+      { type: "font/woff2", bytes: woff2 },
+    ];
+    // Twice, so the second response isn't left with a body the first used up.
+    for (let time = 0; time < 2; time++) {
+      expect([await served(await visit(workspace.id, "/logo.png")), await served(await visit(workspace.id, "/fonts/body.woff2"))]).toEqual(expected);
+    }
+
+    const published = await call(`/api/workspaces/${workspace.id}/deployment`, { method: "POST", body: { replaces: null } });
+    expect(published.status).toBe(200);
+    const { url } = await published.json<{ url: string }>();
+    const open = async (path: string) =>
+      exports.default.fetch(
+        new Request(new URL(path, url), {
+          headers: { "Cf-Access-Jwt-Assertion": await accessToken({ email: "colleague@example.com" }, { audience: testAccess.appsAudience }) },
+        }),
+      );
+    expect([await served(await open("/logo.png")), await served(await open("/fonts/body.woff2"))]).toEqual(expected);
+
+    // Bytes that would read as the same text make a new Build.
+    await write("public/logo.png", png.with(9, 0xfe));
+    const second = await build(workspace.id);
+    expect(second).toMatchObject({ ok: true, cached: false });
+    expect(second.hash).not.toBe(first.hash);
+    expect((await served(await visit(workspace.id, "/logo.png"))).bytes).toEqual(png.with(9, 0xfe));
+  });
 });
 
 describe("signing in to the Preview", () => {

@@ -1,4 +1,5 @@
 import type { Workspace as FileStore } from "@cloudflare/think";
+import { fromBase64 } from "../shared/base64";
 
 /**
  * A Workspace's files: paths relative to the Workspace root, such as
@@ -18,6 +19,8 @@ export interface Files {
   snapshot(): Map<string, string>;
   /** Every Workspace file as bytes, for files that may not be text. Hidden paths are left out. */
   bytes(): Map<string, Uint8Array>;
+  /** Every Workspace file as text, or as bytes if it isn't UTF-8 text, as an image isn't. Hidden paths are left out. */
+  contents(): Map<string, string | Uint8Array>;
   write(path: string, text: string): Promise<void>;
   /** Copies every Workspace file and directory aside, replacing the last copy. */
   copyAside(): void;
@@ -62,12 +65,23 @@ type Row = { path: string; content: string | null; content_encoding: string };
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
-const bytesOf = (row: Row) =>
-  row.content_encoding === "base64"
-    ? Uint8Array.from(atob(row.content ?? ""), (char) => char.charCodeAt(0))
-    : encoder.encode(row.content ?? "");
+const bytesOf = (row: Row) => (row.content_encoding === "base64" ? fromBase64(row.content ?? "") : encoder.encode(row.content ?? ""));
 const textOf = (row: Row) =>
   row.content_encoding === "base64" ? decoder.decode(bytesOf(row)) : (row.content ?? "");
+
+/**
+ * A file's text, or its bytes if they aren't UTF-8 text. The editor and the
+ * Build's assets keep a byte order mark, so a file saved back or served is
+ * unchanged; the Build's code and config drop it, as `snapshot` does, so JSON
+ * config still parses.
+ */
+export function textOrBytes(bytes: Uint8Array, { keepBom = false } = {}): string | Uint8Array {
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: keepBom }).decode(bytes);
+  } catch {
+    return bytes;
+  }
+}
 
 /**
  * Files kept in `@cloudflare/shell`'s store, the one Think uses. Reads query
@@ -104,6 +118,15 @@ export function storeFiles(store: FileStore, storage: DurableObjectStorage): Fil
     },
     snapshot: () => new Map(rows().map((row) => [fromStore(row.path), textOf(row)])),
     bytes: () => new Map(rows().map((row) => [fromStore(row.path), bytesOf(row)])),
+    // Think's bash writes back every file it changed as base64, text included.
+    contents: () =>
+      new Map(
+        rows().map((row) => {
+          const path = fromStore(row.path);
+          const content = row.content_encoding === "base64" ? textOrBytes(bytesOf(row), { keepBom: path.startsWith("public/") }) : (row.content ?? "");
+          return [path, content];
+        }),
+      ),
     write: (path, content) => store.writeFile(toStore(path), content),
     copyAside: () => {
       sql.exec(`DROP TABLE IF EXISTS ${copyTable}`);

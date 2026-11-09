@@ -1,4 +1,5 @@
 import { maxFileBytes as defaultMaxFileBytes } from "../files";
+import { toBase64 } from "../shared/base64";
 
 /** A Package's files, as its tarball holds them. */
 export interface DownloadedPackage {
@@ -139,7 +140,7 @@ async function checkIntegrity(
     const expected = hashes.filter((hash) => hash.startsWith(`${prefix}-`)).map((hash) => hash.slice(prefix.length + 1));
     if (expected.length === 0) continue;
     // SRI passes when any hash of the strongest algorithm matches.
-    if (expected.includes(base64(await digest(algorithm, tarball)))) return;
+    if (expected.includes(toBase64(await digest(algorithm, tarball)))) return;
     throw new Error(`${url} doesn't match its ${prefix} integrity value`);
   }
   if (!shasum) throw new Error(`${url} has no integrity value to check it against`);
@@ -152,7 +153,6 @@ async function digest(algorithm: string, data: Uint8Array<ArrayBuffer>): Promise
   return new Uint8Array(await crypto.subtle.digest(algorithm, data));
 }
 
-const base64 = (bytes: Uint8Array) => btoa(String.fromCharCode(...bytes));
 const hex = (bytes: Uint8Array) => [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 
 const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });

@@ -40,7 +40,7 @@ import {
 import type { Build, Builder, FileSource } from "../builder";
 import { isolatedBuilder, tooBigToBuild } from "../builder/isolated";
 import { checkInDynamicWorker } from "../checker/isolated";
-import { isHidden, normalisePath, storeFiles, type Files } from "../files";
+import { isHidden, normalisePath, storeFiles, textOrBytes, type Files } from "../files";
 import { Packages, type PackageStatus } from "../packages";
 import { registryClient, type Registry } from "../packages/registry";
 import { isWarning, type PreviewProblems } from "../shared/app-logs";
@@ -109,8 +109,6 @@ const appKeys = [appStartedKey, appLabelKey, appSentKey, checkKey, buildKey, tes
 // A report is kept in one key-value row, which holds at most 2 MB, so its
 // problems are trimmed to a budget well inside that.
 const reportBudgetBytes = 1_000_000;
-// Keeps a byte order mark, so a file saved back from the editor is unchanged.
-const strictUtf8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const busy = { ok: false, busy: true, error: "The Agent is working. Wait for its Turn to end." } as const;
 // A Turn's model steps, its retries included, so a confused Agent can't run up a large bill.
 const turnSteps = 40;
@@ -465,11 +463,8 @@ export class Workspace extends Think<Env, ConversationState> {
   async readFile(path: string): Promise<OpenedFile | null> {
     const bytes = this.files.readBytes(path);
     if (!bytes) return null;
-    try {
-      return { text: strictUtf8.decode(bytes) };
-    } catch {
-      return { binary: true };
-    }
+    const content = textOrBytes(bytes, { keepBom: true });
+    return typeof content === "string" ? { text: content } : { binary: true };
   }
 
   /**
@@ -949,7 +944,7 @@ export class Workspace extends Think<Env, ConversationState> {
    * for a Workspace file at the same path.
    */
   private withPackages(): FileSource {
-    const own = this.files.snapshot();
+    const own = this.files.contents();
     const packages = this.packages.files();
     const packagePaths = new Set(packages.paths());
     return {

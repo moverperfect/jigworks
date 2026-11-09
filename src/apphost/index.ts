@@ -1,5 +1,6 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
+import { fromBase64, toBase64 } from "../shared/base64";
 import { appDataBinding, appDataModule, appDataWrapper } from "./app-data";
 import { assetResponse, type AppAssets } from "./assets";
 import { longestSecret, maxSecrets, secretProblem, withoutSecrets } from "./secrets";
@@ -53,6 +54,14 @@ export function runnable(build: Build): RunnableBuild {
 
 /** A Build as the app host keeps it. Builds kept before ticket 09 have no assets, and before ticket 11 no Durable Object bindings. */
 type KeptBuild = Omit<RunnableBuild, keyof AppAssets | "durableObjects"> & Partial<Pick<RunnableBuild, keyof AppAssets | "durableObjects">>;
+
+/** A Build as build_chunks holds it, in JSON, each asset that isn't text as base64 (#110). A KeptBuild has those as bytes. */
+type BuildAsJson = Omit<KeptBuild, "assets"> & { assets?: Record<string, string | { base64: string }> };
+
+/** The assets, with each one that isn't text changed by `change`. */
+function mapAssets<From, To>(assets: Record<string, string | From>, change: (content: From) => To): Record<string, string | To> {
+  return Object.fromEntries(Object.entries(assets).map(([path, content]) => [path, typeof content === "string" ? content : change(content)]));
+}
 
 /** The Build the Preview took last, and the id of the last log line before it, or before the Secrets last changed, if later. */
 interface PreviewLogsFrom {
@@ -128,7 +137,7 @@ export class AppHost extends DurableObject<Env> {
     const kv = this.ctx.storage.kv;
     const previous = kv.get<string>("preview");
     if (previous === build.hash) return { accepted: true };
-    const text = JSON.stringify(build);
+    const text = JSON.stringify({ ...build, assets: mapAssets(build.assets, (bytes) => ({ base64: toBase64(new Uint8Array(bytes)) })) });
     this.ctx.storage.transactionSync(() => {
       if (previous) this.forget(previous);
       for (let part = 0; part * chunkCharacters < text.length; part++) {
@@ -496,7 +505,8 @@ export class AppHost extends DurableObject<Env> {
     let build = this.loaded.get(name);
     if (!build) {
       const parts = this.sql().exec<{ body: string }>("SELECT body FROM build_chunks WHERE hash = ? ORDER BY part", name).toArray();
-      build = JSON.parse(parts.map(({ body }) => body).join("")) as KeptBuild;
+      const kept = JSON.parse(parts.map(({ body }) => body).join("")) as BuildAsJson;
+      build = { ...kept, assets: kept.assets && mapAssets(kept.assets, ({ base64 }) => fromBase64(base64).buffer) };
       this.loaded.set(name, build);
     }
     return build;

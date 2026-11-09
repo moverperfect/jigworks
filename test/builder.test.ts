@@ -215,6 +215,17 @@ describe("Builds in a Dynamic Worker (#87)", () => {
     expect(sent.get("node_modules/a/index.js")).toBe(files.get("node_modules/a/index.js"));
   });
 
+  it("sends a file that isn't UTF-8 text as its bytes, and hashes them (#110)", async () => {
+    const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x0a]);
+    const files = new Map<string, string | Uint8Array>([...project("export {};\n"), ["public/logo.png", png]]);
+    const sent = await snapshotFrom(bundledStream(filesOf(files)));
+    expect(sent.get("public/logo.png")).toEqual(png);
+    expect(sent.get("src/index.ts")).toBe("export {};\n");
+    // Both bytes read as the same text, U+FFFD.
+    const changed = new Map(files).set("public/logo.png", png.with(5, 0xfe));
+    expect(await hashOf(filesOf(changed))).not.toBe(await hashOf(filesOf(files)));
+  });
+
   it("starts esbuild's Go runtime with GOGC=25 in the Builder and the Test bundler, to lower its peak memory", () => {
     for (const packed of [builderWorker, testBundler]) expect(packed.split('this.env={GOGC:"25"}')).toHaveLength(2);
   });

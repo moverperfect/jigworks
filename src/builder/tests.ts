@@ -4,6 +4,7 @@
 import { createWorker } from "@cloudflare/worker-bundler";
 import { DecodedMap, getOriginalPosition } from "@vitest/utils/source-map";
 import { init as initLexer } from "es-module-lexer/js";
+import { fromBase64 } from "../shared/base64";
 import type { BuildProblem } from "../shared/build-report";
 import { parseJsonc } from "../shared/jsonc";
 import { bundlerFiles, esbuildProblems, missingImports, type Snapshot } from "./bundling";
@@ -59,7 +60,7 @@ export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtu
   await initLexer();
   const at = code.lastIndexOf(inlineSourceMap);
   // The Tester needs only the mappings, so the sources, most of the map, go.
-  const { sourcesContent: _, ...sourceMap } = at === -1 ? {} : JSON.parse(fromBase64(code.slice(at + inlineSourceMap.length).trim()));
+  const { sourcesContent: _, ...sourceMap } = at === -1 ? {} : JSON.parse(new TextDecoder().decode(fromBase64(code.slice(at + inlineSourceMap.length).trim())));
   // The bundle is one module, so a relative import left in it wasn't found either.
   const missing = missingImports(code, { relative: true });
   if (missing.length > 0) {
@@ -79,13 +80,6 @@ export async function bundleTests(snapshot: Snapshot, testFiles: string[], virtu
     compatibilityDate: config.compatibility_date,
     compatibilityFlags: config.compatibility_flags ?? [],
   };
-}
-
-function fromBase64(base64: string): string {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-  return new TextDecoder().decode(bytes);
 }
 
 /** Which Workspace file, and where in it, the bundle's text at `offset` came from, by its source map. */
