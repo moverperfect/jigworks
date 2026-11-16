@@ -73,6 +73,44 @@ describe("build", () => {
     expect(result.modules[result.mainModule]).not.toContain('"node"');
   });
 
+  // Before #116, a Worker with nodejs_compat, as both Templates set, was bundled for Node, where esbuild defines no
+  // NODE_ENV, and a Worker alone without it wasn't minified, so esbuild defined "development".
+  it.each([
+    { app: "a Worker alone", nodejsCompat: true, frontEnd: false },
+    { app: "a Worker alone without nodejs_compat", nodejsCompat: false, frontEnd: false },
+    { app: "an app with a front end", nodejsCompat: true, frontEnd: true },
+  ])("bundles only the production build of a Package that picks by NODE_ENV, for $app", async ({ nodejsCompat, frontEnd }) => {
+    const files = project('import { which } from "picky";\nexport default { fetch: () => new Response(which) };');
+    if (nodejsCompat) {
+      files.set("wrangler.jsonc", '{ "name": "app", "main": "src/index.ts", "compatibility_date": "2026-10-01", "compatibility_flags": ["nodejs_compat"] }');
+    }
+    if (frontEnd) {
+      files.set("index.html", '<!doctype html><html><body><script type="module" src="/src/client.ts"></script></body></html>');
+      files.set("src/client.ts", 'import { which } from "picky";\ndocument.body.append(which);\n');
+    }
+    // A Package that picks its build at run time, as React does, reading NODE_ENV each way Packages do.
+    files.set("node_modules/picky/package.json", JSON.stringify({ name: "picky", main: "index.js" }));
+    files.set(
+      "node_modules/picky/index.js",
+      [
+        'if (process.env.NODE_ENV === "production" && global.process.env.NODE_ENV === "production" && globalThis.process.env.NODE_ENV === "production")',
+        '  module.exports = require("./prod.js");',
+        'else module.exports = require("./dev.js");',
+      ].join("\n"),
+    );
+    files.set("node_modules/picky/prod.js", 'exports.which = "the production build";\n');
+    files.set("node_modules/picky/dev.js", 'exports.which = "the development build";\n');
+    const result = await build(files);
+    if (!result.ok) throw new Error(JSON.stringify(result.errors));
+    const worker = String(result.modules[result.mainModule]);
+    expect(worker).toContain("the production build");
+    expect(worker).not.toContain("the development build");
+    // The front end runs the same build, so a page the server renders hydrates.
+    for (const [path, code] of Object.entries(result.assets)) {
+      if (path.endsWith(".js")) expect(code).not.toContain("the development build");
+    }
+  });
+
   it("reuses a recent Build of the same inputs, going back and forth", async () => {
     const builder = isolatedBuilder(env.LOADER);
     const first = filesOf(project('export default { fetch: () => new Response("one") };'));
