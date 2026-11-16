@@ -1331,3 +1331,28 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 - **Front-end errors from an open Preview pane:** the Worker Template has no front end. The Workspace page, with its Preview pane, was open during the Turn.
 - **Warnings,** and the Agent judging one harmless: covered only by the scripted model's tests (`test/preview-errors.test.ts`).
 - **`request_preview` beyond `GET /`:** the Agent didn't call it. The only route it changed was `GET /`, which the platform's tries covered.
+
+## One build of each Package in a Build's Worker (#116)
+
+**Verdict: yes.** On the deployed platform, an app's Worker now runs React's production build, the same build as its front end. Before #116, a Package that picks its build by `process.env.NODE_ENV` ran its development build in the Worker, and the Worker bundle held both builds.
+
+- **Before, locally, on 2026-11-09 (#55):** the Worker + React Template, plus a server that called `renderToString`. Its minified Worker bundle was 602,378 bytes, with `process.env.NODE_ENV` still in it. With the value defined as `"production"`, it was 236,241 bytes. The front end's bundle was 224,204 bytes either way.
+- **The fix:** each Build defines `process.env.NODE_ENV`, `global.process.env.NODE_ENV` and `globalThis.process.env.NODE_ENV` as `"production"`, as wrangler does. `bundlingVersion` is 3. `test/builder.test.ts` covers a Worker alone, with and without `nodejs_compat`, and an app with a front end.
+
+### After, deployed
+
+- **Platform:** the deployed platform at `main` (`dcf2a8e`, with #137), checked on 2026-11-16 from the Developer's signed-in browser (T3's preview tools). No Turns ran.
+- **The app:** a Workspace made for the check from the Worker + React Template, and deleted afterwards. Its server imported `createElement` from `react` and `renderToString` from `react-dom/server`, and added `GET /api/react-build`. That route answers with three things:
+  - `process.env.NODE_ENV`;
+  - whether `createElement("p")` has a `_store`, which only React's development build gives an element;
+  - `renderToString` of a paragraph.
+- **The Build:** the call to build took 3.95 s from the browser, with no errors or warnings. It wasn't cached, and the Preview ran it at once.
+- **The Preview's answer**, through the Developer's Preview sign-in:
+
+| `nodeEnv` | `developmentReact` | `html` |
+| --- | --- | --- |
+| `"production"` | `false` | `<p>Rendered on the server</p>` |
+
+**Not covered:**
+- **The deployed Worker bundle's size:** the platform doesn't show a Build's modules, so the size comes from the local figures above.
+- **Hydration of a page the server renders:** neither Template renders on the server.
