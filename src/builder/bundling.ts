@@ -81,8 +81,8 @@ export async function snapshotFrom(stream: ReadableStream<Uint8Array>): Promise<
   return snapshot;
 }
 
-/** Changes when the same files bundle differently, so a Build's hash does too. 2: no `node` conditions. */
-export const bundlingVersion = 2;
+/** Changes when the same files bundle differently, so a Build's hash does too. 2: no `node` conditions. 3: `NODE_ENV` is `"production"`. */
+export const bundlingVersion = 3;
 
 /**
  * The snapshot as the bundler takes it. The bundler runs its own npm

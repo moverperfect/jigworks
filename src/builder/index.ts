@@ -124,6 +124,7 @@ export async function build(contents: ReadonlyMap<string, FileContent>, hash?: s
         jsx: "automatic",
         jsxImportSource: "react",
         minify: true,
+        define: production,
       });
       ({ mainModule, modules } = app);
       assets = app.assets;
@@ -132,7 +133,7 @@ export async function build(contents: ReadonlyMap<string, FileContent>, hash?: s
       clientBundles = (app.clientBundles ?? []).filter((path) => !path.endsWith(".css"));
       tailwindCandidates = front.tailwindCandidates;
     } else {
-      const worker = await createWorker({ files });
+      const worker = await createWorker({ files, define: production });
       ({ mainModule, modules } = worker);
       warningTexts = worker.warnings ?? [];
     }
@@ -187,6 +188,19 @@ export async function build(contents: ReadonlyMap<string, FileContent>, hash?: s
     warnings,
   };
 }
+
+/**
+ * esbuild defines `process.env.NODE_ENV` by itself only for the browser, and
+ * as `"production"` only when minifying. So a Worker with `nodejs_compat`,
+ * bundled for Node, left it to run time, where it's unset, and a Worker alone
+ * without it got `"development"`. Defined here, every Worker holds one build
+ * of each Package that picks by `process.env.NODE_ENV`, the same build the
+ * front end runs. It's replaced as the Worker is bundled, so a `NODE_ENV` in
+ * `vars` doesn't change it (#116). These are the forms wrangler defines.
+ */
+const production = Object.fromEntries(
+  ["process.env.NODE_ENV", "global.process.env.NODE_ENV", "globalThis.process.env.NODE_ENV"].map((name) => [name, '"production"']),
+);
 
 type WranglerAssets = { not_found_handling?: unknown; run_worker_first?: unknown };
 
