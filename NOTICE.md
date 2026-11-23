@@ -52,7 +52,7 @@ The Checker runs ts-rust's WebAssembly module (`vendor/ts-rust-wasm`): MIT, copy
 | `eventsource-parser` | 3.1.1 | MIT |
 | `extend` | 3.0.2 | MIT |
 | `fflate` | 0.8.3 | MIT |
-| `hono` | 4.13.13 | MIT |
+| `hono` | 4.13.19 | MIT |
 | `is-plain-obj` | 4.1.0 | MIT |
 | `jose` | 6.2.12 | MIT |
 | `just-bash` | 3.6.0 | Apache-2.0 |
@@ -2390,7 +2390,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### hono 4.13.13
+### hono 4.13.19
 
 ```text
 MIT License

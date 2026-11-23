@@ -435,7 +435,7 @@ describe("the Agent's own tools", () => {
     const [, reply] = await history(workspace.id);
     const said = textOf(reply!);
     // The listing: the version, then its declarations and package.json, and none of its scripts.
-    expect(said).toContain("hono 4.13.13");
+    expect(said).toContain("hono 4.13.19");
     expect(said).toContain("\ndist/types/index.d.ts\n");
     expect(said).toContain("\npackage.json");
     expect(said).not.toContain("dist/index.js");
