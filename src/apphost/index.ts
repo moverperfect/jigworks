@@ -1,7 +1,7 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
 import { fromBase64, toBase64 } from "../shared/base64";
-import { appDataBinding, appDataModule, appDataWrapper } from "./app-data";
+import { appDataBinding, appDataModule, appDataWrapper, platformEnvPrefix, ringMethod, type RingAnswer } from "./app-data";
 import { assetResponse, type AppAssets } from "./assets";
 import { longestSecret, maxSecrets, secretProblem, withoutSecrets } from "./secrets";
 import type { Secret } from "../shared/secret";
@@ -104,6 +104,19 @@ const deploymentCopy = "deployment";
 const retiredSecretsKeptMs = 60 * 60 * 1000;
 // How long the Agent's request to the Preview waits for its response, all of it.
 const previewWaitSeconds = 10;
+// When the app host wakes an instance again that couldn't answer a wake for its alarm (ADR 0021).
+const unansweredWakeMs = 60 * 1000;
+// The furthest ahead the app host sets its own alarm, so an app's alarm years away can't make it fail.
+const longestWakeMs = 365 * 24 * 60 * 60 * 1000;
+
+/** A row of the alarms table: a wake for one instance (ADR 0021). */
+type AlarmRow = {
+  version: number;
+  slot: Slot;
+  binding: string;
+  id: string;
+  name: string | null;
+};
 
 /**
  * One per app, named by its label (`<slug>-<random>`): the Workspace's
@@ -120,6 +133,8 @@ export class AppHost extends DurableObject<Env> {
   private loaded = new Map<string, KeptBuild>();
   // The facets started since this object started, which new code must stop.
   private running = new Set<string>();
+  // The versions of the alarms rows being rung (ADR 0021).
+  private ringing = new Set<number>();
   private tablesReady = false;
 
   /** The Workspace this app belongs to, or null before it has one. */
@@ -392,6 +407,7 @@ export class AppHost extends DurableObject<Env> {
         CREATE TABLE IF NOT EXISTS facets (name TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS retired_secrets (name TEXT NOT NULL, value TEXT NOT NULL, retired_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS alarms (version INTEGER PRIMARY KEY AUTOINCREMENT, slot TEXT NOT NULL, binding TEXT NOT NULL, id TEXT NOT NULL, name TEXT, at INTEGER NOT NULL, UNIQUE (slot, binding, id));
       `);
       this.tablesReady = true;
     }
@@ -487,7 +503,7 @@ export class AppHost extends DurableObject<Env> {
     try {
       response = await this.workerOf(slot, build).getEntrypoint().fetch(forApp(request));
     } catch (error) {
-      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      const message = described(error);
       this.log(slot, "server", [{ level: "exception", message }]);
       return new Response(`The app threw an error: ${message}`, { status: 500 });
     }
@@ -550,8 +566,22 @@ export class AppHost extends DurableObject<Env> {
    * app reached it by name.
    */
   async callFacet(slot: Slot, binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {
+    // The platform's own methods, such as the one that rings an alarm, are only the app host's to call.
+    if (method.startsWith(platformEnvPrefix)) throw new TypeError(`The RPC receiver does not implement the method "${method}".`);
     const facet = this.facet(slot, binding, id, name) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
     return facet[method]!(...args);
+  }
+
+  /** Whether the slot's Build has the Durable Object binding. */
+  private hasBinding(slot: Slot, binding: string): boolean {
+    return Object.hasOwn(this.buildIn(slot)?.durableObjects ?? {}, binding);
+  }
+
+  /** The slot's Build, unless it lacks `binding` or the ID isn't one. */
+  private checkInstance(slot: Slot, binding: string, id: string): KeptBuild {
+    if (!this.hasBinding(slot, binding)) throw new Error(`The app has no Durable Object binding named ${binding}.`);
+    if (!/^[0-9a-f]{64}$/.test(id)) throw new TypeError(`Invalid Durable Object ID: ${id}`);
+    return this.buildIn(slot)!;
   }
 
   /**
@@ -560,16 +590,14 @@ export class AppHost extends DurableObject<Env> {
    * the Deployment's never meet (ADR 0015).
    */
   private facet(slot: Slot, binding: string, id: string, name: string | null): Fetcher {
-    const build = this.buildIn(slot);
-    const bindings = build?.durableObjects ?? {};
-    if (!build || !Object.hasOwn(bindings, binding)) throw new Error(`The app has no Durable Object binding named ${binding}.`);
-    if (!/^[0-9a-f]{64}$/.test(id)) throw new TypeError(`Invalid Durable Object ID: ${id}`);
+    const build = this.checkInstance(slot, binding, id);
     const facetName = `${slot}:${binding}:${id}`;
     this.sql().exec("INSERT OR IGNORE INTO facets (name) VALUES (?)", facetName);
     this.running.add(facetName);
     const worker = this.workerOf(slot, build);
     return this.ctx.facets.get(facetName, () => ({
-      class: worker.getDurableObjectClass(bindings[binding]!),
+      // The instance learns which it is from ctx.props, to tell the app host about its alarm.
+      class: worker.getDurableObjectClass(build.durableObjects![binding]!, { props: { binding, id, name } }),
       // An ID of the instance's own, with its name if the app reached it by
       // name, as ctx.id.name gives. A namespace's ID carries the name.
       id: name === null ? id : this.env.APP_HOSTS.idFromName(name),
@@ -599,15 +627,99 @@ export class AppHost extends DurableObject<Env> {
   private async retireSecret(name: string): Promise<void> {
     this.sql().exec("INSERT INTO retired_secrets (name, value, retired_at) SELECT name, value, ? FROM secrets WHERE name = ?", Date.now(), name);
     // So the value goes after an hour even if nothing else happens.
-    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + retiredSecretsKeptMs);
+    await this.wakeNext();
   }
 
-  /** Forgets the retired values past their hour, and wakes again for the rest. */
+  /**
+   * Keeps the time an instance's alarm is due, so the app host wakes it then
+   * (ADR 0021). The instance tells the app host first, through `AppData`, and
+   * then writes the alarm in its own storage. The row only wakes: the
+   * instance decides whether to ring.
+   */
+  async keepAlarm(slot: Slot, binding: string, id: string, name: string | null, at: number): Promise<void> {
+    if (this.workspaceId() === null) throw new Error("There's no app here.");
+    this.checkInstance(slot, binding, id);
+    if (typeof at !== "number" || !Number.isFinite(at)) throw new TypeError("An alarm's time must be a number.");
+    const sql = this.sql();
+    const row = sql.exec<{ version: number; at: number }>("SELECT version, at FROM alarms WHERE slot = ? AND binding = ? AND id = ?", slot, binding, id).toArray()[0];
+    // The earlier of the two, as a new version, so a ring that's under way
+    // doesn't replace it. The instance may not keep the new time: its call
+    // can still fail. An early wake is only answered with the instance's own
+    // time. A row being rung is replaced: its answer would be lost to the new
+    // version, so an alarm() that sets the next would be woken again at once.
+    const kept = row && !this.ringing.has(row.version) ? Math.min(row.at, at) : at;
+    sql.exec("INSERT OR REPLACE INTO alarms (slot, binding, id, name, at) VALUES (?, ?, ?, ?, ?)", slot, binding, id, name, kept);
+    await this.wakeNext();
+  }
+
+  /** Wakes the instances whose alarms are due, and forgets the retired values past their hour. */
   override async alarm(): Promise<void> {
     const sql = this.sql();
     sql.exec("DELETE FROM retired_secrets WHERE retired_at <= ?", Date.now() - retiredSecretsKeptMs);
-    const next = sql.exec<{ oldest: number | null }>("SELECT MIN(retired_at) AS oldest FROM retired_secrets").one().oldest;
-    if (next !== null) await this.ctx.storage.setAlarm(next + retiredSecretsKeptMs);
+    const due = sql
+      .exec<AlarmRow>("SELECT version, slot, binding, id, name FROM alarms WHERE at <= ? ORDER BY at", Date.now())
+      .toArray();
+    // deferred: one at a time with no deadline, so a slow alarm() holds up the rest; #145 rings a few at a time, each with a deadline.
+    for (const row of due) {
+      await this.ring(row);
+      // The Workspace was deleted meanwhile: nothing of the app may be written again.
+      if (this.workspaceId() === null) return;
+    }
+    await this.wakeNext();
+  }
+
+  /**
+   * Wakes one instance. It answers with its alarm's time now, which replaces
+   * the row, unless the instance set its alarm again meanwhile. An instance
+   * that couldn't answer is woken again later.
+   */
+  private async ring({ version, slot, binding, id, name }: AlarmRow): Promise<void> {
+    // The binding has gone from the slot's code, so the instance can't run.
+    if (!this.hasBinding(slot, binding)) {
+      this.sql().exec("DELETE FROM alarms WHERE version = ?", version);
+      return;
+    }
+    let answer: Partial<RingAnswer> | null;
+    this.ringing.add(version);
+    try {
+      answer = await (this.facet(slot, binding, id, name) as unknown as Record<string, () => Promise<RingAnswer | null>>)[ringMethod]!();
+    } catch (error) {
+      if (this.workspaceId() === null) return;
+      // deferred: woken again every minute while it can't answer; #146 gives up after 6 retries.
+      this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} couldn't ring: ${described(error)}` }]);
+      this.sql().exec("UPDATE alarms SET at = ? WHERE version = ?", Date.now() + unansweredWakeMs, version);
+      return;
+    } finally {
+      this.ringing.delete(version);
+    }
+    if (this.workspaceId() === null) return;
+    const sql = this.sql();
+    // Retries of a failing alarm() come with #146.
+    if (typeof answer?.error === "string") this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} threw ${answer.error}` }]);
+    // The app's code could answer in its place, or put anything in its storage: only a time is one.
+    const next = typeof answer?.next === "number" && Number.isFinite(answer.next) ? answer.next : null;
+    if (next === null) sql.exec("DELETE FROM alarms WHERE version = ?", version);
+    else {
+      sql.exec("UPDATE alarms SET at = ? WHERE version = ?", next, version);
+      // A setAlarm during the ring replaced the row, and its call may yet fail: keep the earlier time.
+      sql.exec("UPDATE alarms SET at = MIN(at, ?) WHERE slot = ? AND binding = ? AND id = ? AND version != ?", next, slot, binding, id, version);
+    }
+  }
+
+  /**
+   * Sets the app host's own alarm for the earliest due time of the instances'
+   * alarms and the retired secrets, or within a year, for a time too far
+   * ahead for an alarm.
+   */
+  private async wakeNext(): Promise<void> {
+    const at = this.sql()
+      .exec<{ at: number | null }>(
+        "SELECT MIN(at) AS at FROM (SELECT at FROM alarms UNION ALL SELECT retired_at + ? AS at FROM retired_secrets)",
+        retiredSecretsKeptMs,
+      )
+      .one().at;
+    if (at === null) await this.ctx.storage.deleteAlarm();
+    else await this.ctx.storage.setAlarm(Math.min(at, Date.now() + longestWakeMs));
   }
 
   /** Counts changes of secrets, so each change loads a new Worker with the new env. */
@@ -708,6 +820,12 @@ export class AppHost extends DurableObject<Env> {
  * runs as a facet in the app's app host, in the slot the call came from (ADR 0015).
  */
 export class AppData extends WorkerEntrypoint<Env, { label: string; slot: Slot }> {
+  /** An instance's `setAlarm`, before it writes the alarm in its own storage (ADR 0021). */
+  setAlarm(binding: string, id: string, name: string | null, at: number): Promise<void> {
+    const { label, slot } = this.ctx.props;
+    return this.env.APP_HOSTS.getByName(label).keepAlarm(slot, binding, id, name, at);
+  }
+
   callFacet(binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {
     const { label, slot } = this.ctx.props;
     return this.env.APP_HOSTS.getByName(label).callFacet(slot, binding, id, name, method, args);
@@ -870,6 +988,11 @@ function cookieValue(header: string | null, name: string): string | null {
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+/** An error as the logs show it. */
+function described(error: unknown): string {
+  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
 function asText(value: unknown): string {

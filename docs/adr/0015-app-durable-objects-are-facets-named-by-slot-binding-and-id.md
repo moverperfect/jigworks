@@ -13,10 +13,11 @@ ADR 0006 gives apps Durable Objects and nothing else, run as facets inside the W
 - **Publishing doesn't copy data.** The Deployment's instances keep their own, and the Preview's stay with the Preview.
 - **The Build fails on what the platform doesn't have:** KV, D1, R2, queues, cron triggers, a binding to another Worker's class, and a class the app doesn't export.
 - **Every call makes extra hops,** from the app to `AppData`, then to the app host, then to the facet. Arguments and results must be values that can be copied.
-- **The binding is only in the `env` the platform passes in.** That's the `env` given to `fetch` and to the classes' constructors. `env` imported from `cloudflare:workers` can only hold what a Dynamic Worker's `env` can be given, so it has `AppData` but not the stand-in. `AppData` reaches only its own app and slot, so app code calling it directly gets nothing a binding wouldn't give.
+- **The binding is only in the `env` the platform passes in.** That's the `env` given to `fetch` and to the classes' constructors. `env` imported from `cloudflare:workers` can only hold what a Dynamic Worker's `env` can be given, so it has `AppData` but not the stand-in. `AppData` reaches only its own app and slot, so app code calling it directly gets nothing a binding wouldn't give, apart from waking its instances (ADR 0021).
 - **IDs aren't checked as Cloudflare checks them.** `idFromName` is an unkeyed hash, and `idFromString` takes any 64-character hex string. An app that hands out `newUniqueId()` IDs as secrets is no weaker, since they're random, but one that trusts IDs it is given can't rely on the platform to refuse forged ones.
 - **The app host keeps the name of every facet it starts,** so it can delete them with the Workspace: `deleteAll()` doesn't reach a facet's database, as the deletion test shows. For new code it aborts only the facets running at the time, which it remembers in memory.
 - **Not supported:**
   - jurisdictions and location hints;
   - WebSockets into an instance: the instance accepts one, but the stand-in's `fetch` goes by RPC, which can't carry the socket back, so the app gets `DataCloneError` (#109, `docs/findings.md`);
-  - alarms in an instance: workerd refuses `setAlarm` in a facet, failing the call, and `alarm()` never runs (#107, `docs/findings.md`).
+  - workerd's own alarms in an instance: workerd refuses `setAlarm` in a facet, failing the call, and `alarm()` never runs (#107, `docs/findings.md`). The app host keeps them instead (ADR 0021);
+  - `deleteAll()` in an instance, locally: workerd refuses it, and the instance's database is broken until it restarts (`test/app-data.test.ts`). On Cloudflare, it's to be checked (#144).
