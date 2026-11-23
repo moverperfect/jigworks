@@ -15,7 +15,7 @@ The experiment asks whether Workers isolates alone can be where an application i
 - **Memory is the main constraint.** An isolate has 128 MB. A ts-rust run takes 58–73 MB, and esbuild never gives its memory back. So Checks, the tests' bundling and Builds run in Dynamic Workers of their own. In the Durable Object, a Check after a Build or with both React tsconfigs went over the limit (stage 1), the React Template's third test run did (stage 6), and so did every Build of a large app (#87). What an app can build is limited by the Packages it bundles: a small app with a UI kit's Packages took esbuild near the limit by itself (#99).
 - **The toolchain is narrower.** There's no Vite or Node: the platform reproduces what a project's config would do, compiles Tailwind without plugins, and tests without a DOM, module mocks or snapshots.
 - **Apps get Durable Objects and nothing else** for storage (ADR 0006).
-- **Apps can't run on a schedule yet.** Their Durable Objects are facets, whose alarms never ring, deployed or locally. Locally, the app host could keep their alarms for them (#107).
+- **Apps run on a schedule through alarms, kept by the app host** (ADR 0021, #144). Their Durable Objects are facets, whose own alarms never ring (#107), so the app host wakes each instance when its alarm is due. Deployed, alarms rang 1–13 ms after their time. Cron triggers still aren't available.
 - **Apps can't have live updates over WebSockets yet.** An upgrade reaches an app's Durable Object, but the platform's RPC hop can't carry the socket back, locally and deployed. Locally, sending upgrades over `fetch` instead works, with hibernation (#109).
 - **Only Chrome was checked,** from stage 4 on. Firefox and WebKit are still to check.
 
@@ -1371,3 +1371,29 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 **Not covered:**
 - **The Worker + React Template:** the full suite builds and runs it as an app with the same hono. The live check used the Worker Template only.
 - **Existing Workspaces:** each one installs the versions in its own `package.json`, so it stays on hono 4.13.13 until its hono is moved.
+
+## An app's alarm in its own slot (#144)
+
+**Verdict: yes.** On the deployed platform, an app's Durable Objects set alarms with `this.ctx.storage.setAlarm(...)`, and the app host rang each one with an `alarm()` handler. Each slot rang with its own code and data. One set before a new Build rang with the new code, and one set before a publish rang in the Deployment with the published code. Every alarm rang 1–13 ms after its time, with `{ retryCount: 0, isRetry: false }`, and `getAlarm()` read `null` during `alarm()` and afterwards.
+
+- **Platform:** the deployed platform at `main` (`99ccc51`, with #150), checked on 2026-11-23 from the Developer's signed-in browser (T3's preview tools, Chrome), with the tail running. No Turns ran.
+- **The app:** a Workspace made for the check with `POST /api/workspaces` and `{ name, template: "worker" }`, given a `PINGER` binding to a `Pinger` class. `/set?name=&ms=` sets an alarm `ms` ahead, `/wipe` sets one and then calls `deleteAll()`, and `/state` reads the rings and `getAlarm()`. `alarm()` records the code's version, the time it was due and the time it rang, and logs a line. The Workspace was deleted afterwards.
+- **The Preview** was reached through sign-in links in a hidden frame and read through its logs (`GET /api/workspaces/:id/preview/logs`). **The Deployment** was opened at its URL in a tab.
+
+| Slot | Instance | Set by | Then | Due (UTC) | Rang with | Late |
+| --- | --- | --- | --- | --- | --- | ---: |
+| Preview | `a` | v1 | v2 built 5 s before it was due | 22:05:22.680 | v2 | 11 ms |
+| Deployment | `a` | v1 | – | 22:05:30.956 | v1 | 1 ms |
+| Preview | `b` | v1 | v2 built 59 s before it was due | 22:06:17.587 | v2 | 2 ms |
+| Deployment | `d` | v1 | v2 published 58 s before it was due | 22:06:36.096 | v2 | 13 ms |
+| Preview | `c` | v2 | `deleteAll()` straight after | 22:05:53.421 | didn't ring | – |
+
+- **Each slot's data is its own.** The Preview's `a` and the Deployment's `a` each rang once, in their own slot.
+- **`deleteAll()` works in a facet deployed,** unlike locally, where workerd refuses it and the instance's database stays broken until it restarts (`test/app-data.test.ts`). Deployed, it returned, `getAlarm()` then read `null`, and the instance went on working. The app host still woke `c` at its time, which found no alarm and rang nothing, as ADR 0021 intends.
+- **The app host's own alarm** fired at each due time to the millisecond, as the tail shows, and each wake took 11–39 ms of wall time and 0–1 ms of CPU. The tail missed the wake for the Preview's `a`, whose ring is in the Preview's logs.
+- **`setAlarm`'s call to the app host** (`AppData.setAlarm`, then `AppHost.keepAlarm`) took 21–48 ms of wall time on Cloudflare's side, from the trace.
+
+**Not covered:**
+- **Retries and limits:** a failing `alarm()` is logged and dropped, and there's no minimum interval or cap per slot yet (#145, #146).
+- **An alarm hours or days ahead:** the longest was a minute.
+- **The real model:** no Turn wrote an alarm. The Agent's instructions don't mention alarms yet (#147).

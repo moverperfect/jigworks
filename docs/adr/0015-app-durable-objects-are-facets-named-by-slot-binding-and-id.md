@@ -20,4 +20,4 @@ ADR 0006 gives apps Durable Objects and nothing else, run as facets inside the W
   - jurisdictions and location hints;
   - WebSockets into an instance: the instance accepts one, but the stand-in's `fetch` goes by RPC, which can't carry the socket back, so the app gets `DataCloneError` (#109, `docs/findings.md`);
   - workerd's own alarms in an instance: workerd refuses `setAlarm` in a facet, failing the call, and `alarm()` never runs (#107, `docs/findings.md`). The app host keeps them instead (ADR 0021);
-  - `deleteAll()` in an instance, locally: workerd refuses it, and the instance's database is broken until it restarts (`test/app-data.test.ts`). On Cloudflare, it's to be checked (#144).
+  - `deleteAll()` in an instance, locally only: workerd refuses it, and the instance's database is broken until it restarts (`test/app-data.test.ts`). On Cloudflare it works, and clears the instance's alarm (`docs/findings.md`, #144).
