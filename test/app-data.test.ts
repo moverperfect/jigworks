@@ -1,10 +1,10 @@
-import { runInDurableObject } from "cloudflare:test";
+import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
 import { describe, expect, it } from "vitest";
 import type { BuildReport } from "../src/shared/build-report";
 import type { Deployment } from "../src/shared/deployment";
 import { accessToken, testAccess } from "./helpers/access";
-import { call, create } from "./helpers/api";
+import { call, create, waitFor } from "./helpers/api";
 
 // App data: an app's Durable Object binding, with each instance a facet in
 // the app host, and the Preview's data kept apart from the Deployment's
@@ -200,8 +200,10 @@ export default {
 
   // workerd's facets have no alarm scheduler (#107, docs/findings.md). If this
   // starts failing, facets may have alarms: recheck them in the Preview, the
-  // Deployment and after a new Build, and revisit ADR 0015. Deployed, the
-  // first call fails the same way but keeps its writes and the time.
+  // Deployment and after a new Build, and revisit ADRs 0015 and 0021. Deployed,
+  // the first call fails the same way but keeps its writes and the time. The
+  // app host keeps apps' alarms in place of workerd's own (ADR 0021), so the
+  // app reaches workerd's methods through the storage's prototype.
   it("can't set an alarm in an instance: the call fails, and takes its writes with it", async () => {
     const workspace = await create("Data Alarms");
     await save(workspace.id, "wrangler.jsonc", wrangler({ durable_objects: { bindings: [{ name: "NOTES", class_name: "Notes" }] } }));
@@ -217,7 +219,7 @@ export class Notes extends DurableObject {
     this.table();
     this.ctx.storage.sql.exec("INSERT INTO notes VALUES ('written before setAlarm')");
     try {
-      await this.ctx.storage.setAlarm(Date.now() + 60_000);
+      await Object.getPrototypeOf(this.ctx.storage).setAlarm.call(this.ctx.storage, Date.now() + 60_000);
       return "set";
     } catch (error) {
       return "caught: " + String(error);
@@ -226,7 +228,7 @@ export class Notes extends DurableObject {
   async state() {
     this.table();
     const rows = this.ctx.storage.sql.exec<{ n: number }>("SELECT COUNT(*) AS n FROM notes").one().n;
-    return { rows, alarm: await this.ctx.storage.getAlarm() };
+    return { rows, alarm: await Object.getPrototypeOf(this.ctx.storage).getAlarm.call(this.ctx.storage) };
   }
   override async alarm() {}
 }
@@ -305,5 +307,355 @@ export default {
     expect(await build(again.id)).toMatchObject({ ok: true });
     expect(await env.WORKSPACES.getByName(again.id).appLabel()).toBe(label);
     expect(await inPreview(again.id, "/read")).toBe("0");
+  });
+});
+
+/**
+ * An app whose Pinger instances record each ring of their alarm: the code's
+ * `version`, the alarm's info, and what getAlarm() read during alarm().
+ */
+const alarmApp = (version = "v1", { broken = false } = {}) => `import { DurableObject } from "cloudflare:workers";
+
+export class Pinger extends DurableObject {
+  constructor(ctx: DurableObjectState, env: unknown) {
+    super(ctx, env);
+    if (${broken}) throw new Error("the instance broke");
+  }
+
+  private rings() {
+    this.ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS rings (version TEXT NOT NULL, info TEXT NOT NULL, during INTEGER)");
+    return this.ctx.storage.sql.exec("SELECT version, info, during FROM rings").toArray();
+  }
+
+  async set(ms: number, repeat: number, every: number, fail: boolean, slow: boolean) {
+    this.ctx.storage.kv.put("repeat", repeat);
+    this.ctx.storage.kv.put("every", every);
+    this.ctx.storage.kv.put("fail", fail);
+    this.ctx.storage.kv.put("slow", slow);
+    await this.ctx.storage.setAlarm(new Date(Date.now() + ms));
+    return this.ctx.storage.getAlarm();
+  }
+
+  async setThenFail(ms: number) {
+    try {
+      await this.ctx.storage.transaction(async () => {
+        await this.ctx.storage.setAlarm(Date.now() + ms);
+        throw new Error("failed after setAlarm");
+      });
+    } catch (error) {
+      return String(error);
+    }
+  }
+
+  // Storage calls without await, which Cloudflare applies in the order they were made.
+  async unawaited(ms: number) {
+    const storage = this.ctx.storage;
+    const set = storage.setAlarm(Date.now() + ms);
+    const read = await storage.getAlarm();
+    await storage.deleteAlarm();
+    await set;
+    const later = storage.setAlarm(Date.now() + 3_600_000);
+    const sooner = storage.setAlarm(Date.now() + ms);
+    await Promise.all([later, sooner]);
+    return { read, set: await storage.getAlarm() };
+  }
+
+  async remove() {
+    await this.ctx.storage.deleteAlarm();
+  }
+
+  async wipe() {
+    await this.ctx.storage.deleteAll();
+  }
+
+  async state() {
+    return { rings: this.rings(), alarm: await this.ctx.storage.getAlarm() };
+  }
+
+  async facet() {
+    const storage = this.ctx.storage;
+    return { props: this.ctx.props, own: storage.setAlarm !== Object.getPrototypeOf(storage).setAlarm };
+  }
+
+  override async alarm(info: AlarmInvocationInfo) {
+    const during = await this.ctx.storage.getAlarm();
+    const rang = this.rings().length;
+    this.ctx.storage.sql.exec("INSERT INTO rings VALUES (?, ?, ?)", ${JSON.stringify(version)}, JSON.stringify(info), during);
+    if (this.ctx.storage.kv.get("slow")) await new Promise((resolve) => setTimeout(resolve, 1_000));
+    if (this.ctx.storage.kv.get("fail")) throw new Error("the alarm broke");
+    // A repeating alarm sets the next.
+    if (rang < (this.ctx.storage.kv.get<number>("repeat") ?? 0)) await this.ctx.storage.setAlarm(Date.now() + (this.ctx.storage.kv.get<number>("every") ?? 200));
+  }
+}
+
+export default {
+  async fetch(request: Request, env: { PINGER: DurableObjectNamespace<Pinger> }): Promise<Response> {
+    const url = new URL(request.url);
+    const pinger = env.PINGER.getByName(url.searchParams.get("name") ?? "a");
+    const ms = Number(url.searchParams.get("ms") ?? 200);
+    if (url.pathname === "/set") return Response.json(await pinger.set(ms, Number(url.searchParams.get("repeat") ?? 0), Number(url.searchParams.get("every") ?? 200), url.searchParams.has("fail"), url.searchParams.has("slow")));
+    if (url.pathname === "/unawaited") return Response.json(await pinger.unawaited(ms));
+    if (url.pathname === "/fail") return Response.json(await pinger.setThenFail(ms));
+    if (url.pathname === "/delete") return Response.json(await pinger.remove());
+    if (url.pathname === "/wipe") return Response.json(await pinger.wipe());
+    if (url.pathname === "/facet") return Response.json(await pinger.facet());
+    if (url.pathname === "/ring-itself") {
+      const ring = (pinger as unknown as Record<string, () => Promise<unknown>>).__jigworks_ring!;
+      return Response.json(await ring().then(() => "rang", (error) => String(error)));
+    }
+    return Response.json(await pinger.state());
+  },
+};
+`;
+
+interface PingerState {
+  rings: { version: string; info: string; during: number | null }[];
+  alarm: number | null;
+}
+
+const rang = (version: string) => ({ version, info: JSON.stringify({ retryCount: 0, isRetry: false }), during: null });
+
+const alarmWorkspace = async (name: string) => {
+  const workspace = await create(name);
+  await save(workspace.id, "wrangler.jsonc", wrangler({ durable_objects: { bindings: [{ name: "PINGER", class_name: "Pinger" }] } }));
+  await save(workspace.id, "src/index.ts", alarmApp());
+  expect(await build(workspace.id)).toMatchObject({ ok: true });
+  return workspace;
+};
+
+const appHostOf = async (id: string) => env.APP_HOSTS.getByName(await env.WORKSPACES.getByName(id).appLabel());
+
+/** Waits until a Pinger has rung `times` times, reading it with `read`. */
+const ringsOf = (read: () => Promise<string>, times = 1) =>
+  waitFor(
+    async () => JSON.parse(await read()) as PingerState,
+    (state) => state.rings.length >= times,
+  );
+
+describe("an app's alarms (ADR 0021)", () => {
+  it("relies on facets taking the platform's storage methods and props, and its own method ringing alarm()", async () => {
+    const workspace = await alarmWorkspace("Alarms Facets");
+    expect(JSON.parse(await inPreview(workspace.id, "/facet"))).toEqual({
+      props: { binding: "PINGER", id: expect.stringMatching(/^[0-9a-f]{64}$/), name: "a" },
+      own: true,
+    });
+    await inPreview(workspace.id, "/set?ms=100");
+    expect((await ringsOf(() => inPreview(workspace.id, "/state"))).rings).toEqual([rang("v1")]);
+    // Only the app host may wake an instance.
+    expect(JSON.parse(await inPreview(workspace.id, "/ring-itself"))).toContain("does not implement the method");
+  });
+
+  it("rings in each slot with that slot's code and data, and not in the other", async () => {
+    const workspace = await alarmWorkspace("Alarms Slots");
+    const { url, hash } = await publish(workspace.id, null);
+    await save(workspace.id, "src/index.ts", alarmApp("v2"));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+
+    await inPreview(workspace.id, "/set?ms=100");
+    await inDeployment(url, "/set?ms=300");
+    expect(await ringsOf(() => inDeployment(url, "/state"))).toEqual({ rings: [rang("v1")], alarm: null });
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v2")], alarm: null });
+
+    // Publishing doesn't copy the Preview's alarms.
+    await inPreview(workspace.id, "/set?name=b&ms=300");
+    await publish(workspace.id, hash);
+    expect(JSON.parse(await inDeployment(url, "/state?name=b"))).toEqual({ rings: [], alarm: null });
+    expect((await ringsOf(() => inPreview(workspace.id, "/state?name=b"))).rings).toEqual([rang("v2")]);
+    await inDeployment(url, "/set?name=c&ms=100");
+    await ringsOf(() => inDeployment(url, "/state?name=c"));
+    expect(JSON.parse(await inDeployment(url, "/state?name=b"))).toEqual({ rings: [], alarm: null });
+  });
+
+  it("rings with the new code when a new Build or a publish comes before it", async () => {
+    const workspace = await alarmWorkspace("Alarms New Code");
+    const first = await publish(workspace.id, null);
+    const host = await appHostOf(workspace.id);
+    const setAt = Date.now();
+    await inPreview(workspace.id, "/set?ms=1000");
+    await inDeployment(first.url, "/set?ms=1000");
+    // Held off, so the alarms can't ring before the new code is in.
+    await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+
+    await save(workspace.id, "src/index.ts", alarmApp("v2"));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await publish(workspace.id, first.hash);
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, setAt + 1_100 - Date.now())));
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v2")], alarm: null });
+    expect(JSON.parse(await inDeployment(first.url, "/state"))).toEqual({ rings: [rang("v2")], alarm: null });
+  });
+
+  it("reads the time while pending and null during alarm() and once rung, and keeps the next alarm that alarm() sets", async () => {
+    const workspace = await alarmWorkspace("Alarms Next");
+    const before = Date.now();
+    const at = JSON.parse(await inPreview(workspace.id, "/set?ms=200&repeat=1")) as number;
+    expect(at).toBeGreaterThanOrEqual(before + 200);
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [], alarm: at });
+
+    const state = await ringsOf(() => inPreview(workspace.id, "/state"), 2);
+    expect(state).toEqual({ rings: [rang("v1"), rang("v1")], alarm: null });
+  });
+
+  it("wakes next for the alarm that alarm() sets, not again at once", async () => {
+    const workspace = await alarmWorkspace("Alarms Wake Once");
+    const host = await appHostOf(workspace.id);
+    const setAt = Date.now();
+    await inPreview(workspace.id, "/set?ms=1000&repeat=1&every=60000");
+    // Held off, so only the pool's helper runs it.
+    await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, setAt + 1_100 - Date.now())));
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeGreaterThan(Date.now() + 30_000);
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v1")], alarm: expect.any(Number) });
+  });
+
+  it("doesn't ring after deleteAlarm(), or a call that failed after setAlarm()", async () => {
+    const workspace = await alarmWorkspace("Alarms Cancelled");
+    await inPreview(workspace.id, "/set?name=deleted&ms=100");
+    await inPreview(workspace.id, "/delete?name=deleted");
+    expect(JSON.parse(await inPreview(workspace.id, "/fail?name=failed&ms=100"))).toBe("Error: failed after setAlarm");
+    // Due after the others, so once it has rung, they've had their chance.
+    await inPreview(workspace.id, "/set?name=kept&ms=400");
+    expect((await ringsOf(() => inPreview(workspace.id, "/state?name=kept"))).rings).toEqual([rang("v1")]);
+    for (const name of ["deleted", "failed"]) {
+      expect(JSON.parse(await inPreview(workspace.id, `/state?name=${name}`))).toEqual({ rings: [], alarm: null });
+    }
+  });
+
+  it("keeps an earlier alarm when a later one's call fails", async () => {
+    const workspace = await alarmWorkspace("Alarms Kept");
+    await inPreview(workspace.id, "/set?ms=300");
+    expect(JSON.parse(await inPreview(workspace.id, "/fail?ms=3600000"))).toBe("Error: failed after setAlarm");
+    expect((await ringsOf(() => inPreview(workspace.id, "/state"))).rings).toEqual([rang("v1")]);
+  });
+
+  it("keeps a due alarm that hasn't rung yet when a later one's call fails", async () => {
+    const workspace = await alarmWorkspace("Alarms Kept Due");
+    const host = await appHostOf(workspace.id);
+    const setAt = Date.now();
+    await inPreview(workspace.id, "/set?ms=1000");
+    // Held off, so the alarm is due before the app host wakes it.
+    await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, setAt + 1_100 - Date.now())));
+    expect(JSON.parse(await inPreview(workspace.id, "/fail?ms=86400000"))).toBe("Error: failed after setAlarm");
+    // The app host's alarm is set for the due alarm again, so it may ring by itself first.
+    await runDurableObjectAlarm(host);
+    expect(await ringsOf(() => inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v1")], alarm: null });
+  });
+
+  it("keeps the order of storage calls made without await", async () => {
+    const workspace = await alarmWorkspace("Alarms Unawaited");
+    const { read, set } = JSON.parse(await inPreview(workspace.id, "/unawaited?ms=200")) as { read: number; set: number };
+    expect(read).toBeGreaterThan(Date.now() - 5_000);
+    // The last setAlarm stands, and the deleteAlarm in between took the first.
+    expect(set).toBeLessThan(Date.now() + 60_000);
+    const state = await ringsOf(() => inPreview(workspace.id, "/state"));
+    expect(state).toEqual({ rings: [rang("v1")], alarm: null });
+  });
+
+  it("takes an alarm too far ahead for an alarm of the app host's own", async () => {
+    const workspace = await alarmWorkspace("Alarms Far");
+    const far = Date.now() + 1e15;
+    expect(JSON.parse(await inPreview(workspace.id, "/set?ms=1e15"))).toBeGreaterThanOrEqual(far);
+    const host = await appHostOf(workspace.id);
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeLessThanOrEqual(Date.now() + 366 * 24 * 60 * 60 * 1000);
+    // Secrets still work, which set the app host's alarm too.
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/API_KEY`, { method: "PUT", body: { value: "a-secret-value" } })).status).toBe(204);
+  });
+
+  it("wakes an instance again that couldn't answer, until it can", async () => {
+    const workspace = await alarmWorkspace("Alarms Unanswered");
+    const host = await appHostOf(workspace.id);
+    const setAt = Date.now();
+    await inPreview(workspace.id, "/set?ms=1000");
+    // Held off, so the alarm rings only once the code is broken.
+    await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+    await save(workspace.id, "src/index.ts", alarmApp("v2", { broken: true }));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, setAt + 1_100 - Date.now())));
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+    const logs = await env.WORKSPACES.getByName(workspace.id).previewLogs();
+    expect(logs).toContainEqual(expect.objectContaining({ level: "exception", message: "The alarm of PINGER couldn't ring: Error: the instance broke" }));
+
+    await save(workspace.id, "src/index.ts", alarmApp("v3"));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    // A minute on.
+    await runInDurableObject(host, (_instance, state) => {
+      state.storage.sql.exec("UPDATE alarms SET at = at - 60000");
+    });
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v3")], alarm: null });
+  });
+
+  it("writes nothing more once its Workspace is deleted during a ring", async () => {
+    const workspace = await alarmWorkspace("Alarms Deleted Midway");
+    const host = await appHostOf(workspace.id);
+    await inPreview(workspace.id, "/set?ms=100&slow");
+    await inPreview(workspace.id, "/set?name=b&ms=100");
+    // alarm() has started, and waits a second before it ends.
+    await ringsOf(() => inPreview(workspace.id, "/state"));
+    const deleted = await call(`/api/workspaces/${workspace.id}`, { method: "DELETE", body: { confirmName: workspace.name } });
+    expect(deleted.status).toBe(204);
+    await new Promise((resolve) => setTimeout(resolve, 1_500));
+    expect(
+      await runInDurableObject(host, (_instance, state) => ({
+        tables: state.storage.sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE '\\_cf\\_%' ESCAPE '\\'").toArray(),
+        keys: [...state.storage.kv.list()],
+      })),
+    ).toEqual({ tables: [], keys: [] });
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeNull();
+  });
+
+  it("puts the error of an alarm() that throws in the slot's logs", async () => {
+    const workspace = await alarmWorkspace("Alarms Failing");
+    await inPreview(workspace.id, "/set?ms=100&fail");
+    const logs = await waitFor(
+      () => env.WORKSPACES.getByName(workspace.id).previewLogs(),
+      (lines) => lines.some(({ message }) => message.includes("PINGER")),
+    );
+    expect(logs).toContainEqual(expect.objectContaining({ level: "exception", message: "The alarm of PINGER threw Error: the alarm broke" }));
+    // Retries come with #146.
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v1")], alarm: null });
+  });
+
+  // workerd refuses deleteAll() in a facet ("expected parent == kj::none"), and
+  // the instance's database is broken until it restarts. The alarm is a table
+  // in that database, so deleteAll() would take it, as on Cloudflare. If this
+  // starts failing, facets may have deleteAll(): add it to the test above.
+  it("can't deleteAll() in an instance", async () => {
+    const workspace = await alarmWorkspace("Alarms Wiped");
+    const wiped = await env.WORKSPACES.getByName(workspace.id).requestPreview({ method: "GET", path: "/wipe" });
+    expect(wiped).toMatchObject({ status: 500, body: expect.stringContaining("internal error") });
+  });
+
+  it("wakes for the earliest of its alarms and its retired secrets, and does both", async () => {
+    const workspace = await alarmWorkspace("Alarms Secrets");
+    const host = await appHostOf(workspace.id);
+    const hostAlarm = () => runInDurableObject(host, (_instance, state) => state.storage.getAlarm());
+    await inPreview(workspace.id, "/set?name=later&ms=7200000");
+    const setSecret = (value: string) => call(`/api/workspaces/${workspace.id}/secrets/API_KEY`, { method: "PUT", body: { value } });
+    expect((await setSecret("the-old-value")).status).toBe(204);
+    expect((await setSecret("the-new-value")).status).toBe(204);
+    // A replaced secret is forgotten in an hour, before the alarm two hours away.
+    expect(await hostAlarm()).toBeLessThanOrEqual(Date.now() + 3_600_000);
+
+    // An hour on, with an alarm due too: one wake rings it and forgets the value.
+    await runInDurableObject(host, (_instance, state) => {
+      state.storage.sql.exec("UPDATE retired_secrets SET retired_at = retired_at - 3600001");
+    });
+    await inPreview(workspace.id, "/set?name=soon&ms=100");
+    expect((await ringsOf(() => inPreview(workspace.id, "/state?name=soon"))).rings).toEqual([rang("v1")]);
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.sql.exec("SELECT * FROM retired_secrets").toArray())).toEqual([]);
+    expect(await hostAlarm()).toBeGreaterThan(Date.now() + 3_600_000);
+  });
+
+  it("goes with its Workspace", async () => {
+    const workspace = await alarmWorkspace("Alarms Deleted");
+    const host = await appHostOf(workspace.id);
+    await inPreview(workspace.id, "/set?ms=3600000");
+    const deleted = await call(`/api/workspaces/${workspace.id}`, { method: "DELETE", body: { confirmName: workspace.name } });
+    expect(deleted.status).toBe(204);
+    expect(await runDurableObjectAlarm(host)).toBe(false);
   });
 });

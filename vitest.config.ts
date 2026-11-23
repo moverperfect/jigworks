@@ -66,6 +66,8 @@ export default defineConfig({
           name: "platform",
           include: ["test/**/*.test.ts"],
           testTimeout: 120_000,
+          // Each worker runs its own workerd, which compiles the large WebAssembly modules and can reach about 2 GB.
+          maxWorkers: 2,
           // Vitest empties CSS files, even read with `?raw`; test/colours.test.ts reads the page's colours.
           css: { include: [/client\/src\/styles\.css/] },
         },
