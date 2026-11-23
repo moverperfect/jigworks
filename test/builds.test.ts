@@ -73,7 +73,7 @@ describe("Builds", () => {
   it("installs Packages first when package.json changed without a save, as Think's tools change it", async () => {
     const workspace = await create("Tools");
     await runInDurableObject(env.WORKSPACES.getByName(workspace.id), async (instance) => {
-      const manifest = { name: "app", private: true, type: "module", dependencies: { "@fake/a": "1.0.0", hono: "4.13.13" } };
+      const manifest = { name: "app", private: true, type: "module", dependencies: { "@fake/a": "1.0.0", hono: "4.13.19" } };
       await instance.workspace.writeFile("/package.json", JSON.stringify(manifest));
       await instance.workspace.writeFile("/src/index.ts", worker('import { name } from "@fake/a";\nconsole.log(name);'));
     });

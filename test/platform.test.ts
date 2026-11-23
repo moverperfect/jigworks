@@ -168,7 +168,7 @@ describe("Exporting a Workspace", () => {
     expect(Object.keys(files).sort()).toEqual(
       ["AGENTS.md", "package.json", "src/index.test.ts", "src/index.ts", "tsconfig.json", "worker-configuration.d.ts", "wrangler.jsonc"].sort(),
     );
-    expect(JSON.parse(strFromU8(files["package.json"]!))).toMatchObject({ dependencies: { hono: "4.13.13" } });
+    expect(JSON.parse(strFromU8(files["package.json"]!))).toMatchObject({ dependencies: { hono: "4.13.19" } });
   });
 
 });

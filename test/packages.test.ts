@@ -30,7 +30,7 @@ describe("installing a new Workspace's Packages", () => {
     const workspace = await create("Fresh");
     expect(await status(workspace.id)).toEqual({
       state: "installed",
-      packages: [{ name: "hono", version: "4.13.13" }],
+      packages: [{ name: "hono", version: "4.13.19" }],
       warnings: [],
       error: null,
     });
@@ -60,8 +60,8 @@ describe("adding a Package", () => {
     const result = await add(workspace.id, { name: "@fake/a" });
     expect(result.package).toEqual({ name: "@fake/a", version: "1.0.0" });
     // @fake/shared 1.3.0 is too new as well, even though only @fake/a asked for it.
-    expect(installed(result)).toEqual({ "@fake/a": "1.0.0", "@fake/shared": "1.2.0", hono: "4.13.13" });
-    expect((await packageJson(workspace.id)).dependencies).toEqual({ "@fake/a": "1.0.0", hono: "4.13.13" });
+    expect(installed(result)).toEqual({ "@fake/a": "1.0.0", "@fake/shared": "1.2.0", hono: "4.13.19" });
+    expect((await packageJson(workspace.id)).dependencies).toEqual({ "@fake/a": "1.0.0", hono: "4.13.19" });
   });
 
   it("treats a version without a publish time as too new", async () => {
@@ -100,7 +100,7 @@ describe("the Package cache", () => {
 
   it("keeps the tarballs a Workspace installs, for every Workspace", async () => {
     await create("Fills the cache");
-    expect(await env.PACKAGE_CACHE.head(cacheKey(tarball("hono", "4.13.13")))).not.toBeNull();
+    expect(await env.PACKAGE_CACHE.head(cacheKey(tarball("hono", "4.13.19")))).not.toBeNull();
   });
 
   it("never chooses a version for being in the cache: the minimum age still applies", async () => {
@@ -155,7 +155,7 @@ describe("one version of each Package", () => {
   it("skips Packages built for one operating system or CPU", async () => {
     const workspace = await create("Native");
     const result = await add(workspace.id, { name: "@fake/with-native" });
-    expect(installed(result)).toEqual({ "@fake/with-native": "1.0.0", hono: "4.13.13" });
+    expect(installed(result)).toEqual({ "@fake/with-native": "1.0.0", hono: "4.13.19" });
     expect(result.warnings).toEqual([]);
   });
 });
@@ -166,10 +166,10 @@ describe("changing package.json by hand", () => {
     await add(workspace.id, { name: "@fake/a" });
     const saved = await call(`/api/workspaces/${workspace.id}/files/package.json`, {
       method: "PUT",
-      text: JSON.stringify({ name: "app", dependencies: { hono: "4.13.13" } }),
+      text: JSON.stringify({ name: "app", dependencies: { hono: "4.13.19" } }),
     });
     expect(saved.status).toBe(204);
-    expect(installed(await status(workspace.id))).toEqual({ hono: "4.13.13" });
+    expect(installed(await status(workspace.id))).toEqual({ hono: "4.13.19" });
     const files = await env.WORKSPACES.getByName(workspace.id).packageFiles();
     expect(Object.keys(files).some((path) => path.startsWith("node_modules/@fake/"))).toBe(false);
   });

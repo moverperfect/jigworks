@@ -77,7 +77,7 @@ describe("Checks", () => {
       projects: ["tsconfig.json"],
       problems: [],
       counts: { error: 0, warning: 0, suggestion: 0, message: 0 },
-      packages: { state: "installed", packages: [{ name: "hono", version: "4.13.13" }] },
+      packages: { state: "installed", packages: [{ name: "hono", version: "4.13.19" }] },
     });
     expect(await (await call(`/api/workspaces/${workspace.id}/check`)).json()).toEqual(report);
   });
@@ -108,7 +108,7 @@ describe("Checks", () => {
   it("installs Packages first when package.json changed without a save, as Think's tools change it", async () => {
     const workspace = await create("Tools");
     await runInDurableObject(env.WORKSPACES.getByName(workspace.id), async (instance) => {
-      const manifest = { name: "app", private: true, type: "module", dependencies: { "@fake/a": "1.0.0", hono: "4.13.13" } };
+      const manifest = { name: "app", private: true, type: "module", dependencies: { "@fake/a": "1.0.0", hono: "4.13.19" } };
       await instance.workspace.writeFile("/package.json", JSON.stringify(manifest));
     });
     const report = await check(workspace.id);
