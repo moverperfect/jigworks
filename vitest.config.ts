@@ -23,6 +23,11 @@ const [publicJwk, privateJwk] = await Promise.all([exportJWK(publicKey), exportJ
 
 export default defineConfig({
   test: {
+    // Each worker runs its own workerd, which compiles the large WebAssembly
+    // modules and can reach about 2 GB. Uncapped, vitest starts one per core,
+    // less one, which filled a shared machine's memory. Set at the root, not
+    // in a project, so `--maxWorkers` can lower it and every project shares it.
+    maxWorkers: 2,
     // The first Check and the first Build in an isolate compile large
     // WebAssembly modules, so each test is allowed two minutes.
     projects: [
@@ -66,8 +71,6 @@ export default defineConfig({
           name: "platform",
           include: ["test/**/*.test.ts"],
           testTimeout: 120_000,
-          // Each worker runs its own workerd, which compiles the large WebAssembly modules and can reach about 2 GB.
-          maxWorkers: 2,
           // Vitest empties CSS files, even read with `?raw`; test/colours.test.ts reads the page's colours.
           css: { include: [/client\/src\/styles\.css/] },
         },

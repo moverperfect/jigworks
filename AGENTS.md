@@ -23,6 +23,8 @@ A browser-based platform where a Developer and the Agent build and host Cloudfla
 
 Read `docs/development.md` before running, testing or deploying the platform, before a live check, and before upgrading Think, the Agents SDK, the AI SDK, worker-bundler, Tailwind or the vitest plugin.
 
+Don't raise `maxWorkers` in `vitest.config.ts` or pass a higher `--maxWorkers`: each vitest worker runs its own workerd, which can reach about 2 GB, and an uncapped run on a shared machine filled its memory and froze it.
+
 ## Agent skills
 
 ### Issue tracker
