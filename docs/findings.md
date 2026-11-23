@@ -1356,3 +1356,18 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 **Not covered:**
 - **The deployed Worker bundle's size:** the platform doesn't show a Build's modules, so the size comes from the local figures above.
 - **Hydration of a page the server renders:** neither Template renders on the server.
+
+## hono 4.13.19 in the platform and the Templates (#139)
+
+**Verdict: yes.** On the deployed platform, a new Workspace made from the Worker Template installs hono 4.13.19, and its app builds and runs in the Preview. #141 moved hono from 4.13.13 in the platform and both Templates together. It also moved `@hono/node-server` to 2.1.9 and `fast-xml-parser` to 5.12.1 through the lockfile. After the deploy, Dependabot showed no open alerts.
+
+- **Platform:** the deployed platform at `main` (`1d57255`, with #141), checked on 2026-11-23 from the Developer's signed-in browser (T3's preview tools). No Turns ran.
+- **The app:** a Workspace made for the check with `POST /api/workspaces` and `{ name, template: "worker" }`, which starts no Turn. It was deleted afterwards.
+- **Its Packages:** `package.json` asked for hono 4.13.19, and the install reported 4.13.19, with no warnings or errors.
+- **The Check:** no problems.
+- **The Build:** the call took 1.94 s from the browser and was not cached. It reported no errors or warnings, and the Preview was ready at once.
+- **The Preview,** opened from the Workspace page: the sign-in answered 303, then `GET /` answered 200 with "Hello from your Worker". The Preview reported no problems and logged nothing.
+
+**Not covered:**
+- **The Worker + React Template:** the full suite builds and runs it as an app with the same hono. The live check used the Worker Template only.
+- **Existing Workspaces:** each one installs the versions in its own `package.json`, so it stays on hono 4.13.13 until its hono is moved.
