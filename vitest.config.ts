@@ -50,6 +50,10 @@ export default defineConfig({
                 TEST_ACCESS_SIGNING_KEY: privateJwk,
                 // Long enough for a Dynamic Worker's tail to reach the app host.
                 PREVIEW_LOGS_WAIT_MS: 500,
+                // Apps' alarms: short enough to wait for, and a cap a test can reach.
+                APP_ALARM_MIN_INTERVAL_MS: 1_000,
+                APP_ALARMS_PER_SLOT: 8,
+                APP_ALARM_RING_DEADLINE_MS: 5_000,
               },
               // Outbound requests reach only the fake Access keys, the fake npm
               // registry, the scripted model and, for apps, the fake Resend.

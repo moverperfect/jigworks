@@ -77,7 +77,11 @@
     // How long the platform waits, after trying a new Preview for the Agent,
     // for its logs and an open Preview pane's front-end errors to arrive. The
     // platform's tests wait less.
-    "PREVIEW_LOGS_WAIT_MS": 3000
+    "PREVIEW_LOGS_WAIT_MS": 3000,
+    // Limits on apps' alarms: ADR 0021 and docs/development.md. The tests set less.
+    "APP_ALARM_MIN_INTERVAL_MS": 60000,
+    "APP_ALARMS_PER_SLOT": 1000,
+    "APP_ALARM_RING_DEADLINE_MS": 30000
   },
   // The Operator sets both with `wrangler secret put`. DEVELOPER_LIST is
   // comma-separated emails, and @domain entries for everyone at a domain; while

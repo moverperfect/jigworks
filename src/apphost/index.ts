@@ -108,6 +108,8 @@ const previewWaitSeconds = 10;
 const unansweredWakeMs = 60 * 1000;
 // The furthest ahead the app host sets its own alarm, so an app's alarm years away can't make it fail.
 const longestWakeMs = 365 * 24 * 60 * 60 * 1000;
+// How many instances' alarms the app host rings at once, so one slow alarm() can't hold up the rest.
+const ringsAtOnce = 5;
 
 /** A row of the alarms table: a wake for one instance (ADR 0021). */
 type AlarmRow = {
@@ -133,8 +135,8 @@ export class AppHost extends DurableObject<Env> {
   private loaded = new Map<string, KeptBuild>();
   // The facets started since this object started, which new code must stop.
   private running = new Set<string>();
-  // The versions of the alarms rows being rung (ADR 0021).
-  private ringing = new Set<number>();
+  // The versions of the alarms rows being rung, and their instances' facets (ADR 0021).
+  private ringing = new Map<number, string>();
   private tablesReady = false;
 
   /** The Workspace this app belongs to, or null before it has one. */
@@ -633,15 +635,24 @@ export class AppHost extends DurableObject<Env> {
   /**
    * Keeps the time an instance's alarm is due, so the app host wakes it then
    * (ADR 0021). The instance tells the app host first, through `AppData`, and
-   * then writes the alarm in its own storage. The row only wakes: the
-   * instance decides whether to ring.
+   * then writes the time this answers with in its own storage: no sooner
+   * than the minimum interval, so no app can run constantly. The row only
+   * wakes: the instance decides whether to ring.
    */
-  async keepAlarm(slot: Slot, binding: string, id: string, name: string | null, at: number): Promise<void> {
+  async keepAlarm(slot: Slot, binding: string, id: string, name: string | null, time: number): Promise<number> {
     if (this.workspaceId() === null) throw new Error("There's no app here.");
     this.checkInstance(slot, binding, id);
-    if (typeof at !== "number" || !Number.isFinite(at)) throw new TypeError("An alarm's time must be a number.");
+    if (typeof time !== "number" || !Number.isFinite(time)) throw new TypeError("An alarm's time must be a number.");
+    const at = Math.max(time, Date.now() + this.env.APP_ALARM_MIN_INTERVAL_MS);
     const sql = this.sql();
     const row = sql.exec<{ version: number; at: number }>("SELECT version, at FROM alarms WHERE slot = ? AND binding = ? AND id = ?", slot, binding, id).toArray()[0];
+    const cap = this.env.APP_ALARMS_PER_SLOT;
+    // deferred: a row stays until it's woken, so an alarm set in a call that failed counts until its time; bring such rows forward if apps reach the cap that way.
+    if (!row && sql.exec<{ rows: number }>("SELECT COUNT(*) AS rows FROM alarms WHERE slot = ?", slot).one().rows >= cap) {
+      throw new Error(
+        `The ${slot === "preview" ? "Preview" : "Deployment"} already has alarms set in ${cap.toLocaleString("en-GB")} Durable Object instances, the most it can have, so setAlarm() can't set another. Set alarms in fewer instances, such as one that keeps a list of times and sets its alarm for the next.`,
+      );
+    }
     // The earlier of the two, as a new version, so a ring that's under way
     // doesn't replace it. The instance may not keep the new time: its call
     // can still fail. An early wake is only answered with the instance's own
@@ -650,59 +661,122 @@ export class AppHost extends DurableObject<Env> {
     const kept = row && !this.ringing.has(row.version) ? Math.min(row.at, at) : at;
     sql.exec("INSERT OR REPLACE INTO alarms (slot, binding, id, name, at) VALUES (?, ?, ?, ?, ?)", slot, binding, id, name, kept);
     await this.wakeNext();
+    return at;
+  }
+
+  /**
+   * An instance's `deleteAlarm`, before it deletes the alarm in its own
+   * storage: its row wakes it at the minimum interval, which finds no alarm,
+   * so the row goes and no longer counts toward the cap. If the call that
+   * deletes fails, the wake finds the alarm and keeps it.
+   */
+  async alarmDeleted(slot: Slot, binding: string, id: string): Promise<void> {
+    if (this.workspaceId() === null) throw new Error("There's no app here.");
+    this.checkInstance(slot, binding, id);
+    // Not sooner, even for a row that's due, so the call has committed before the wake.
+    const at = Date.now() + this.env.APP_ALARM_MIN_INTERVAL_MS;
+    this.sql().exec("UPDATE alarms SET at = ? WHERE slot = ? AND binding = ? AND id = ?", at, slot, binding, id);
+    await this.wakeNext();
   }
 
   /** Wakes the instances whose alarms are due, and forgets the retired values past their hour. */
   override async alarm(): Promise<void> {
     const sql = this.sql();
     sql.exec("DELETE FROM retired_secrets WHERE retired_at <= ?", Date.now() - retiredSecretsKeptMs);
+    const lastStart = Date.now() + this.env.APP_ALARM_RING_DEADLINE_MS;
     const due = sql
       .exec<AlarmRow>("SELECT version, slot, binding, id, name FROM alarms WHERE at <= ? ORDER BY at", Date.now())
       .toArray();
-    // deferred: one at a time with no deadline, so a slow alarm() holds up the rest; #145 rings a few at a time, each with a deadline.
-    for (const row of due) {
-      await this.ring(row);
-      // The Workspace was deleted meanwhile: nothing of the app may be written again.
-      if (this.workspaceId() === null) return;
-    }
+    // No ring starts once the wake has run for the deadline, so a wake ends
+    // within two, however long the backlog. The rest are still due, so the
+    // app host wakes again at once.
+    const ringEach = async () => {
+      for (let row = due.shift(); row && Date.now() < lastStart; row = due.shift()) {
+        // The Workspace was deleted meanwhile: nothing of the app may be written again.
+        if (this.workspaceId() === null) return;
+        await this.ring(row);
+      }
+    };
+    await Promise.all(Array.from({ length: ringsAtOnce }, ringEach));
+    if (this.workspaceId() === null) return;
     await this.wakeNext();
   }
 
   /**
    * Wakes one instance. It answers with its alarm's time now, which replaces
    * the row, unless the instance set its alarm again meanwhile. An instance
-   * that couldn't answer is woken again later.
+   * that couldn't answer is woken again later. One that doesn't answer by the
+   * deadline rings on, within the app's limits, and its answer is kept when
+   * it comes. It's woken again later too, in case the answer never comes, as
+   * when the app host restarts, but an instance isn't rung while it's still
+   * ringing, even for a next alarm it has set.
    */
-  private async ring({ version, slot, binding, id, name }: AlarmRow): Promise<void> {
+  private async ring(row: AlarmRow): Promise<void> {
+    const { version, slot, binding, id, name } = row;
     // The binding has gone from the slot's code, so the instance can't run.
     if (!this.hasBinding(slot, binding)) {
       this.sql().exec("DELETE FROM alarms WHERE version = ?", version);
       return;
     }
-    let answer: Partial<RingAnswer> | null;
-    this.ringing.add(version);
-    try {
-      answer = await (this.facet(slot, binding, id, name) as unknown as Record<string, () => Promise<RingAnswer | null>>)[ringMethod]!();
-    } catch (error) {
-      if (this.workspaceId() === null) return;
-      // deferred: woken again every minute while it can't answer; #146 gives up after 6 retries.
-      this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} couldn't ring: ${described(error)}` }]);
-      this.sql().exec("UPDATE alarms SET at = ? WHERE version = ?", Date.now() + unansweredWakeMs, version);
+    const wokenAt = Date.now();
+    const deadlineMs = this.env.APP_ALARM_RING_DEADLINE_MS;
+    const later = () => this.sql().exec("UPDATE alarms SET at = ? WHERE version = ?", Date.now() + unansweredWakeMs, version);
+    const instance = `${slot}:${binding}:${id}`;
+    if ([...this.ringing.values()].includes(instance)) {
+      later();
       return;
-    } finally {
-      this.ringing.delete(version);
     }
+    this.ringing.set(version, instance);
+    let kept = false;
+    const answered = (async () => {
+      try {
+        const facet = this.facet(slot, binding, id, name) as unknown as Record<string, () => Promise<RingAnswer | null>>;
+        return { answer: await facet[ringMethod]!(), problem: null };
+      } catch (error) {
+        return { answer: null, problem: `couldn't ring: ${described(error)}` };
+      } finally {
+        this.ringing.delete(version);
+      }
+    })().then((result) => {
+      kept = true;
+      this.keepAnswer(row, wokenAt, result);
+    });
+    await beforeDeadline(answered, wokenAt + deadlineMs);
+    // An answer that came as the deadline passed has been kept.
+    if (kept || this.workspaceId() === null) return;
+    this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} didn't finish within ${deadlineMs / 1000} seconds.` }]);
+    later();
+    // Its answer may bring the next wake forward. The app host is kept running
+    // for it for one more deadline: later, the row's own wake takes over.
+    const rewake = answered.then(() => (this.workspaceId() === null ? undefined : this.wakeNext()));
+    this.ctx.waitUntil(beforeDeadline(rewake, Date.now() + deadlineMs).catch(() => {}));
+  }
+
+  /** Replaces a rung row with the instance's answer, or wakes it again later if it couldn't answer. */
+  private keepAnswer(
+    { version, slot, binding, id }: AlarmRow,
+    wokenAt: number,
+    { answer, problem }: { answer: Partial<RingAnswer> | null; problem: string | null },
+  ): void {
     if (this.workspaceId() === null) return;
     const sql = this.sql();
+    if (problem !== null) {
+      // deferred: woken again every minute while it can't answer; #146 gives up after 6 retries.
+      this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} ${problem}` }]);
+      sql.exec("UPDATE alarms SET at = ? WHERE version = ?", Date.now() + unansweredWakeMs, version);
+      return;
+    }
     // Retries of a failing alarm() come with #146.
     if (typeof answer?.error === "string") this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} threw ${answer.error}` }]);
     // The app's code could answer in its place, or put anything in its storage: only a time is one.
     const next = typeof answer?.next === "number" && Number.isFinite(answer.next) ? answer.next : null;
     if (next === null) sql.exec("DELETE FROM alarms WHERE version = ?", version);
     else {
-      sql.exec("UPDATE alarms SET at = ? WHERE version = ?", next, version);
+      // Held to the minimum interval from this wake too, as the app's code can write its alarm without setAlarm.
+      const at = Math.max(next, wokenAt + this.env.APP_ALARM_MIN_INTERVAL_MS);
+      sql.exec("UPDATE alarms SET at = ? WHERE version = ?", at, version);
       // A setAlarm during the ring replaced the row, and its call may yet fail: keep the earlier time.
-      sql.exec("UPDATE alarms SET at = MIN(at, ?) WHERE slot = ? AND binding = ? AND id = ? AND version != ?", next, slot, binding, id, version);
+      sql.exec("UPDATE alarms SET at = MIN(at, ?) WHERE slot = ? AND binding = ? AND id = ? AND version != ?", at, slot, binding, id, version);
     }
   }
 
@@ -820,10 +894,16 @@ export class AppHost extends DurableObject<Env> {
  * runs as a facet in the app's app host, in the slot the call came from (ADR 0015).
  */
 export class AppData extends WorkerEntrypoint<Env, { label: string; slot: Slot }> {
-  /** An instance's `setAlarm`, before it writes the alarm in its own storage (ADR 0021). */
-  setAlarm(binding: string, id: string, name: string | null, at: number): Promise<void> {
+  /** An instance's `setAlarm`, before it writes the alarm in its own storage (ADR 0021): the time to write. */
+  setAlarm(binding: string, id: string, name: string | null, at: number): Promise<number> {
     const { label, slot } = this.ctx.props;
     return this.env.APP_HOSTS.getByName(label).keepAlarm(slot, binding, id, name, at);
+  }
+
+  /** An instance's `deleteAlarm`, before it deletes the alarm in its own storage (ADR 0021). */
+  deleteAlarm(binding: string, id: string): Promise<void> {
+    const { label, slot } = this.ctx.props;
+    return this.env.APP_HOSTS.getByName(label).alarmDeleted(slot, binding, id);
   }
 
   callFacet(binding: string, id: string, name: string | null, method: string, args: unknown[]): Promise<unknown> {

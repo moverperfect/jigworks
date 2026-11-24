@@ -114,6 +114,8 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
     };
     // The time a setAlarm is telling the app host, which a wake reports so its row stays.
     let telling = null;
+    // Whether a deleteAlarm is telling the app host, so a wake meanwhile doesn't ring.
+    let deleting = false;
     const stored = () =>
       sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", alarmTable).toArray().length === 0
         ? null
@@ -128,20 +130,37 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
         // Cloudflare's own message.
         if (!hasAlarm) throw new Error("Your Durable Object class must have an alarm() handler in order to call setAlarm()");
         return inTurn(async () => {
-          // The app host first: if it can't be told, nothing is written.
+          // The app host first: if it can't be told, or refuses, nothing is
+          // written. It answers with the time to keep, no sooner than the
+          // minimum interval.
           telling = at;
+          let kept;
           try {
-            await data.setAlarm(binding, id, name, at);
+            kept = await data.setAlarm(binding, id, name, at);
           } finally {
             telling = null;
           }
           sql.exec("CREATE TABLE IF NOT EXISTS " + alarmTable + " (at INTEGER NOT NULL)");
           sql.exec("DELETE FROM " + alarmTable);
-          sql.exec("INSERT INTO " + alarmTable + " (at) VALUES (?)", at);
+          sql.exec("INSERT INTO " + alarmTable + " (at) VALUES (?)", kept);
         });
       },
       getAlarm: () => inTurn(stored),
-      deleteAlarm: () => inTurn(clear),
+      deleteAlarm: () =>
+        inTurn(async () => {
+          if (stored() === null) return;
+          // The app host first, so its row goes within the interval and stops
+          // counting toward the cap. If it can't be told, the row stays until
+          // its time, when its wake finds no alarm.
+          deleting = true;
+          try {
+            await data.deleteAlarm(binding, id);
+          } catch {
+          } finally {
+            deleting = false;
+          }
+          clear();
+        }),
     };
     for (const [key, value] of Object.entries(methods)) Object.defineProperty(ctx.storage, key, { value, configurable: true, writable: true });
 
@@ -151,7 +170,7 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
       async ring(alarm) {
         let error = null;
         const at = stored();
-        if (at !== null && at <= Date.now()) {
+        if (at !== null && at <= Date.now() && !deleting) {
           // getAlarm() reads null while alarm() runs, unless it sets the next.
           clear();
           // Retries come with #146.
