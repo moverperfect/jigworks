@@ -1397,3 +1397,30 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 - **Retries and limits:** a failing `alarm()` is logged and dropped, and there's no minimum interval or cap per slot yet (#145, #146).
 - **An alarm hours or days ahead:** the longest was a minute.
 - **The real model:** no Turn wrote an alarm. The Agent's instructions don't mention alarms yet (#147).
+
+## Limits on apps' alarms (#145)
+
+**Verdict: yes.** On the deployed platform, an alarm set sooner than the minimum interval rang at the interval, and `getAlarm()` read that time. The cap refused the 1,001st instance with an alarm, with the message as intended, and wrote nothing.
+
+- **Platform:** the deployed platform at `main` (`38df3dd`, with #155), checked on 2026-11-24 from the Developer's signed-in browser (T3's preview tools, Chrome), with the tail running. No Turns ran. The limits were the defaults: an interval of 60,000 ms, 1,000 instances with alarms per slot, and a deadline of 30,000 ms a ring.
+- **The app:** a Workspace made for the check with `POST /api/workspaces` and `{ name, template: "worker" }`, given a `PINGER` binding to a `Pinger` class, built and published. `/set?name=&ms=` sets an alarm `ms` ahead and answers with `getAlarm()`. `/state` reads the rings and `getAlarm()`. `/fill?from=&count=` sets alarms a day ahead in instances `f<from>` onwards, 40 to a request, and stops at the first refusal. `alarm()` records the time it was due and the time it rang. The Workspace was deleted afterwards.
+- **The Deployment** was opened at its URL in a tab, and each request was sent from that tab.
+
+| Instance | Asked for | `getAlarm()` read | Rang | Late |
+| --- | --- | --- | --- | ---: |
+| `interval` | now | 60.005 s after the call | 21:35:25.815 | 7 ms |
+| `past` | a minute ago | 60.005 s after the call | 21:35:26.025 | 1 ms |
+| `ten` | 10 s ahead | 60.005 s after the call | 21:35:26.222 | 1 ms |
+
+- **The interval:** each alarm rang once, at the time `getAlarm()` had read, with `{ retryCount: 0, isRetry: false }`, and `getAlarm()` read `null` afterwards. The extra 5 ms is `setAlarm`'s call to the app host, which sets the time.
+- **The cap:** 25 requests set alarms in `f0` to `f999`, at about 2–3 s a request, in 60 s. The three alarms above had rung by then, so the slot held exactly 1,000. `f1000`'s `setAlarm` threw: "The Deployment already has alarms set in 1,000 Durable Object instances, the most it can have, so setAlarm() can't set another. Set alarms in fewer instances, such as one that keeps a list of times and sets its alarm for the next."
+  - `f1000`'s `getAlarm()` then read `null`, so nothing was written.
+  - A `setAlarm` left uncaught gave the Deployment's 500 with the same message, after "The app threw an error: Error: ".
+  - `f0`, which had an alarm, could still move it while the slot was full.
+- **`setAlarm`'s call to the app host** took 15–50 ms of wall time in `AppData` (median 21 ms, 38 calls), and `keepAlarm` 31–53 ms (6 calls), from the trace. The tail kept only a sample of the 1,000 calls, and no wake of the app host.
+
+**Not covered:**
+- **Rings a few at a time, with a deadline:** no deployed app had a backlog or a slow `alarm()`. The tests cover both (`test/app-data.test.ts`).
+- **`deleteAlarm` freeing a place under the cap:** covered by the tests only.
+- **The Preview's cap,** which is its own: only the Deployment's was filled.
+- **The real model:** no Turn wrote an alarm. The Agent's instructions don't mention alarms or their limits yet (#147).
