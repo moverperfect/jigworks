@@ -1,7 +1,7 @@
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { Build } from "../builder";
 import { fromBase64, toBase64 } from "../shared/base64";
-import { appDataBinding, appDataModule, appDataWrapper, platformEnvPrefix, ringMethod, type RingAnswer } from "./app-data";
+import { alarmRetries, appDataBinding, appDataModule, appDataWrapper, platformEnvPrefix, ringMethod, ringOutcomes, type Ring, type RingAnswer, type RingOutcome } from "./app-data";
 import { assetResponse, type AppAssets } from "./assets";
 import { longestSecret, maxSecrets, secretProblem, withoutSecrets } from "./secrets";
 import type { Secret } from "../shared/secret";
@@ -104,7 +104,7 @@ const deploymentCopy = "deployment";
 const retiredSecretsKeptMs = 60 * 60 * 1000;
 // How long the Agent's request to the Preview waits for its response, all of it.
 const previewWaitSeconds = 10;
-// When the app host wakes an instance again that couldn't answer a wake for its alarm (ADR 0021).
+// When the app host wakes an instance again whose ring ran past its deadline, or that was still ringing (ADR 0021).
 const unansweredWakeMs = 60 * 1000;
 // The furthest ahead the app host sets its own alarm, so an app's alarm years away can't make it fail.
 const longestWakeMs = 365 * 24 * 60 * 60 * 1000;
@@ -114,6 +114,7 @@ const ringsAtOnce = 5;
 /** A row of the alarms table: a wake for one instance (ADR 0021). */
 type AlarmRow = {
   version: number;
+  misses: number;
   slot: Slot;
   binding: string;
   id: string;
@@ -409,8 +410,12 @@ export class AppHost extends DurableObject<Env> {
         CREATE TABLE IF NOT EXISTS facets (name TEXT PRIMARY KEY);
         CREATE TABLE IF NOT EXISTS secrets (name TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS retired_secrets (name TEXT NOT NULL, value TEXT NOT NULL, retired_at INTEGER NOT NULL);
-        CREATE TABLE IF NOT EXISTS alarms (version INTEGER PRIMARY KEY AUTOINCREMENT, slot TEXT NOT NULL, binding TEXT NOT NULL, id TEXT NOT NULL, name TEXT, at INTEGER NOT NULL, UNIQUE (slot, binding, id));
+        CREATE TABLE IF NOT EXISTS alarms (version INTEGER PRIMARY KEY AUTOINCREMENT, slot TEXT NOT NULL, binding TEXT NOT NULL, id TEXT NOT NULL, name TEXT, at INTEGER NOT NULL, misses INTEGER NOT NULL DEFAULT 0, UNIQUE (slot, binding, id));
       `);
+      // An alarms table made before retries (#146) counts the wakes its instances couldn't answer too.
+      if (!this.ctx.storage.sql.exec<{ sql: string }>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'alarms'").one().sql.includes("misses")) {
+        this.ctx.storage.sql.exec("ALTER TABLE alarms ADD COLUMN misses INTEGER NOT NULL DEFAULT 0");
+      }
       this.tablesReady = true;
     }
     return this.ctx.storage.sql;
@@ -685,7 +690,7 @@ export class AppHost extends DurableObject<Env> {
     sql.exec("DELETE FROM retired_secrets WHERE retired_at <= ?", Date.now() - retiredSecretsKeptMs);
     const lastStart = Date.now() + this.env.APP_ALARM_RING_DEADLINE_MS;
     const due = sql
-      .exec<AlarmRow>("SELECT version, slot, binding, id, name FROM alarms WHERE at <= ? ORDER BY at", Date.now())
+      .exec<AlarmRow>("SELECT version, misses, slot, binding, id, name FROM alarms WHERE at <= ? ORDER BY at", Date.now())
       .toArray();
     // No ring starts once the wake has run for the deadline, so a wake ends
     // within two, however long the backlog. The rest are still due, so the
@@ -730,8 +735,9 @@ export class AppHost extends DurableObject<Env> {
     let kept = false;
     const answered = (async () => {
       try {
-        const facet = this.facet(slot, binding, id, name) as unknown as Record<string, () => Promise<RingAnswer | null>>;
-        return { answer: await facet[ringMethod]!(), problem: null };
+        const facet = this.facet(slot, binding, id, name) as unknown as Record<string, (retryBaseMs: number) => Promise<RingAnswer | null>>;
+        // A failing alarm() is retried a minimum interval later at first.
+        return { answer: await facet[ringMethod]!(this.env.APP_ALARM_MIN_INTERVAL_MS), problem: null };
       } catch (error) {
         return { answer: null, problem: `couldn't ring: ${described(error)}` };
       } finally {
@@ -752,29 +758,58 @@ export class AppHost extends DurableObject<Env> {
     this.ctx.waitUntil(beforeDeadline(rewake, Date.now() + deadlineMs).catch(() => {}));
   }
 
-  /** Replaces a rung row with the instance's answer, or wakes it again later if it couldn't answer. */
+  /**
+   * Replaces a rung row with the instance's answer, or wakes it again later
+   * if it couldn't answer, with the backoff of a failing alarm(), until it
+   * has missed a wake and each of its retries. Each answer, or failure to
+   * answer, goes in the slot's logs if the instance rang or couldn't, and in
+   * the platform's, with its slot, binding, outcome, retry count and
+   * duration, never the instance's name.
+   */
   private keepAnswer(
-    { version, slot, binding, id }: AlarmRow,
+    { version, misses, slot, binding, id }: AlarmRow,
     wokenAt: number,
     { answer, problem }: { answer: Partial<RingAnswer> | null; problem: string | null },
   ): void {
     if (this.workspaceId() === null) return;
     const sql = this.sql();
+    const durationMs = Date.now() - wokenAt;
+    const record = (outcome: string, retryCount: number | null) =>
+      console.log(JSON.stringify({ event: "alarm", workspace: this.workspaceId(), slot, binding, outcome, retryCount, durationMs }));
+    const alarmOf = `The alarm of ${binding}`;
     if (problem !== null) {
-      // deferred: woken again every minute while it can't answer; #146 gives up after 6 retries.
-      this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} ${problem}` }]);
-      sql.exec("UPDATE alarms SET at = ? WHERE version = ?", Date.now() + unansweredWakeMs, version);
+      // deferred: the instance can't be told, so its own alarm stays, and getAlarm() reads its time, until the app sets or deletes it; clear it as the instance next starts if apps rely on getAlarm() after an outage.
+      const dropped = misses >= alarmRetries;
+      const wait = this.env.APP_ALARM_MIN_INTERVAL_MS * 2 ** misses;
+      const then = dropped ? `It was dropped after ${alarmRetries} retries.` : `It will be woken again in ${inWords(wait)}.`;
+      this.log(slot, "server", [{ level: "exception", message: `${sentence(`${alarmOf} ${problem}`)} ${then}` }]);
+      if (dropped) sql.exec("DELETE FROM alarms WHERE version = ?", version);
+      else sql.exec("UPDATE alarms SET at = ?, misses = misses + 1 WHERE version = ?", Date.now() + wait, version);
+      record(dropped ? "dropped" : "unanswered", misses);
       return;
     }
-    // Retries of a failing alarm() come with #146.
-    if (typeof answer?.error === "string") this.log(slot, "server", [{ level: "exception", message: `The alarm of ${binding} threw ${answer.error}` }]);
     // The app's code could answer in its place, or put anything in its storage: only a time is one.
     const next = typeof answer?.next === "number" && Number.isFinite(answer.next) ? answer.next : null;
+    const rang = ringOf(answer?.rang);
+    if (rang === null) record("not-due", null);
+    else {
+      const { outcome, retryCount, error } = rang;
+      const ring = retryCount === 0 ? alarmOf : `${alarmOf} (retry ${retryCount} of ${alarmRetries})`;
+      const threw = sentence(`${ring} threw ${error}`);
+      const message = {
+        rang: `${ring} rang in ${durationMs} ms.`,
+        retrying: `${threw} Retry ${retryCount + 1} of ${alarmRetries} ${next === null ? "follows" : `in ${inWords(next - Date.now())}`}.`,
+        dropped: error === null ? `${alarmOf} was cut off on retry ${retryCount} of ${alarmRetries}, so it was dropped.` : `${threw} It was dropped after ${alarmRetries} retries.`,
+        threw: `${threw} It isn't retried, as alarm() set or deleted its alarm.`,
+      }[outcome];
+      this.log(slot, "server", [{ level: outcome === "rang" ? "info" : "exception", message }]);
+      record(outcome, retryCount);
+    }
     if (next === null) sql.exec("DELETE FROM alarms WHERE version = ?", version);
     else {
       // Held to the minimum interval from this wake too, as the app's code can write its alarm without setAlarm.
       const at = Math.max(next, wokenAt + this.env.APP_ALARM_MIN_INTERVAL_MS);
-      sql.exec("UPDATE alarms SET at = ? WHERE version = ?", at, version);
+      sql.exec("UPDATE alarms SET at = ?, misses = 0 WHERE version = ?", at, version);
       // A setAlarm during the ring replaced the row, and its call may yet fail: keep the earlier time.
       sql.exec("UPDATE alarms SET at = MIN(at, ?) WHERE slot = ? AND binding = ? AND id = ? AND version != ?", at, slot, binding, id, version);
     }
@@ -1068,6 +1103,27 @@ function cookieValue(header: string | null, name: string): string | null {
 function randomToken(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(32));
   return btoa(String.fromCharCode(...bytes)).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
+}
+
+/** A ring from an instance's answer, or null if it didn't ring or the answer isn't one. */
+function ringOf(rang: unknown): Ring | null {
+  if (typeof rang !== "object" || rang === null) return null;
+  const { outcome, retryCount, error } = rang as Record<string, unknown>;
+  if (!ringOutcomes.includes(outcome as RingOutcome)) return null;
+  if (!Number.isInteger(retryCount) || (retryCount as number) < 0 || (retryCount as number) > alarmRetries) return null;
+  return { outcome: outcome as RingOutcome, retryCount: retryCount as number, error: typeof error === "string" ? error : null };
+}
+
+/** A wait in words, such as "2 seconds" or "32 minutes". */
+function inWords(ms: number): string {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  const [count, unit] = seconds < 60 ? [seconds, "second"] : [Math.round(seconds / 60), "minute"];
+  return `${count} ${unit}${count === 1 ? "" : "s"}`;
+}
+
+/** Text ending in a full stop, unless it already ends a sentence. */
+function sentence(text: string): string {
+  return /[.!?]$/.test(text) ? text : `${text}.`;
 }
 
 /** An error as the logs show it. */
