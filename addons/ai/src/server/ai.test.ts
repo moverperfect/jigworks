@@ -4,8 +4,8 @@ import { askClaude } from "./ai";
 const env = { ANTHROPIC_API_KEY: "sk-ant-test-key" };
 const request = { prompt: "Sort this into praise, complaint or question: The coffee was cold." };
 
-/** Replaces `fetch` with one that answers `response`, as Anthropic would. */
-const anthropicAnswers = (response: Response) => vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+/** Replaces `fetch` with one that answers each call with a copy of `response`, as Anthropic would: a body can be read only once. */
+const anthropicAnswers = (response: Response) => vi.spyOn(globalThis, "fetch").mockImplementation(async () => response.clone());
 
 /** A reply from the Messages API: a thinking block, as the model may start with, then `content`. */
 const reply = (stop_reason: string, ...texts: string[]) =>
@@ -41,6 +41,14 @@ describe("asking Claude", () => {
       system: "Answer with one word.",
       messages: [{ role: "user", content: request.prompt }],
     });
+  });
+
+  it("asks twice in one test, each request read from what was asked", async () => {
+    const anthropic = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ content: [{ type: "text", text: "complaint" }], stop_reason: "end_turn" }));
+    expect(await askClaude(env, request)).toEqual({ ok: true, text: "complaint" });
+    expect(await askClaude(env, { prompt: "Sort this: Lovely staff." })).toEqual({ ok: true, text: "complaint" });
+    const asked = anthropic.mock.calls.map(([, init]) => JSON.parse(init?.body as string));
+    expect(asked.map(({ messages }) => messages[0].content)).toEqual([request.prompt, "Sort this: Lovely staff."]);
   });
 
   it("joins a reply in several parts, and takes another model and limit", async () => {

@@ -99,6 +99,25 @@ describe("packing", () => {
   });
 });
 
+describe("add-ons' notes on faking fetch in tests (#161)", () => {
+  it.each([
+    ["email", "src/server/email"],
+    ["ai", "src/server/ai"],
+  ])("the %s add-on's notes show a fake that answers every call, as its own test of two calls does, and how to share it with another add-on", (id, module) => {
+    const { notes, files } = addonWithNeeds(id)!.at(-1)!;
+    const tests = notes.split("\n").find((line) => line.startsWith("- **Tests**")) ?? "";
+    const code = [...tests.matchAll(/`([^`]+)`/g)].map(([, span]) => span!);
+    const fake = code.filter((span) => /vi\.spyOn|\.mock\.calls/.test(span));
+    // A new response for each call: one response's body can be read only once.
+    expect(fake).toEqual(expect.arrayContaining([expect.stringMatching(/\.mockImplementation\(async \(\) => Response\.json\(/), expect.stringContaining(".mock.calls.map(")]));
+    for (const span of fake) expect(files[`${module}.test.ts`]).toContain(span);
+    // vi.spyOn gives one spy for fetch, so an app with both add-ons answers each by its URL, the one the add-on calls.
+    expect(tests).toContain("gives the same spy each time");
+    const url = code.find((span) => span.startsWith("https://"));
+    expect(files[`${module}.ts`]).toContain(`"${url}"`);
+  });
+});
+
 describe("whether an app has an add-on", () => {
   it("goes by a heading that ends with its ID, whatever the add-on was called then", () => {
     expect(hasAddon("# This Workspace\n\n## Storage (add-on `storage`)\n\nNotes.\n", "storage")).toBe(true);

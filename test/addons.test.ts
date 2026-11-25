@@ -241,7 +241,7 @@ describe("reminders", () => {
     ]);
     // Each add-on's notes, needs first, apart as in AGENTS.md.
     expect(result).toContain("<notes>\n## Sending email (add-on `email`)\n\n");
-    expect(result).toContain("as `src/server/email.test.ts` does.\n\n## Reminders (add-on `reminders`)\n\nThe app emails reminders at set times");
+    expect(result).toContain("read only the calls to `https://api.resend.com/emails`.\n\n## Reminders (add-on `reminders`)\n\nThe app emails reminders at set times");
     expect(result).toContain("- RESEND_API_KEY: To send emails");
     expect(await testStates(workspace.id)).toEqual(
       ["client/App.test.tsx", "server/email.test.ts", "server/index.test.ts", "server/reminders.test.ts", "server/store.test.ts"].map((file) => [`src/${file}`, ["passed"], []]),
