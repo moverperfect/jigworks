@@ -61,6 +61,13 @@ describe("sending an email", () => {
     });
   });
 
+  it("reports Resend busy or failing for a moment as not sent, even with a message, so it can be tried again", async () => {
+    resendAnswers(Response.json({ statusCode: 429, name: "rate_limit_exceeded", message: "Too many requests." }, { status: 429, statusText: "Too Many Requests" }));
+    expect(await sendEmail(env, email)).toEqual({ ok: false, error: "The email wasn't sent: Resend answered 429 Too Many Requests: Too many requests." });
+    resendAnswers(Response.json({ statusCode: 500, name: "application_error", message: "Something went wrong." }, { status: 500 }));
+    expect(await sendEmail(env, email)).toEqual({ ok: false, error: "The email wasn't sent: Resend answered 500 Internal Server Error: Something went wrong." });
+  });
+
   it("sends nothing before the key is set", async () => {
     const resend = resendAnswers(Response.json({ id: "never" }));
     expect(await sendEmail({}, email)).toEqual({ ok: false, error: "The email wasn't sent: the Secret RESEND_API_KEY hasn't been set yet." });

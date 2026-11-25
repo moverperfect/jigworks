@@ -157,3 +157,30 @@ describe("what the Agent is told about alarms (#147)", () => {
     expect(notes).toContain("Log one Resend refused and carry on");
   });
 });
+
+describe("what the Agent is told about reminders (#148)", () => {
+  it("the Agent's instructions list the reminders add-on with when it fits, point to it from alarms, and call an alarm a reminder", () => {
+    expect(instructions).toMatch(/ {2}- reminders \(Reminders\): .+ Add it when the app has to email people at a set time/);
+    expect(instructions).toContain("To email someone a reminder at a time the app keeps, such as the day before each run they signed up for, add the reminders add-on rather than an alarm of your own.");
+    expect(instructions).toContain('"a reminder" for an alarm');
+  });
+
+  it.each(listTemplates().map(({ id }) => [id]))("the %s Template's notes point to the reminders add-on from alarms", (id) => {
+    expect(getTemplate(id)!.files["AGENTS.md"]).toContain("To email someone a reminder at a time the app keeps, such as the day before each run they signed up for, add the reminders add-on");
+  });
+
+  it("its notes cover time zones, asking for the Developer's with ask, real email from the Preview, and one reminder per person per thing", () => {
+    const chain = addonWithNeeds("reminders")!;
+    expect(chain.map(({ id }) => id)).toEqual(["storage", "email", "reminders"]);
+    const notes = chain.at(-1)!.notes;
+    expect(notes).toMatch(/^## Reminders \(add-on `reminders`\)\n/);
+    expect(notes).toContain("instantAt(date, time, c.env.TIME_ZONE)");
+    expect(notes).toContain("follows summer time");
+    expect(notes).toContain("When you don't know the Developer's time zone, ask with `ask`");
+    expect(notes).toContain("The Preview sends real email");
+    expect(notes).toContain("their own address");
+    expect(notes).toContain("One reminder per person per thing");
+    // A retry never sends one twice.
+    expect(notes).toContain("so a retry sends only those not sent");
+  });
+});

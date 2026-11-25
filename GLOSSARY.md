@@ -99,6 +99,9 @@ Said of a Workspace with a Deployment. It's "live, with changes not yet publishe
 **ready-made part**:
 A Package, where the page needs to name one, as in the Agent's step "Adding a ready-made part".
 
+**reminder**:
+An alarm, where the page needs to name one: a time an app wakes up to do something, such as send an email, as in the Agent's step "Adding reminders". Code and docs keep Cloudflare's word, alarm, except for the reminders add-on's reminders: emails an app keeps to send at a time.
+
 **starting point**:
 A Template, as in the Agent's step "Choosing a starting point", whose detail says which, such as "A web page that remembers things".
 
