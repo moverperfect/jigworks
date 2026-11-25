@@ -4,8 +4,8 @@ import { sendEmail } from "./email";
 const env = { RESEND_API_KEY: "re_test_key" };
 const email = { to: "owner@example.com", subject: "Ada signed up", text: "Ada is coming on Sunday." };
 
-/** Replaces `fetch` with one that answers `response`, as Resend would. */
-const resendAnswers = (response: Response) => vi.spyOn(globalThis, "fetch").mockResolvedValue(response);
+/** Replaces `fetch` with one that answers each call with a copy of `response`, as Resend would: a body can be read only once. */
+const resendAnswers = (response: Response) => vi.spyOn(globalThis, "fetch").mockImplementation(async () => response.clone());
 
 describe("sending an email", () => {
   afterEach(() => {
@@ -32,6 +32,17 @@ describe("sending an email", () => {
       html: "<p>Ada is coming on Sunday.</p>",
       reply_to: "ada@example.com",
     });
+  });
+
+  it("sends two emails in one test, each read from what was sent", async () => {
+    const resend = vi.spyOn(globalThis, "fetch").mockImplementation(async () => Response.json({ id: "email-1" }));
+    expect(await sendEmail(env, email)).toEqual({ ok: true, id: "email-1" });
+    expect(await sendEmail(env, { ...email, to: "ada@example.com", subject: "You're signed up" })).toEqual({ ok: true, id: "email-1" });
+    const sent = resend.mock.calls.map(([, init]) => JSON.parse(init?.body as string));
+    expect(sent.map(({ to, subject }) => [to, subject])).toEqual([
+      ["owner@example.com", "Ada signed up"],
+      ["ada@example.com", "You're signed up"],
+    ]);
   });
 
   it("sends from another address, to several", async () => {
