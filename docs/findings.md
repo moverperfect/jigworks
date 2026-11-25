@@ -1503,3 +1503,25 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 ### Found along the way
 
 - **The Agent's test data stayed in the Preview,** as in #104. There was its "Reminder try-out", and a "Test meeting (preview)" in 2099 with a "Test Person" signed up, whose reminder waited in the Preview. The reply said so, and that there's no way to remove a meeting yet.
+
+## The time zone asked first, live (#163)
+
+**Verdict: yes.** On the deployed platform, the real model asked the Developer's time zone with `ask` before adding the reminders add-on. The request named no place. The answer went into `TIME_ZONE`, and each reminder's due time is made with it. In #149, the Agent didn't ask, and used each browser's time zone with a `UTC` fallback.
+
+- **Platform:** the deployed platform at `main` (`d67a424`, with #166), checked on 2026-11-25 from the Developer's signed-in browser (T3's preview tools, Chrome), with the tail running.
+- **Turns:** 2 Turns of Opus 5.5, against a budget of 3 Turns. At the tail script's prices they cost $0.60. They ran in one Workspace made for the check, which was deleted afterwards. The check stopped when the Agent asked for `RESEND_API_KEY`, so no key was entered and nothing was sent.
+- **The request,** from the start page: "A sign-up sheet for my walking group's Saturday walks. People put their name and email down for a walk, and the app emails each of them a reminder at 7pm the evening before."
+
+| Turn | Asked | Add-ons added | Turn log | Steps | Cost |
+| --- | --- | --- | ---: | ---: | ---: |
+| The request | a question: the time zone | – | 11.1 s | 2 | $0.08 |
+| The answer, "UK time (London)" | a Secret (`RESEND_API_KEY`) | `email`, `reminders` | 97.5 s | 13 | $0.52 |
+
+- **The question:** the first Turn chose the Template ("A web page that remembers things") and named the app "Saturday Walks". It then showed the step "Checking your time zone" and asked "Which time zone should the 7pm reminders go out in?". The answers were "UK time (London)", "US Eastern (New York)", "US Pacific (Los Angeles)" and "Australian Eastern (Sydney)".
+- **After the answer:** the Agent ticked off "Checking your time zone" ("UK time (London)"). It added both add-ons in the step "Adding email reminders" ("7pm the evening before, UK time"), and built the sheet for the next six Saturdays. The Check, Build and tests were clean, with no retries. It then asked for the key.
+- **`TIME_ZONE`** is `"Europe/London"` in `vars`. Each reminder is due at `instantAt(dayBefore(date), "19:00", c.env.TIME_ZONE)`, and "today", for listing the Saturdays, is worked out in `TIME_ZONE` too. Nothing takes a time zone from the browser. The only `"UTC"` writes out a walk's calendar date from midnight UTC, which needs no time zone.
+- **Against #149,** which never asked: asking first added one Turn, of 11 s and $0.08. The Turn that built the app cost about the same as #149's, $0.52 against $0.51.
+
+**Not covered:**
+- **A reminder sending:** #149 covers it.
+- **A request that says where the Developer is:** the reminders add-on's `fits` says it needs no question when the place settles the time zone.
