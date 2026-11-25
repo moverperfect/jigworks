@@ -62,6 +62,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - The last event in a burst shows wall time running on until the object's next event.
   - Work that a Turn runs after an awaited self-call is counted in that call's trace.
 - **Workers Logs:** the API refuses wrangler's OAuth token (403), so use the tail.
+- **The Preview in a tab:** open `https://<platform host>/preview-sign-in?host=<the Preview's host>&to=/`. The link from `POST /api/workspaces/:id/preview/sign-in` is for the frame only, and a tab gets "This sign-in link has expired or was already used."
 - **Browser (T3 preview tools):**
   - `preview_evaluate` gives up after about 15 s, so poll long waits in steps.
   - `preview_type` times out on the Workspace page, so use `preview_evaluate`: `document.execCommand('insertText', ...)` in the textarea, then click "Send". `preview_snapshot` used to time out there too, but it worked for #44's live check on 2026-10-30.

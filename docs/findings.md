@@ -1459,3 +1459,47 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 - **A ring cut off by a publish, new Secrets or the app host stopping:** the tests cover the app host stopping. A publish and new Secrets stop instances as a new Build does (`abortFacets`).
 - **The Deployment's retries,** which take the same path as the Preview's.
 - **The real model:** no Turn wrote an alarm. The Agent's instructions don't mention alarms yet (#147).
+
+## Reminders, live (#149)
+
+**Verdict: yes, with one difference from the criteria.** On the deployed platform, the real model built a book club's sign-up sheet that emails each person a reminder an hour before their meeting. It added the email and reminders add-ons and asked for `RESEND_API_KEY`. A reminder signed up for a few minutes ahead arrived at the Developer's own address on time from the Preview, and then from the Deployment after publishing. The app host woke each one 0–1 ms after it was due, and each ring took 143–239 ms. **The difference:** the Agent didn't ask the Developer's time zone (#163).
+
+- **Platform:** the deployed platform at `main` (`4294677`, with #160 and #162), checked on 2026-11-25 from the Developer's signed-in browser (T3's preview tools, Chrome), with the tail running. Access didn't ask for a sign-in.
+- **Turns:** 2 Turns of Opus 5.5, against a budget of 6 Turns. At the tail script's prices they cost $1.11. They ran in one Workspace made for the check, which was deleted afterwards. Its Deployment then answered 404.
+- **The request,** from the start page: "A sign-up sheet for my book club's meetings. Anyone in the club can add a meeting with its date and time, and people put their name and email down for one. The app should email each person a reminder an hour before the meeting they signed up for."
+- **The key** was the Developer's real Resend key, which they typed into the page themselves. The app used Resend's test sender, which delivers only to the Resend account's own address and Resend's own test inboxes.
+
+| Turn | Asked | Add-ons added | Turn log | Steps | Cost |
+| --- | --- | --- | ---: | ---: | ---: |
+| The request | a Secret (`RESEND_API_KEY`) | `email`, `reminders` | 119.6 s | 12 | $0.51 |
+| After the key was saved | – | – | 158.9 s | 23 | $0.60 |
+
+**What the Agent chose:**
+- **The Template:** Worker + React ("A web page that remembers things"). Meetings and sign-ups are in the Template's store, and reminders are in the add-on's own `Reminders` Durable Object.
+- **Its steps:** "Adding email reminders", with the detail "Emails sent through Resend, an email service". That one step added both add-ons. Then "Building meetings and sign-ups" ("Times follow each member's own time zone") and "Making sure it works". The Check, Build and tests were clean, with no retries.
+- **The reminder:** each sign-up adds one reminder, due an hour before the meeting, with `about` set to the meeting. Signing up again with the same address updates it, rather than adding another. No reminder is set for a sign-up less than an hour before.
+- **The time zone wasn't asked for.** The page sends the browser's time zone with each new meeting. The server turns the date and time into an instant with `instantAt` in that zone, falling back to `TIME_ZONE`, which the Agent set to `"UTC"` in `vars`. The add-on's notes say to ask with `ask` when the Developer's time zone isn't known. Here the browser was on UTC, as is Europe/London in November, so it made no difference. A meeting added from a device in another zone is kept in that zone, and the `UTC` fallback is an hour out in a UK summer (#163).
+- **Its reply after the key** said the Preview's emails are real ("these are real emails, even in your preview"). It said only the address the Developer signed up to Resend with gets them until they add a domain, and it suggested signing up with that address to get a real reminder. It didn't ask for the address.
+
+**The Agent's own try,** in the Turn after the key:
+- The Turn started at 10:28:37. The Agent worked out a time with `date -u -d "+63 minutes"`, added a meeting at 11:31 through `request_preview`, and signed up Resend's own test inbox, so the reminder was due at 10:31:00.000.
+- The app host woke at 10:31:00.001 and the ring took 239 ms ("The alarm of REMINDERS rang in 239 ms." in the Preview's logs).
+- To read whether it was sent, the Agent added `GET /api/reminders/status`, which gives counts of sent, waiting and failed reminders "so no one's address is shown". It then reported "Resend took your key and sent it".
+- **Waiting took steps (#164).** It ran `sleep 170`, but `preview_logs` straight after said "The Preview has no logs yet." A real 170 s wait would have ended after the 10:31:00 ring. Then came `sleep 50`, and the whole Turn took 159 s. It passed the time with `date`, `test`, `check` and `build`, 23 steps in all, until the reminder rang. The notes say "wait, then read `preview_logs`", but there's no tool to wait with.
+
+**The reminders,** each signed up for on the app's own page in a tab:
+
+| Slot | Signed up (UTC) | Meeting | Due (UTC) | App host woke | Ring took | Arrived, as the Developer read it |
+| --- | --- | --- | --- | --- | ---: | --- |
+| Preview | 10:32:05 | 11:37 | 10:37:00.000 | 10:37:00.000 | 179 ms | 10:37 |
+| Deployment, after publishing at 10:37:54 | 10:38:09 | 11:43 | 10:43:00.000 | 10:43:00.000 | 143 ms | 10:43 |
+
+- **How late:** the Developer confirmed each email. Their inbox shows minutes only, in UK time, which is UTC in November, so each arrived within the minute it was due. Both rang with `retryCount: 0`, and neither failed.
+- **The slots kept apart:** the Deployment's sheet was empty after publishing. After the sign-up, its counts were 0 sent and 1 waiting, against the Preview's 2 sent.
+- **The platform's logs** had an `alarm` line for each wake the tail caught, with the fields #146 lists (`rang`, retry count 0) and no name or address. The tail missed the wake for the Agent's own try, which is in the Preview's logs.
+
+**#161's notes reached the app.** Its AGENTS.md has the email add-on's new fake, `mockImplementation(async () => Response.json({ id: "email-1" }))`, with the reason not to use `mockResolvedValue`. The add-on's own `email.test.ts`, which went into the app, has the two-email test. The Agent's own tests didn't fake Resend: the route tests pass `fakeReminders()`, and every test passed.
+
+### Found along the way
+
+- **The Agent's test data stayed in the Preview,** as in #104. There was its "Reminder try-out", and a "Test meeting (preview)" in 2099 with a "Test Person" signed up, whose reminder waited in the Preview. The reply said so, and that there's no way to remove a meeting yet.
