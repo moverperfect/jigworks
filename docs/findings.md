@@ -1424,3 +1424,38 @@ On 2026-11-09, with `main` at `00e3e43`, from the Developer's signed-in browser 
 - **`deleteAlarm` freeing a place under the cap:** covered by the tests only.
 - **The Preview's cap,** which is its own: only the Deployment's was filled.
 - **The real model:** no Turn wrote an alarm. The Agent's instructions don't mention alarms or their limits yet (#147).
+
+## Failed alarms are retried (#146)
+
+**Verdict: yes.** On the deployed platform, a failing `alarm()` was retried with `{ retryCount, isRetry: true }`, a minute and then two minutes later, and rang on its second retry. A ring cut off by a new Build rang again a minute later, as retry 1, with the new code. Each ring and failure was in the Preview's logs, and each wake was in the platform's.
+
+- **Platform:** the deployed platform at `main` (`88a5bb8`, with #157), checked on 2026-11-25 from the Developer's signed-in browser (T3's preview tools, Chrome), with the tail running. No Turns ran. The limits were the defaults: an interval of 60,000 ms, so retries 1 and 2 come 1 and 2 minutes on.
+- **The app:** a Workspace made for the check with `POST /api/workspaces` and `{ name, template: "worker" }`, given a `PINGER` binding to a `Pinger` class. `/set?name=&ms=&fails=&slow=` sets an alarm `ms` ahead, whose `alarm()` throws on its first `fails` rings and waits `slow` ms first. `alarm()` logs the code's version, its attempt and its `alarmInfo`. The Workspace was deleted afterwards.
+- **The Preview** was reached through sign-in links in a hidden frame and read through its logs (`GET /api/workspaces/:id/preview/logs`).
+
+| Instance | Ring | Rang (UTC) | `alarmInfo` | Code | What the Preview's logs said |
+| --- | --- | --- | --- | --- | --- |
+| `f` | first | 01:33:42.123 | `{ retryCount: 0, isRetry: false }` | v1 | "threw Error: planned failure 1. Retry 1 of 6 in 1 minute." |
+| `f` | retry 1 | 01:34:42.133 | `{ retryCount: 1, isRetry: true }` | v2 | "(retry 1 of 6) threw Error: planned failure 2. Retry 2 of 6 in 2 minutes." |
+| `f` | retry 2 | 01:36:42.157 | `{ retryCount: 2, isRetry: true }` | v2 | "(retry 2 of 6) rang in 19 ms." |
+| `c` | first | 01:33:55.885 | `{ retryCount: 0, isRetry: false }` | v1 | cut off at 01:34:00.256 by a new Build: "couldn't ring: Error: The app has new code or secrets. It will be woken again in 1 minute." |
+| `c` | retry 1 | 01:35:00.257 | `{ retryCount: 1, isRetry: true }` | v2 | "(retry 1 of 6) rang in 25010 ms." |
+
+- **The backoff:** `f` was due at 01:33:42.122 and rang 1 ms late. Its retries rang 60.010 s and 120.024 s after the ring before. Retry 1 ran with v2, built in between.
+- **The cut-off ring:** `c`'s `alarm()` waits 25 s. A save of v2 and a Build at 01:34:00.000 stopped it 4.4 s in. Its log line from v1, "ring v1 c attempt 1", still reached the Preview's logs. The app host woke it again 60.001 s after the cut. v2 found the alarm still marked ringing, so it rang it as retry 1, and that ring ran its full 25 s.
+- **Afterwards,** `getAlarm()` read `null` in both instances.
+- **The platform's logs** had one `alarm` line for each wake, with the Workspace, slot, binding, outcome, retry count and duration, and no instance name:
+
+  | Outcome | Retry count | Duration |
+  | --- | ---: | ---: |
+  | `unanswered` (`c`, cut off) | 0 | 4,372 ms |
+  | `retrying` (`f`) | 0 | 9 ms |
+  | `retrying` (`f`) | 1 | 18 ms |
+  | `rang` (`c`) | 1 | 25,010 ms |
+  | `rang` (`f`) | 2 | 19 ms |
+
+**Not covered:**
+- **Being dropped after 6 retries,** which takes 63 minutes at the default interval, nor an instance that can't start: the tests cover both (`test/app-data.test.ts`).
+- **A ring cut off by a publish, new Secrets or the app host stopping:** the tests cover the app host stopping. A publish and new Secrets stop instances as a new Build does (`abortFacets`).
+- **The Deployment's retries,** which take the same path as the Preview's.
+- **The real model:** no Turn wrote an alarm. The Agent's instructions don't mention alarms yet (#147).
