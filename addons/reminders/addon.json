@@ -1,7 +1,7 @@
 {
   "name": "Reminders",
   "description": "Emails each reminder the app keeps once, when it's due, with no one opening the app, at times in the Developer's own time zone.",
-  "fits": "Add it when the app has to email people at a set time, such as reminding everyone who signed up the day before a run. Not for an email on a timetable, such as a rota every Monday.",
+  "fits": "Add it when the app has to email people at a set time, such as reminding everyone who signed up the day before a run. Not for an email on a timetable, such as a rota every Monday. Unless the Developer has said their time zone, or where they are if that settles it, ask for it with ask before you add it.",
   "needs": ["storage", "email"],
   "packages": {},
   "secrets": [],

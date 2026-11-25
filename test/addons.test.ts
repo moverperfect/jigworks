@@ -223,7 +223,7 @@ describe("reminders", () => {
   it("added in its own step and joined to the default Template's app, passes its tests, and sends each due reminder once from the Preview, a retry only those not sent", async () => {
     const workspace = await create("Sunday Runs", undefined, "worker-react");
     const conversation = await connect(workspace.id);
-    const [line] = await turnLines(() => runTurn(workspace.id, conversation, "[script:add-reminders-and-join] Remind runners the day before"));
+    const [line] = await turnLines(() => runTurn(workspace.id, conversation, "[script:add-reminders-and-join] Remind runners the day before. We're in the UK."));
     expect(line).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
     expect((line!.addons as string[]).toSorted()).toEqual(["email", "reminders"]);
 

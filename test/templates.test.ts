@@ -184,6 +184,11 @@ describe("what the Agent is told about reminders (#148)", () => {
     expect(instructions).toContain('"a reminder" for an alarm');
   });
 
+  // The notes come only with add_addon, after files have changed, so the instructions say to ask first (#163).
+  it("the Agent's instructions say to ask the Developer's time zone before adding the reminders add-on", () => {
+    expect(instructions).toMatch(/ {2}- reminders \(Reminders\): .+ Unless the Developer has said their time zone, or where they are if that settles it, ask for it with ask before you add it\./);
+  });
+
   it.each(listTemplates().map(({ id }) => [id]))("the %s Template's notes point to the reminders add-on from alarms", (id) => {
     expect(getTemplate(id)!.files["AGENTS.md"]).toContain("To email someone a reminder at a time the app keeps, such as the day before each run they signed up for, add the reminders add-on");
   });
@@ -195,7 +200,11 @@ describe("what the Agent is told about reminders (#148)", () => {
     expect(notes).toMatch(/^## Reminders \(add-on `reminders`\)\n/);
     expect(notes).toContain("instantAt(date, time, c.env.TIME_ZONE)");
     expect(notes).toContain("follows summer time");
-    expect(notes).toContain("When you don't know the Developer's time zone, ask with `ask`");
+    // Asked before the add-on's edits, the only point after add_addon where asking is still in time (#163).
+    expect(notes).toMatch(/When you don't know the Developer's time zone, ask with `ask`, .+ before you join the add-on to the app\./);
+    // Not the browser's zone, nor a made-up UTC (#163).
+    expect(notes).toContain("Use `TIME_ZONE` for every date and time the Developer or the page gives, never the browser's time zone");
+    expect(notes).toContain("nor a `\"UTC\"` the Developer didn't give");
     expect(notes).toContain("The Preview sends real email");
     expect(notes).toContain("their own address");
     expect(notes).toContain("One reminder per person per thing");
