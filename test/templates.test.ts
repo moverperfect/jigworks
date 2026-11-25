@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { instructions } from "../src/agent";
+import { alarmRetries } from "../src/apphost/app-data";
+import { parseJsonc } from "../src/shared/jsonc";
+import { addonWithNeeds, getTemplate, listTemplates } from "../src/templates";
 import { hasAddon, pack, type AddonManifest, type AddonSource, type TemplateSource } from "../src/templates/pack";
+import wranglerConfig from "../wrangler.jsonc?raw";
 
 // Packing the Templates and add-ons, as `pnpm generate` does (templates/pack.mjs).
 
@@ -101,5 +106,54 @@ describe("whether an app has an add-on", () => {
     expect(hasAddon("## Storage (add-on `storage`)\n", "email")).toBe(false);
     // Only a heading counts, not a mention.
     expect(hasAddon("Like the one called Storage (add-on `storage`)\n", "storage")).toBe(false);
+  });
+});
+
+describe("what the Agent is told about alarms (#147)", () => {
+  // The limits are the Installation's configuration, and the notes give its defaults in words.
+  const { APP_ALARM_MIN_INTERVAL_MS: interval, APP_ALARMS_PER_SLOT: cap } = (
+    parseJsonc(wranglerConfig) as { vars: { APP_ALARM_MIN_INTERVAL_MS: number; APP_ALARMS_PER_SLOT: number } }
+  ).vars;
+  const intervalInWords = interval === 60_000 ? "a minute" : `${interval / 60_000} minutes`;
+  const told = [
+    ["the Agent's instructions", instructions],
+    ...listTemplates().map(({ id }) => [`the ${id} Template's notes`, getTemplate(id)!.files["AGENTS.md"]!]),
+  ];
+
+  it.each(told)("%s say alarms work as on Cloudflare, with the Installation's limits, a repeating task's next alarm, and no cron triggers", (_, text) => {
+    expect(text).toContain("setAlarm");
+    expect(text).toContain("alarm()");
+    expect(text).toContain(`at least ${intervalInWords} after`);
+    expect(text).toContain(`at most ${cap.toLocaleString("en-GB")} instances`);
+    expect(text).toMatch(/repeating task[^.]*alarm\(\)[^.]*then sets the next/);
+    expect(text).toMatch(/[Cc]ron triggers aren't available/);
+  });
+
+  it.each(told.slice(1))(
+    "%s say a failing alarm() is retried, to record what each ring has done so a retry doesn't do it again, and how a repeating task survives a failure that won't pass",
+    (_, notes) => {
+      expect(notes).toContain(`retried ${intervalInWords} later`);
+      expect(notes).toContain(`${alarmRetries} times, with \`info.retryCount\` 1 to ${alarmRetries}, and then dropped`);
+      expect(notes).toContain("a retry doesn't do it again");
+      // Marks kept for good would skip everyone the next time a repeating task rings, and
+      // getAlarm() reads null during alarm(), so the task keeps the time it set.
+      expect(notes).toContain("under the time it was set for");
+      // Thrown after setAlarm, a failure isn't retried; thrown on the last retry, it ends the task.
+      expect(notes).toContain("sets the next alarm last");
+      expect(notes).toContain(`\`info.retryCount\` is ${alarmRetries}`);
+    },
+  );
+
+  it("the email add-on's notes say the Preview's alarms send real email, to suggest the Developer's own address, and to mark each email sent", () => {
+    const notes = addonWithNeeds("email")!.at(-1)!.notes;
+    expect(notes).toContain("the Preview's alarms ring by themselves");
+    expect(notes).toContain("real email");
+    expect(notes).toContain("their own address");
+    expect(notes).toContain("mark each email sent");
+    // Thrown after setting the next alarm, a failure isn't retried; a refusal that won't pass mustn't end a repeating task.
+    expect(notes).toContain("before setting the next alarm");
+    // A refusal is refused again, so only an email that couldn't be sent is retried, going by sendEmail's error.
+    expect(notes).toContain("an `error` that starts \"The email wasn't sent\"");
+    expect(notes).toContain("Log one Resend refused and carry on");
   });
 });

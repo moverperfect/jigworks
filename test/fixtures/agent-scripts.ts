@@ -260,6 +260,59 @@ function addAndJoin(addons: string | string[], edits: { name: string; input: Rec
   };
 }
 
+/** A Durable Object with an alarm, written as the Templates' notes say (#147): a repeating task whose alarm() does its work, then sets the next. */
+const timerFile = `import { DurableObject } from "cloudflare:workers";
+
+/** What the task does each time it rings: what it counts, and when the next is due. Kept apart from the Durable Object, so tests can call it. */
+export function runOnce(runs: number, now: number, everyMs: number): { runs: number; next: number } {
+  return { runs: runs + 1, next: now + everyMs };
+}
+
+export class Timer extends DurableObject<Env> {
+  async start(everyMs: number): Promise<number | null> {
+    this.ctx.storage.kv.put("every", everyMs);
+    await this.ctx.storage.setAlarm(Date.now() + everyMs);
+    return this.ctx.storage.getAlarm();
+  }
+
+  async state(): Promise<{ runs: number; next: number | null }> {
+    return { runs: this.ctx.storage.kv.get<number>("runs") ?? 0, next: await this.ctx.storage.getAlarm() };
+  }
+
+  override async alarm(): Promise<void> {
+    const { runs, next } = runOnce(this.ctx.storage.kv.get<number>("runs") ?? 0, Date.now(), this.ctx.storage.kv.get<number>("every") ?? 3_600_000);
+    this.ctx.storage.kv.put("runs", runs);
+    // A repeating task: once its work is done, alarm() sets the next.
+    await this.ctx.storage.setAlarm(next);
+  }
+}
+`;
+
+const timerTest = `import { expect, it } from "vitest";
+import { runOnce } from "./timer";
+
+it("counts a run and sets the next for an hour on", () => {
+  expect(runOnce(2, 1_000, 3_600_000)).toEqual({ runs: 3, next: 3_601_000 });
+});
+`;
+
+const timerIndex = `import { Hono } from "hono";
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/", (c) => c.text(\`\${c.env.GREETING} from your Worker\`));
+
+app.get("/api/hello/:name", (c) => c.json({ message: \`\${c.env.GREETING}, \${c.req.param("name")}\` }));
+
+app.post("/api/timer", async (c) => c.json({ next: await c.env.TIMER.getByName("timer").start(Number(c.req.query("every") ?? 3_600_000)) }));
+
+app.get("/api/timer", async (c) => c.json(await c.env.TIMER.getByName("timer").state()));
+
+export default app;
+
+export { Timer } from "./timer";
+`;
+
 const organiserReply = "Your app has an organiser's area now.";
 
 /** The email add-on's joining edits to a Worker + React Template app, with the owner's address as a var. */
@@ -459,6 +512,34 @@ export const agentScripts: Record<string, Script> = {
     },
     { name: "write", input: { path: "/src/index.ts", content: organiserWorkerIndex } },
   ], organiserReply),
+
+  // Writes a Worker Template app whose Durable Object has a repeating alarm, as the Templates' notes say (#147).
+  "write-alarm-app": (request) =>
+    toolStepsTaken(request) === 0
+      ? {
+          toolCalls: [
+            {
+              name: "edit",
+              input: {
+                path: "/wrangler.jsonc",
+                old_string: '"vars": {',
+                new_string: '"durable_objects": { "bindings": [{ "name": "TIMER", "class_name": "Timer" }] },\n  "vars": {',
+              },
+            },
+            {
+              name: "edit",
+              input: {
+                path: "/worker-configuration.d.ts",
+                old_string: '\tGREETING: "Hello";\n',
+                new_string: '\tGREETING: "Hello";\n\tTIMER: DurableObjectNamespace<import("./src/index").Timer>;\n',
+              },
+            },
+            { name: "write", input: { path: "/src/timer.ts", content: timerFile } },
+            { name: "write", input: { path: "/src/timer.test.ts", content: timerTest } },
+            { name: "write", input: { path: "/src/index.ts", content: timerIndex } },
+          ],
+        }
+      : { text: "Your app does its task every hour, by itself." },
 
   // Adds the email add-on to a Worker + React Template app, then makes its joining edits, with the owner's address as a var.
   "add-email-and-join": addAndJoin("email", emailEdits, emailReply),
