@@ -34,7 +34,7 @@ What the scripts and config don't say: how to run the platform, check it live, a
   - **To change one,** edit its `limit` (any number) or `period` (10 or 60 seconds only) and deploy. If a `period` changes, change `rateLimitSeconds` in `src/platform/worker.ts` to match. The Preview tests read both bindings from `wrangler.jsonc`.
   - **Their namespaces,** `1301` and `1302`, are any numbers that no other rate limit on the account uses. Nothing is created on Cloudflare: the deploy sets them up, and the dashboard doesn't show them. Each 429 shows in the tail.
 - **Limits on apps' alarms** (ADR 0021) are three values in `vars` in `wrangler.jsonc`. To change one, edit it and deploy; an app host reads them as each alarm is set, deleted or rung.
-  - **`APP_ALARM_MIN_INTERVAL_MS`,** 60000: an alarm set sooner rings this long after it was set.
+  - **`APP_ALARM_MIN_INTERVAL_MS`,** 60000: an alarm set sooner rings this long after it was set. A failing `alarm()`'s first retry comes this long after it, and each later one twice as long as the one before, so 6 retries take 63 intervals.
   - **`APP_ALARMS_PER_SLOT`,** 1000: the most instances with an alarm in one app's Preview, and in its Deployment, counting one set in a call that failed until its time. A lower value doesn't touch alarms already set.
   - **`APP_ALARM_RING_DEADLINE_MS`,** 30000: how long the app host waits for one ring, and how long a wake goes on starting them. Keep it under 5 minutes: a wake can keep the app host running for up to three, and Cloudflare stops an alarm at 15. Rings run 5 at a time (`ringsAtOnce` in `src/apphost/index.ts`).
   - The tests set lower values in `vitest.config.ts`: a second, 8 and 5 seconds.

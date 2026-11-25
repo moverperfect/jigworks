@@ -20,10 +20,28 @@ export const ringMethod = `${platformEnvPrefix}_ring`;
 /** The table in each instance's own database that holds its alarm (ADR 0021). */
 export const alarmTable = `${platformEnvPrefix}_alarm`;
 
-/** What an instance answers a wake with: its alarm's time now, or null, and the error `alarm()` threw, if it rang and threw. */
+/** How many times a failing alarm is retried before it's dropped, as on Cloudflare (ADR 0021). */
+export const alarmRetries = 6;
+
+/**
+ * How a wake's ring ended: `alarm()` returned; it threw and will be retried;
+ * it threw, or was cut off, on its last retry and was dropped; or it threw
+ * after setting or deleting its alarm, which stands, so it isn't retried.
+ */
+export const ringOutcomes = ["rang", "retrying", "dropped", "threw"] as const;
+export type RingOutcome = (typeof ringOutcomes)[number];
+
+/** One ring of an instance's alarm: how it ended, its retry count, and the error `alarm()` threw, if it threw. */
+export interface Ring {
+  outcome: RingOutcome;
+  retryCount: number;
+  error: string | null;
+}
+
+/** What an instance answers a wake with: its alarm's time now, or null, and its ring, if the wake rang. */
 export interface RingAnswer {
   next: number | null;
-  error: string | null;
+  rang: Ring | null;
 }
 
 /** The module that wraps the app's `mainModule`, giving it its `durableObjects` bindings. */
@@ -33,7 +51,7 @@ export function appDataWrapper(mainModule: string, durableObjects: Record<string
   // under the app's names, so no class name can clash with the module's own.
   return `import * as app from ${JSON.stringify(`./${mainModule}`)};
 
-const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) => {
+const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable, alarmRetries) => {
   // A stable 64-character hex ID for a name, as idFromName gives.
   function hexOf(text) {
     let hex = "";
@@ -116,12 +134,30 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
     let telling = null;
     // Whether a deleteAlarm is telling the app host, so a wake meanwhile doesn't ring.
     let deleting = false;
-    const stored = () =>
-      sql.exec("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?", alarmTable).toArray().length === 0
-        ? null
-        : (sql.exec("SELECT at FROM " + alarmTable).toArray()[0]?.at ?? null);
+    // The alarm's row: its time, the retry count of its next ring, and whether
+    // it's ringing. A ringing row stays until alarm() ends, so a ring that's
+    // cut off is found at the next wake and rung again as a retry.
+    // readyTable says whether the table is there, adding retries' columns to one made before them.
+    const readyTable = () => {
+      const table = sql.exec("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", alarmTable).toArray()[0];
+      if (!table) return false;
+      if (!String(table.sql).includes("ringing")) {
+        sql.exec("ALTER TABLE " + alarmTable + " ADD COLUMN retries INTEGER NOT NULL DEFAULT 0");
+        sql.exec("ALTER TABLE " + alarmTable + " ADD COLUMN ringing INTEGER NOT NULL DEFAULT 0");
+      }
+      return true;
+    };
+    // The time the alarm is due, or null: a ringing one isn't pending.
+    const stored = () => (readyTable() ? (sql.exec("SELECT MIN(at) AS at FROM " + alarmTable + " WHERE ringing = 0").one().at ?? null) : null);
+    const ringingNow = () => readyTable() && sql.exec("SELECT 1 FROM " + alarmTable + " WHERE ringing = 1").toArray().length > 0;
+    const write = (at, retries, ringing) => {
+      sql.exec("CREATE TABLE IF NOT EXISTS " + alarmTable + " (at INTEGER NOT NULL, retries INTEGER NOT NULL DEFAULT 0, ringing INTEGER NOT NULL DEFAULT 0)");
+      readyTable();
+      sql.exec("DELETE FROM " + alarmTable);
+      sql.exec("INSERT INTO " + alarmTable + " (at, retries, ringing) VALUES (?, ?, ?)", at, retries, ringing);
+    };
     const clear = () => {
-      if (stored() !== null) sql.exec("DELETE FROM " + alarmTable);
+      if (readyTable()) sql.exec("DELETE FROM " + alarmTable);
     };
     const methods = {
       async setAlarm(time) {
@@ -140,15 +176,15 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
           } finally {
             telling = null;
           }
-          sql.exec("CREATE TABLE IF NOT EXISTS " + alarmTable + " (at INTEGER NOT NULL)");
-          sql.exec("DELETE FROM " + alarmTable);
-          sql.exec("INSERT INTO " + alarmTable + " (at) VALUES (?)", kept);
+          // A new alarm, with no retries, in place of any other, even one ringing.
+          write(kept, 0, 0);
         });
       },
       getAlarm: () => inTurn(stored),
       deleteAlarm: () =>
         inTurn(async () => {
-          if (stored() === null) return;
+          // A ringing alarm too, so an alarm() that deletes its alarm isn't retried.
+          if (stored() === null && !ringingNow()) return;
           // The app host first, so its row goes within the interval and stops
           // counting toward the cap. If it can't be told, the row stays until
           // its time, when its wake finds no alarm.
@@ -165,23 +201,52 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
     for (const [key, value] of Object.entries(methods)) Object.defineProperty(ctx.storage, key, { value, configurable: true, writable: true });
 
     return {
-      // Rings alarm() only if the instance's own alarm is due: a wake for a
-      // call that failed or a deleted alarm finds none.
-      async ring(alarm) {
-        let error = null;
-        const at = stored();
-        if (at !== null && at <= Date.now() && !deleting) {
-          // getAlarm() reads null while alarm() runs, unless it sets the next.
+      // Rings alarm() only if the instance's own alarm is due, or its last
+      // ring was cut off: a wake for a call that failed or a deleted alarm
+      // finds none. A failing alarm() is retried, the first retry a minimum
+      // interval later and each after twice as long as the one before, and
+      // dropped after its last retry.
+      async ring(alarm, retryBaseMs) {
+        let rang = null;
+        const found = readyTable() ? sql.exec("SELECT at, retries, ringing FROM " + alarmTable + " ORDER BY ringing DESC, at LIMIT 1").toArray()[0] : undefined;
+        const retryCount = !found || deleting ? null : found.ringing ? found.retries + 1 : found.at <= Date.now() ? found.retries : null;
+        if (retryCount !== null && retryCount > alarmRetries) {
+          // Its last retry was cut off.
           clear();
-          // Retries come with #146.
+          rang = { outcome: "dropped", retryCount: alarmRetries, error: null };
+        } else if (retryCount !== null) {
+          // Marked ringing, so getAlarm() reads null while alarm() runs, unless it sets the next.
+          write(found.at, retryCount, 1);
+          let error = null;
           try {
-            await alarm({ retryCount: 0, isRetry: false });
+            await alarm({ retryCount, isRetry: retryCount > 0 });
           } catch (thrown) {
-            error = thrown instanceof Error ? thrown.name + ": " + thrown.message : String(thrown);
+            try {
+              error = thrown instanceof Error ? thrown.name + ": " + thrown.message : String(thrown);
+            } catch {
+              error = "a value that can't be shown as text";
+            }
           }
+          let outcome = error === null ? "rang" : "threw";
+          // A setAlarm or deleteAlarm under way, such as one alarm() made
+          // without await, replaces the alarm unless it fails.
+          await queue;
+          // Still ringing, so alarm() neither set nor deleted its alarm, which would stand.
+          if (ringingNow()) {
+            if (stored() !== null) sql.exec("DELETE FROM " + alarmTable + " WHERE ringing = 1");
+            else if (error === null) clear();
+            else if (retryCount >= alarmRetries) {
+              clear();
+              outcome = "dropped";
+            } else {
+              write(Date.now() + retryBaseMs * 2 ** retryCount, retryCount + 1, 0);
+              outcome = "retrying";
+            }
+          }
+          rang = { outcome, retryCount, error };
         }
         const times = [stored(), telling].filter((time) => time !== null);
-        return { next: times.length === 0 ? null : Math.min(...times), error };
+        return { next: times.length === 0 ? null : Math.min(...times), rang };
       },
     };
   }
@@ -196,13 +261,13 @@ const { withBindings, classes } = ((bindings, appData, ringMethod, alarmTable) =
         super(ctx, withBindings(env));
         this.#alarms = kept;
       }
-      [ringMethod]() {
-        return this.#alarms.ring((info) => this.alarm(info));
+      [ringMethod](retryBaseMs) {
+        return this.#alarms.ring((info) => this.alarm(info), retryBaseMs);
       }
     };
   }
   return { withBindings, classes };
-})(${JSON.stringify(Object.keys(durableObjects))}, ${JSON.stringify(appDataBinding)}, ${JSON.stringify(ringMethod)}, ${JSON.stringify(alarmTable)});
+})(${JSON.stringify(Object.keys(durableObjects))}, ${JSON.stringify(appDataBinding)}, ${JSON.stringify(ringMethod)}, ${JSON.stringify(alarmTable)}, ${alarmRetries});
 
 // The platform only ever sends the app requests.
 export default typeof app.default === "function"

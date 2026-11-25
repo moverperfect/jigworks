@@ -1,6 +1,6 @@
 import { runDurableObjectAlarm, runInDurableObject } from "cloudflare:test";
 import { env, exports } from "cloudflare:workers";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { BuildReport } from "../src/shared/build-report";
 import type { Deployment } from "../src/shared/deployment";
 import { accessToken, testAccess } from "./helpers/access";
@@ -314,7 +314,7 @@ export default {
  * An app whose Pinger instances record each ring of their alarm: the code's
  * `version`, the alarm's info, and what getAlarm() read during alarm().
  */
-const alarmApp = (version = "v1", { broken = false } = {}) => `import { DurableObject } from "cloudflare:workers";
+const alarmApp = (version = "v1", { broken = false, quick = false } = {}) => `import { DurableObject } from "cloudflare:workers";
 
 export class Pinger extends DurableObject {
   constructor(ctx: DurableObjectState, env: unknown) {
@@ -327,8 +327,10 @@ export class Pinger extends DurableObject {
     return this.ctx.storage.sql.exec("SELECT version, info, during FROM rings").toArray();
   }
 
-  async set(ms: number, repeat: number, every: number, fail: boolean, slow: number, cheat = false) {
+  async set(ms: number, repeat: number, every: number, fail: string | null, slow: number, cheat = false, remove = false, later = false) {
     this.ctx.storage.kv.put("cheat", cheat);
+    this.ctx.storage.kv.put("remove", remove);
+    this.ctx.storage.kv.put("later", later);
     this.ctx.storage.kv.put("repeat", repeat);
     this.ctx.storage.kv.put("every", every);
     this.ctx.storage.kv.put("fail", fail);
@@ -361,6 +363,18 @@ export class Pinger extends DurableObject {
     return { read, set: await storage.getAlarm() };
   }
 
+  // Makes the alarm due now, as if its time had come, straight in the platform's own table.
+  async due() {
+    this.ctx.storage.sql.exec("UPDATE __jigworks_alarm SET at = ?", Date.now());
+  }
+
+  // The alarm as the platform kept it before retries (#146), due now.
+  async old() {
+    this.ctx.storage.sql.exec("DROP TABLE __jigworks_alarm");
+    this.ctx.storage.sql.exec("CREATE TABLE __jigworks_alarm (at INTEGER NOT NULL)");
+    this.ctx.storage.sql.exec("INSERT INTO __jigworks_alarm (at) VALUES (?)", Date.now());
+  }
+
   async remove() {
     await this.ctx.storage.deleteAlarm();
   }
@@ -384,9 +398,15 @@ export class Pinger extends DurableObject {
     this.ctx.storage.sql.exec("INSERT INTO rings VALUES (?, ?, ?)", ${JSON.stringify(version)}, JSON.stringify(info), during);
     // A repeating alarm sets the next.
     if (rang < (this.ctx.storage.kv.get<number>("repeat") ?? 0)) await this.ctx.storage.setAlarm(Date.now() + (this.ctx.storage.kv.get<number>("every") ?? 200));
-    const slow = this.ctx.storage.kv.get<number>("slow") ?? 0;
+    if (this.ctx.storage.kv.get("remove")) await this.ctx.storage.deleteAlarm();
+    const slow = ${quick} ? 0 : (this.ctx.storage.kv.get<number>("slow") ?? 0);
     if (slow > 0) await new Promise((resolve) => setTimeout(resolve, slow));
-    if (this.ctx.storage.kv.get("fail")) throw new Error("the alarm broke");
+    // Sets the next without await.
+    if (this.ctx.storage.kv.get("later")) void this.ctx.storage.setAlarm(Date.now() + 3_600_000);
+    const fail = this.ctx.storage.kv.get<string | null>("fail");
+    // A value that can't be made into text, or an Error.
+    if (fail === "odd") throw Object.create(null);
+    if (fail !== null && fail !== undefined) throw new Error("the alarm broke");
     // Past setAlarm, straight into the platform's own table.
     if (this.ctx.storage.kv.get("cheat")) this.ctx.storage.sql.exec("INSERT INTO __jigworks_alarm (at) VALUES (?)", Date.now());
   }
@@ -397,10 +417,12 @@ export default {
     const url = new URL(request.url);
     const pinger = env.PINGER.getByName(url.searchParams.get("name") ?? "a");
     const ms = Number(url.searchParams.get("ms") ?? 200);
-    if (url.pathname === "/set") return Response.json(await pinger.set(ms, Number(url.searchParams.get("repeat") ?? 0), Number(url.searchParams.get("every") ?? 200), url.searchParams.has("fail"), Number(url.searchParams.get("slow") ?? 0), url.searchParams.has("cheat")));
+    if (url.pathname === "/set") return Response.json(await pinger.set(ms, Number(url.searchParams.get("repeat") ?? 0), Number(url.searchParams.get("every") ?? 200), url.searchParams.get("fail"), Number(url.searchParams.get("slow") ?? 0), url.searchParams.has("cheat"), url.searchParams.has("remove"), url.searchParams.has("later")));
     if (url.pathname === "/unawaited") return Response.json(await pinger.unawaited(ms));
     if (url.pathname === "/fail") return Response.json(await pinger.setThenFail(ms));
     if (url.pathname === "/delete") return Response.json(await pinger.remove());
+    if (url.pathname === "/due") return Response.json(await pinger.due());
+    if (url.pathname === "/old") return Response.json(await pinger.old());
     if (url.pathname === "/wipe") return Response.json(await pinger.wipe());
     if (url.pathname === "/facet") return Response.json(await pinger.facet());
     if (url.pathname === "/ring-itself") {
@@ -417,7 +439,7 @@ interface PingerState {
   alarm: number | null;
 }
 
-const rang = (version: string) => ({ version, info: JSON.stringify({ retryCount: 0, isRetry: false }), during: null });
+const rang = (version: string, retryCount = 0) => ({ version, info: JSON.stringify({ retryCount, isRetry: retryCount > 0 }), during: null });
 
 const alarmWorkspace = async (name: string) => {
   const workspace = await create(name);
@@ -580,7 +602,9 @@ describe("an app's alarms (ADR 0021)", () => {
     await new Promise((resolve) => setTimeout(resolve, Math.max(0, setAt + 1_100 - Date.now())));
     expect(await runDurableObjectAlarm(host)).toBe(true);
     const logs = await env.WORKSPACES.getByName(workspace.id).previewLogs();
-    expect(logs).toContainEqual(expect.objectContaining({ level: "exception", message: "The alarm of PINGER couldn't ring: Error: the instance broke" }));
+    expect(logs).toContainEqual(
+      expect.objectContaining({ level: "exception", message: "The alarm of PINGER couldn't ring: Error: the instance broke. It will be woken again in 1 second." }),
+    );
 
     await save(workspace.id, "src/index.ts", alarmApp("v3"));
     expect(await build(workspace.id)).toMatchObject({ ok: true });
@@ -611,15 +635,217 @@ describe("an app's alarms (ADR 0021)", () => {
     expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeNull();
   });
 
-  it("puts the error of an alarm() that throws in the slot's logs", async () => {
-    const workspace = await alarmWorkspace("Alarms Failing");
-    await inPreview(workspace.id, "/set?ms=100&fail");
+  it("retries a failing alarm() with isRetry and backoff, then drops it after 6 retries, saying so in the slot's logs", async () => {
+    const workspace = await alarmWorkspace("Alarms Retried");
+    const host = await appHostOf(workspace.id);
+    const holdOff = () => runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+    await inPreview(workspace.id, "/set?ms=0&fail");
+    await holdOff();
+    for (let retryCount = 0; retryCount <= 6; retryCount++) {
+      // Its time has come: the instance's own alarm and the app host's row.
+      await inPreview(workspace.id, "/due");
+      await runInDurableObject(host, (_instance, state) => {
+        state.storage.sql.exec("UPDATE alarms SET at = 0");
+      });
+      const before = Date.now();
+      expect(await runDurableObjectAlarm(host)).toBe(true);
+      const after = Date.now();
+      await holdOff();
+      const { rings, alarm } = JSON.parse(await inPreview(workspace.id, "/state")) as PingerState;
+      expect(rings).toEqual(Array.from({ length: retryCount + 1 }, (_, count) => rang("v1", count)));
+      if (retryCount === 6) expect(alarm).toBeNull();
+      else {
+        // A minimum interval, a second in the tests, then twice as long each time.
+        expect(alarm).toBeGreaterThanOrEqual(before + 1_000 * 2 ** retryCount);
+        expect(alarm).toBeLessThanOrEqual(after + 1_000 * 2 ** retryCount);
+      }
+    }
+    const messages = (await env.WORKSPACES.getByName(workspace.id).previewLogs()).filter(({ level }) => level === "exception").map(({ message }) => message);
+    expect(messages).toEqual([
+      "The alarm of PINGER threw Error: the alarm broke. Retry 1 of 6 in 1 second.",
+      "The alarm of PINGER (retry 1 of 6) threw Error: the alarm broke. Retry 2 of 6 in 2 seconds.",
+      "The alarm of PINGER (retry 2 of 6) threw Error: the alarm broke. Retry 3 of 6 in 4 seconds.",
+      "The alarm of PINGER (retry 3 of 6) threw Error: the alarm broke. Retry 4 of 6 in 8 seconds.",
+      "The alarm of PINGER (retry 4 of 6) threw Error: the alarm broke. Retry 5 of 6 in 16 seconds.",
+      "The alarm of PINGER (retry 5 of 6) threw Error: the alarm broke. Retry 6 of 6 in 32 seconds.",
+      "The alarm of PINGER (retry 6 of 6) threw Error: the alarm broke. It was dropped after 6 retries.",
+    ]);
+    // Dropped, so nothing wakes it again.
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeNull();
+  });
+
+  it("retries an alarm() that throws a value that can't be shown as text", async () => {
+    const workspace = await alarmWorkspace("Alarms Odd Throw");
+    await inPreview(workspace.id, "/set?ms=0&fail=odd");
     const logs = await waitFor(
       () => env.WORKSPACES.getByName(workspace.id).previewLogs(),
-      (lines) => lines.some(({ message }) => message.includes("PINGER")),
+      (lines) => lines.some(({ level }) => level === "exception"),
     );
-    expect(logs).toContainEqual(expect.objectContaining({ level: "exception", message: "The alarm of PINGER threw Error: the alarm broke" }));
-    // Retries come with #146.
+    expect(logs.find(({ level }) => level === "exception")?.message).toBe("The alarm of PINGER threw a value that can't be shown as text. Retry 1 of 6 in 1 second.");
+  });
+
+  it("doesn't retry an alarm() that throws after setting the next, or deleting its alarm", async () => {
+    const workspace = await alarmWorkspace("Alarms Not Retried");
+    await inPreview(workspace.id, "/set?name=next&ms=0&fail&repeat=1&every=3600000");
+    await inPreview(workspace.id, "/set?name=removed&ms=0&fail&remove");
+    await inPreview(workspace.id, "/set?name=unawaited&ms=0&fail&later");
+    const logs = await waitFor(
+      () => env.WORKSPACES.getByName(workspace.id).previewLogs(),
+      (lines) => lines.filter(({ level }) => level === "exception").length === 3,
+    );
+    expect(logs.filter(({ level }) => level === "exception").map(({ message }) => message)).toEqual([
+      "The alarm of PINGER threw Error: the alarm broke. It isn't retried, as alarm() set or deleted its alarm.",
+      "The alarm of PINGER threw Error: the alarm broke. It isn't retried, as alarm() set or deleted its alarm.",
+      "The alarm of PINGER threw Error: the alarm broke. It isn't retried, as alarm() set or deleted its alarm.",
+    ]);
+    // The next alarms stand, an hour on, and the deleted one is gone.
+    for (const name of ["next", "unawaited"]) {
+      const next = JSON.parse(await inPreview(workspace.id, `/state?name=${name}`)) as PingerState;
+      expect(next).toEqual({ rings: [rang("v1")], alarm: expect.any(Number) });
+      expect(next.alarm).toBeGreaterThan(Date.now() + 3_000_000);
+    }
+    expect(JSON.parse(await inPreview(workspace.id, "/state?name=removed"))).toEqual({ rings: [rang("v1")], alarm: null });
+  });
+
+  it("rings an alarm again, as a retry, when a new Build cuts its ring off", async () => {
+    const workspace = await alarmWorkspace("Alarms Cut Off");
+    const host = await appHostOf(workspace.id);
+    await inPreview(workspace.id, "/set?ms=0&slow=20000");
+    // alarm() has started, and is still running.
+    await ringsOf(() => inPreview(workspace.id, "/state"));
+    await save(workspace.id, "src/index.ts", alarmApp("v2", { quick: true }));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    const logs = await waitFor(
+      () => env.WORKSPACES.getByName(workspace.id).previewLogs(),
+      (lines) => lines.some(({ message }) => message.includes("couldn't ring")),
+    );
+    expect(logs).toContainEqual(
+      expect.objectContaining({ level: "exception", message: "The alarm of PINGER couldn't ring: Error: The app has new code or secrets. It will be woken again in 1 second." }),
+    );
+    // A minimum interval on.
+    expect(await ringsOf(() => inPreview(workspace.id, "/state"), 2)).toEqual({ rings: [rang("v1"), rang("v2", 1)], alarm: null });
+  });
+
+  it("rings an alarm again, as a retry, when its app host stops mid-ring", async () => {
+    const workspace = await alarmWorkspace("Alarms Host Stopped");
+    const host = await appHostOf(workspace.id);
+    const at = JSON.parse(await inPreview(workspace.id, "/set?ms=0&slow=20000")) as number;
+    // Held off, so the pool's helper runs the wake, and the stop ends it there.
+    await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, at + 100 - Date.now())));
+    const wake = runDurableObjectAlarm(host).catch(() => "stopped");
+    await ringsOf(() => inPreview(workspace.id, "/state"));
+    await runInDurableObject(host, (_instance, state) => state.abort("stopped mid-ring")).catch(() => {});
+    expect(await wake).toBe("stopped");
+    // Started again, by a request, with the new code so the retry isn't slow.
+    await save(workspace.id, "src/index.ts", alarmApp("v2", { quick: true }));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    // The row was never answered, so it's still due when the app host's alarm
+    // runs again, as Cloudflare runs an alarm that was cut off. A stub to the
+    // stopped app host is broken, so a new one.
+    const restarted = await appHostOf(workspace.id);
+    await runInDurableObject(restarted, (_instance, state) => state.storage.setAlarm(Date.now()));
+    expect((await ringsOf(() => inPreview(workspace.id, "/state"), 2))).toEqual({ rings: [rang("v1"), rang("v2", 1)], alarm: null });
+  });
+
+  it("drops the alarm of an instance that couldn't answer its wake or its 6 retries", async () => {
+    const workspace = await alarmWorkspace("Alarms Never Answered");
+    const host = await appHostOf(workspace.id);
+    await inPreview(workspace.id, "/set?ms=3600000");
+    await save(workspace.id, "src/index.ts", alarmApp("v2", { broken: true }));
+    expect(await build(workspace.id)).toMatchObject({ ok: true });
+    const logged = vi.spyOn(console, "log");
+    try {
+      for (let wake = 0; wake <= 6; wake++) {
+        await runInDurableObject(host, (_instance, state) => {
+          state.storage.sql.exec("UPDATE alarms SET at = 0");
+        });
+        expect(await runDurableObjectAlarm(host)).toBe(true);
+        // Held off, so only the pool's helper runs it.
+        if (wake < 6) await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+      }
+      const records = logged.mock.calls
+        .map(([line]) => String(line))
+        .filter((line) => line.includes('"event":"alarm"'))
+        .map((line) => JSON.parse(line) as { outcome: string; retryCount: number | null });
+      expect(records.map(({ outcome, retryCount }) => [outcome, retryCount])).toEqual([
+        ...[0, 1, 2, 3, 4, 5].map((count) => ["unanswered", count]),
+        ["dropped", 6],
+      ]);
+    } finally {
+      logged.mockRestore();
+    }
+    const messages = (await env.WORKSPACES.getByName(workspace.id).previewLogs()).map(({ message }) => message).filter((message) => message.includes("couldn't ring"));
+    expect(messages).toEqual([
+      ...[1, 2, 4, 8, 16, 32].map((seconds) => `The alarm of PINGER couldn't ring: Error: the instance broke. It will be woken again in ${seconds} second${seconds === 1 ? "" : "s"}.`),
+      "The alarm of PINGER couldn't ring: Error: the instance broke. It was dropped after 6 retries.",
+    ]);
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeNull();
+  });
+
+  it("doesn't let a failing alarm() hold up other instances' alarms or the clean-up of retired secrets", async () => {
+    const workspace = await alarmWorkspace("Alarms Failing Alongside");
+    const host = await appHostOf(workspace.id);
+    const setSecret = (value: string) => call(`/api/workspaces/${workspace.id}/secrets/API_KEY`, { method: "PUT", body: { value } });
+    expect((await setSecret("the-old-value")).status).toBe(204);
+    expect((await setSecret("the-new-value")).status).toBe(204);
+    await runInDurableObject(host, (_instance, state) => {
+      state.storage.sql.exec("UPDATE retired_secrets SET retired_at = retired_at - 3600001");
+    });
+    await inPreview(workspace.id, "/set?name=failing&ms=0&fail");
+    await inPreview(workspace.id, "/set?name=other&ms=0");
+    await runInDurableObject(host, (_instance, state) => state.storage.setAlarm(Date.now() + 3_600_000));
+    await new Promise((resolve) => setTimeout(resolve, 1_100));
+    expect(await runDurableObjectAlarm(host)).toBe(true);
+
+    expect(JSON.parse(await inPreview(workspace.id, "/state?name=other"))).toEqual({ rings: [rang("v1")], alarm: null });
+    const failing = JSON.parse(await inPreview(workspace.id, "/state?name=failing")) as PingerState;
+    expect(failing).toEqual({ rings: [rang("v1")], alarm: expect.any(Number) });
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.sql.exec("SELECT * FROM retired_secrets").toArray())).toEqual([]);
+    // The app host wakes next for the retry, a second on.
+    expect(await runInDurableObject(host, (_instance, state) => state.storage.getAlarm())).toBeLessThanOrEqual(failing.alarm!);
+  });
+
+  it("logs each ring in the slot's logs and the platform's, with its outcome, retry count and duration, but not the instance's name", async () => {
+    const workspace = await alarmWorkspace("Alarms Logged");
+    const logged = vi.spyOn(console, "log");
+    try {
+      await inPreview(workspace.id, "/set?name=jo.bloggs@example.com&ms=0");
+      await ringsOf(() => inPreview(workspace.id, "/state?name=jo.bloggs@example.com"));
+      const logs = await waitFor(
+        () => env.WORKSPACES.getByName(workspace.id).previewLogs(),
+        (lines) => lines.some(({ message }) => message.includes("rang")),
+      );
+      expect(logs).toContainEqual(expect.objectContaining({ level: "info", message: expect.stringMatching(/^The alarm of PINGER rang in \d+ ms\.$/) }));
+      const lines = logged.mock.calls.map(([line]) => String(line)).filter((line) => line.includes('"event":"alarm"'));
+      expect(lines.map((line) => JSON.parse(line))).toContainEqual({
+        event: "alarm",
+        workspace: workspace.id,
+        slot: "preview",
+        binding: "PINGER",
+        outcome: "rang",
+        retryCount: 0,
+        durationMs: expect.any(Number),
+      });
+      for (const line of [...lines, ...logs.map(({ message }) => message)]) expect(line).not.toContain("bloggs");
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  it("rings an alarm kept before retries, in an app host from before them", async () => {
+    const workspace = await alarmWorkspace("Alarms From Before");
+    const host = await appHostOf(workspace.id);
+    await inPreview(workspace.id, "/set?ms=3600000");
+    await inPreview(workspace.id, "/old");
+    await runInDurableObject(host, (instance, state) => {
+      state.storage.sql.exec("ALTER TABLE alarms DROP COLUMN misses");
+      state.storage.sql.exec("UPDATE alarms SET at = 0");
+      // As if the app host had just started.
+      (instance as unknown as { tablesReady: boolean }).tablesReady = false;
+    });
+    expect(await runDurableObjectAlarm(host)).toBe(true);
     expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v1")], alarm: null });
   });
 
@@ -740,8 +966,10 @@ describe("an app's alarms (ADR 0021)", () => {
       (lines) => lines.some(({ message }) => message.includes("threw")),
     );
     expect(logs).toContainEqual(expect.objectContaining({ level: "exception", message: "The alarm of PINGER didn't finish within 5 seconds." }));
-    expect(logs).toContainEqual(expect.objectContaining({ level: "exception", message: "The alarm of PINGER threw Error: the alarm broke" }));
-    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v1")], alarm: null });
+    expect(logs).toContainEqual(
+      expect.objectContaining({ level: "exception", message: expect.stringMatching(/^The alarm of PINGER threw Error: the alarm broke\. Retry 1 of 6 in \d seconds?\.$/) }),
+    );
+    expect(JSON.parse(await inPreview(workspace.id, "/state"))).toEqual({ rings: [rang("v1")], alarm: expect.any(Number) });
   });
 
   it("doesn't ring an instance again while its alarm() runs on past the deadline, even once it has set the next", async () => {
