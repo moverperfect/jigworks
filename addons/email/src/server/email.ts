@@ -42,6 +42,9 @@ export async function sendEmail(env: { RESEND_API_KEY?: string }, email: Email):
   }
   const body = (await response.json().catch(() => null)) as { id?: unknown; message?: unknown } | null;
   if (response.ok && typeof body?.id === "string") return { ok: true, id: body.id };
-  if (typeof body?.message === "string") return { ok: false, error: `Resend refused the email: ${body.message}` };
-  return { ok: false, error: `The email wasn't sent: Resend answered ${response.status} ${response.statusText}`.trim() };
+  // Busy, or failing for a moment, which a later try may pass.
+  const mayPass = response.status === 429 || response.status >= 500;
+  if (typeof body?.message === "string" && !mayPass) return { ok: false, error: `Resend refused the email: ${body.message}` };
+  const said = typeof body?.message === "string" ? `: ${body.message}` : "";
+  return { ok: false, error: `The email wasn't sent: Resend answered ${response.status} ${response.statusText}`.trim() + said };
 }

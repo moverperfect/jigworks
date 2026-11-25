@@ -1,0 +1,14 @@
+{
+  "name": "Reminders",
+  "description": "Emails each reminder the app keeps once, when it's due, with no one opening the app, at times in the Developer's own time zone.",
+  "fits": "Add it when the app has to email people at a set time, such as reminding everyone who signed up the day before a run. Not for an email on a timetable, such as a rota every Monday.",
+  "needs": ["storage", "email"],
+  "packages": {},
+  "secrets": [],
+  "edits": [
+    "In wrangler.jsonc, add `{ \"name\": \"REMINDERS\", \"class_name\": \"Reminders\" }` to `durable_objects`' bindings, adding `durable_objects` if there isn't one, and the Developer's time zone to `vars`, such as `\"TIME_ZONE\": \"Europe/London\"`.",
+    "Export the class from the Worker's main module (main in wrangler.jsonc): `export { Reminders } from \"./reminders\";` from src/server/index.ts, or `\"./server/reminders\"` from src/index.ts.",
+    "In worker-configuration.d.ts, add `REMINDERS: DurableObjectNamespace<import(\"./src/server/reminders\").Reminders>;` and `TIME_ZONE: string;` to the __BaseEnv_Env interface.",
+    "Where the app keeps a reminder, import `reminders` and `instantAt` from `./reminders` (`./server/reminders` from src/index.ts) and use them as its notes say."
+  ]
+}

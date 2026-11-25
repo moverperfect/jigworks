@@ -313,6 +313,38 @@ export default app;
 export { Timer } from "./timer";
 `;
 
+/** A Worker + React Template app that reminds each runner who signs up, at 9am the day before the run, with the reminders add-on. */
+export const remindersIndex = `import { Hono } from "hono";
+import type { Hello } from "../shared/api";
+import { instantAt, reminders } from "./reminders";
+
+const app = new Hono<{ Bindings: Env }>();
+
+app.get("/api/hello/:name", (c) => {
+  const hello: Hello = { message: \`\${c.env.GREETING}, \${c.req.param("name")}\` };
+  return c.json(hello);
+});
+
+// Reminds \`to\` of the run on \`date\` at 9am the day before, or \`in\` milliseconds from now, to try it.
+app.post("/api/runs/:date/signups", async (c) => {
+  const date = c.req.param("date");
+  const [year, month, day] = date.split("-").map(Number);
+  const dayBefore = new Date(Date.UTC(year!, month! - 1, day! - 1)).toISOString().slice(0, 10);
+  const soon = c.req.query("in");
+  const at = soon === undefined ? instantAt(dayBefore, "09:00", c.env.TIME_ZONE) : Date.now() + Number(soon);
+  const subject = c.req.query("subject") ?? \`The run on \${date}\`;
+  return c.json(await reminders(c.env.REMINDERS).add({ to: c.req.query("to")!, about: \`run-\${date}\`, subject, text: "See you there.", at }));
+});
+
+app.get("/api/reminders", async (c) => c.json(await reminders(c.env.REMINDERS).list()));
+
+export default app;
+
+// The app's storage (see "Storage" in AGENTS.md).
+export { Store } from "./store";
+export { Reminders } from "./reminders";
+`;
+
 const organiserReply = "Your app has an organiser's area now.";
 
 /** The email add-on's joining edits to a Worker + React Template app, with the owner's address as a var. */
@@ -543,6 +575,43 @@ export const agentScripts: Record<string, Script> = {
 
   // Adds the email add-on to a Worker + React Template app, then makes its joining edits, with the owner's address as a var.
   "add-email-and-join": addAndJoin("email", emailEdits, emailReply),
+
+  // Shows its step, adds the reminders add-on to a Worker + React Template app, then makes its joining edits and the reminders' route.
+  "add-reminders-and-join": (request) => {
+    const step = (done: boolean) => ({ name: "steps", input: { steps: [{ label: "Adding reminders", done, ...(done && { detail: "An email the day before each run" }) }] } });
+    switch (toolStepsTaken(request)) {
+      case 0:
+        return { toolCalls: [step(false), { name: "add_addon", input: { addon: "reminders" } }] };
+      case 1:
+        return {
+          toolCalls: [
+            step(true),
+            {
+              name: "edit",
+              input: {
+                path: "/wrangler.jsonc",
+                old_string: '"bindings": [{ "name": "STORE", "class_name": "Store" }]\n  },\n  "vars": {\n    "GREETING": "Hello"',
+                new_string:
+                  '"bindings": [\n      { "name": "STORE", "class_name": "Store" },\n      { "name": "REMINDERS", "class_name": "Reminders" }\n    ]\n  },\n  "vars": {\n    "GREETING": "Hello",\n    "TIME_ZONE": "Europe/London"',
+              },
+            },
+            {
+              name: "edit",
+              input: {
+                path: "/worker-configuration.d.ts",
+                old_string: '\tGREETING: "Hello";\n',
+                new_string:
+                  '\tGREETING: "Hello";\n\tTIME_ZONE: string;\n\tRESEND_API_KEY?: string;\n\tREMINDERS: DurableObjectNamespace<import("./src/server/reminders").Reminders>;\n',
+              },
+            },
+            { name: "write", input: { path: "/src/server/index.ts", content: remindersIndex } },
+          ],
+        };
+      default:
+        return { text: "Your app emails each runner a reminder at 9am the day before their run." };
+    }
+  },
+
 
   // As add-email-and-join, then, once the Developer adds the key, tries a
   // sign-up and reads the logs in the same step, as Opus calls tools, and

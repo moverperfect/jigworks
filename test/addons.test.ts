@@ -6,8 +6,8 @@ import type { Addon } from "../src/templates";
 import { describeAddons } from "../src/agent";
 import type { Workspace } from "../src/workspace";
 import { summaryReply } from "./fixtures/fake-anthropic";
-import { resendAccountAddress, resendKey } from "./fixtures/fake-resend";
-import { call, create } from "./helpers/api";
+import { failsOnce, resendAccountAddress, resendKey } from "./fixtures/fake-resend";
+import { call, create, waitFor } from "./helpers/api";
 import { connect, history, runTurn, textOf, toolResults, turnEnd, turnLines } from "./helpers/conversation";
 
 // The Agent adds an add-on with add_addon (ADR 0019). The model is the
@@ -211,6 +211,70 @@ describe("sending email", () => {
       ok: false,
       error: expect.stringMatching(/^Resend refused the email: You can only send testing emails to your own email address/),
     });
+  });
+});
+
+describe("reminders", () => {
+  it("is listed with when it fits", async () => {
+    const { addons } = await (await call("/api/addons")).json<{ addons: unknown[] }>();
+    expect(addons).toContainEqual(expect.objectContaining({ id: "reminders", name: "Reminders", fits: expect.stringContaining("email people at a set time") }));
+  });
+
+  it("added in its own step and joined to the default Template's app, passes its tests, and sends each due reminder once from the Preview, a retry only those not sent", async () => {
+    const workspace = await create("Sunday Runs", undefined, "worker-react");
+    const conversation = await connect(workspace.id);
+    const [line] = await turnLines(() => runTurn(workspace.id, conversation, "[script:add-reminders-and-join] Remind runners the day before"));
+    expect(line).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+    expect((line!.addons as string[]).toSorted()).toEqual(["email", "reminders"]);
+
+    // The page shows its step in plain words.
+    const reply = (await history(workspace.id)).at(-1)!;
+    const steps = reply.parts.filter((part) => part.type === "tool-steps") as unknown as { input: { steps: { label: string }[] } }[];
+    expect(steps.map(({ input }) => input.steps[0]!.label)).toEqual(["Adding reminders", "Adding reminders"]);
+
+    const [added] = (await toolResults(workspace.id)).filter(({ tool }) => tool === "add_addon");
+    const result = added!.result as string;
+    // Storage came with the Template, and email comes first.
+    expect(result.split("\n", 2)).toEqual([
+      "Added the reminders add-on, after email, which it needs. Wrote /src/server/email.test.ts, /src/server/email.ts, /src/server/fake-reminders.ts, /src/server/reminders.test.ts and /src/server/reminders.ts.",
+      "It needs storage too, which the app already had.",
+    ]);
+    // Each add-on's notes, needs first, apart as in AGENTS.md.
+    expect(result).toContain("<notes>\n## Sending email (add-on `email`)\n\n");
+    expect(result).toContain("as `src/server/email.test.ts` does.\n\n## Reminders (add-on `reminders`)\n\nThe app emails reminders at set times");
+    expect(result).toContain("- RESEND_API_KEY: To send emails");
+    expect(await testStates(workspace.id)).toEqual(
+      ["client/App.test.tsx", "server/email.test.ts", "server/index.test.ts", "server/reminders.test.ts", "server/store.test.ts"].map((file) => [`src/${file}`, ["passed"], []]),
+    );
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const signUp = async (date: string, query: string) => JSON.parse((await preview.requestPreview({ method: "POST", path: `/api/runs/${date}/signups?${query}` })).body);
+    // 9am the day before, in the Developer's time zone: summer time in June.
+    expect(await signUp("2027-06-06", "to=ada%40example.com")).toMatchObject({ about: "run-2027-06-06", at: Date.UTC(2027, 5, 5, 8), sent: false });
+    expect(await signUp("2027-12-05", "to=ada%40example.com")).toMatchObject({ at: Date.UTC(2027, 11, 4, 9) });
+
+    expect((await call(`/api/workspaces/${workspace.id}/secrets/RESEND_API_KEY`, { method: "PUT", body: { value: resendKey } })).status).toBe(204);
+    // Two due after the minimum interval, a second in the tests. The fake Resend fails the second once.
+    const subject = `Today's run ${crypto.randomUUID()}`;
+    const flaky = `${subject} ${failsOnce}`;
+    await signUp("2026-01-01", `to=${encodeURIComponent(resendAccountAddress)}&in=1500&subject=${encodeURIComponent(subject)}`);
+    await signUp("2026-01-02", `to=${encodeURIComponent(resendAccountAddress)}&in=1500&subject=${encodeURIComponent(flaky)}`);
+    const listed = async () => JSON.parse((await preview.requestPreview({ method: "GET", path: "/api/reminders" })).body) as { subject: string; sent: boolean; error: string | null }[];
+    const sentAll = await waitFor(
+      async () => (await listed()).filter((reminder) => reminder.subject.startsWith(subject)),
+      (reminders) => reminders.every(({ sent }) => sent),
+    );
+    expect(sentAll).toEqual([expect.objectContaining({ subject, sent: true, error: null }), expect.objectContaining({ subject: flaky, sent: true, error: null })]);
+    // Each was sent once: the retry sent only the one that failed.
+    const { data } = await (await fetch("https://api.resend.com/emails")).json<{ data: { subject: string }[] }>();
+    expect(data.filter((email) => email.subject.startsWith(subject)).map((email) => email.subject)).toEqual([subject, flaky]);
+
+    // The failure, and the retry, are in the Preview's logs.
+    const logs = (await preview.previewLogs()).map(({ message }) => message);
+    expect(logs).toContainEqual(expect.stringMatching(/^Reminder \S+ wasn't sent\. The email wasn't sent: Resend answered 503 Service Unavailable$/));
+    expect(logs).toContainEqual(expect.stringContaining("The alarm of REMINDERS threw Error: 1 reminder wasn't sent, so it'll be tried again."));
+    // The later ones still wait.
+    expect((await listed()).filter(({ sent }) => !sent).map(({ subject }) => subject)).toEqual(["The run on 2027-06-06", "The run on 2027-12-05"]);
   });
 });
 
