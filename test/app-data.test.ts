@@ -3,8 +3,10 @@ import { env, exports } from "cloudflare:workers";
 import { describe, expect, it, vi } from "vitest";
 import type { BuildReport } from "../src/shared/build-report";
 import type { Deployment } from "../src/shared/deployment";
+import type { TestReport } from "../src/shared/test-report";
 import { accessToken, testAccess } from "./helpers/access";
 import { call, create, waitFor } from "./helpers/api";
+import { connect, runTurn } from "./helpers/conversation";
 
 // App data: an app's Durable Object binding, with each instance a facet in
 // the app host, and the Preview's data kept apart from the Deployment's
@@ -1013,5 +1015,33 @@ describe("an app's alarms (ADR 0021)", () => {
     const deleted = await call(`/api/workspaces/${workspace.id}`, { method: "DELETE", body: { confirmName: workspace.name } });
     expect(deleted.status).toBe(204);
     expect(await runDurableObjectAlarm(host)).toBe(false);
+  });
+});
+
+describe("an alarm the Agent writes (#147)", () => {
+  it("as the Templates' notes say, has a clean Check, Builds, passes its tests, and rings in the Preview, setting the next", async () => {
+    const workspace = await create("Hourly Job");
+    const ended = await runTurn(workspace.id, await connect(workspace.id), "[script:write-alarm-app] Do the job every hour");
+    expect(ended).toMatchObject({ status: "completed", checkErrors: 0, buildErrors: 0, testFailures: 0, retries: 0, restored: false });
+
+    const tests = (await (await call(`/api/workspaces/${workspace.id}/tests`)).json<TestReport>()).files.map(({ file, tests }) => [file, tests.map(({ state }) => state)]);
+    expect(tests).toEqual([
+      ["src/index.test.ts", ["passed"]],
+      ["src/timer.test.ts", ["passed"]],
+    ]);
+
+    const preview = env.WORKSPACES.getByName(workspace.id);
+    const started = Date.now();
+    // Every second, the tests' minimum interval, so it rings twice in the test.
+    const set = await preview.requestPreview({ method: "POST", path: "/api/timer?every=1000" });
+    expect(JSON.parse(set.body)).toEqual({ next: expect.any(Number) });
+    expect(JSON.parse(set.body).next).toBeGreaterThanOrEqual(started + 1_000);
+    const state = await waitFor(
+      async () => JSON.parse((await preview.requestPreview({ method: "GET", path: "/api/timer" })).body) as { runs: number; next: number | null },
+      ({ runs }) => runs >= 2,
+    );
+    // Rang twice, and set the next after that.
+    expect(state.runs).toBeGreaterThanOrEqual(2);
+    expect(state.next).toBeGreaterThan(started + 3_000);
   });
 });
